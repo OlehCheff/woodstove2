@@ -1,0 +1,9 @@
+{
+  "name": "woodstove2",
+  "version": "8.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "node tests/physics.test.js",
+    "serve": "npx serve ."
+  }
+}
