@@ -17,99 +17,100 @@
 <div id="drawing-overlay"></div>
 
 <div id="topbar">
-  <button id="exportGltf" class="ghost" title="Експорт сцени в glTF">GLTF</button>
-  <button id="exportStl" class="ghost" title="Експорт сцени в STL">STL</button>
-  <button id="showTour" class="ghost">Тур</button>
+  <button id="langToggle" class="ghost" title="UA / EN">EN</button>
+  <button id="exportGltf" class="ghost" title="Export scene as glTF">GLTF</button>
+  <button id="exportStl" class="ghost" title="Export scene as STL">STL</button>
+  <button id="showTour" class="ghost" data-i18n="tourBtn">Тур</button>
 </div>
 
 <aside id="panel">
   <h1>🔥 Woodstove 2 · Sprint 8</h1>
-  <p class="sub">1 од. = 1 см · three@160 · модулі · дебаунс 120мс</p>
+  <p class="sub" data-i18n="subtitle">1 од. = 1 см · three@160 · модулі · дебаунс 120мс</p>
 
-  <details open><summary>Режим роботи / вид</summary><div class="body">
-    <div class="row"><label>Режим <output id="modeHint"></output></label>
+  <details open><summary data-i18n="secMode">Режим роботи / вид</summary><div class="body">
+    <div class="row"><label><span data-i18n="lblMode">Режим</span> <output id="modeHint"></output></label>
       <select id="operationMode">
         <option value="start-up">start-up</option><option value="low">low</option>
         <option value="medium">medium</option><option value="high">high</option>
         <option value="overnight">overnight</option>
       </select></div>
-    <div class="row"><label>Вид</label>
+    <div class="row"><label><span data-i18n="lblView">Вид</span></label>
       <select id="viewMode">
         <option value="3d">3D view</option><option value="drawing-front">Drawing front</option>
         <option value="drawing-side">Drawing side</option><option value="drawing-top">Drawing top</option>
       </select></div>
-    <div class="row check"><input type="checkbox" id="showFirebrick"><label for="showFirebrick">Шамот</label></div>
-    <div class="row check"><input type="checkbox" id="showBaffle"><label for="showBaffle">Бафль</label></div>
-    <div class="row check"><input type="checkbox" id="showAirChannels"><label for="showAirChannels">Повітряні канали</label></div>
-    <div class="row check"><input type="checkbox" id="showChimney"><label for="showChimney">Димохід</label></div>
+    <div class="row check"><input type="checkbox" id="showFirebrick"><label for="showFirebrick" data-i18n="showFirebrick">Шамот</label></div>
+    <div class="row check"><input type="checkbox" id="showBaffle"><label for="showBaffle" data-i18n="showBaffle">Бафль</label></div>
+    <div class="row check"><input type="checkbox" id="showAirChannels"><label for="showAirChannels" data-i18n="showAirChannels">Повітряні канали</label></div>
+    <div class="row check"><input type="checkbox" id="showChimney"><label for="showChimney" data-i18n="showChimney">Димохід</label></div>
     <div class="row"><label>Explode <output id="explodeDistanceCm-v"></output></label>
       <input type="range" id="explodeDistanceCm" min="5" max="40" step="1"></div>
   </div></details>
 
-  <details><summary>Габарити</summary><div class="body">
-    <div class="row"><label>Ширина <output id="widthCm-v"></output></label><input type="range" id="widthCm" min="40" max="140" step="1"></div>
-    <div class="row"><label>Глибина <output id="depthCm-v"></output></label><input type="range" id="depthCm" min="35" max="120" step="1"></div>
-    <div class="row"><label>Висота корпусу <output id="heightCm-v"></output></label><input type="range" id="heightCm" min="50" max="180" step="1"></div>
-    <div class="row"><label>Ніжки <output id="legHeightCm-v"></output></label><input type="range" id="legHeightCm" min="0" max="40" step="1"></div>
+  <details><summary data-i18n="secDims">Габарити</summary><div class="body">
+    <div class="row"><label><span data-i18n="w">Ширина</span> <output id="widthCm-v"></output></label><input type="range" id="widthCm" min="40" max="140" step="1"></div>
+    <div class="row"><label><span data-i18n="d">Глибина</span> <output id="depthCm-v"></output></label><input type="range" id="depthCm" min="35" max="120" step="1"></div>
+    <div class="row"><label><span data-i18n="hBody">Висота корпусу</span> <output id="heightCm-v"></output></label><input type="range" id="heightCm" min="50" max="180" step="1"></div>
+    <div class="row"><label><span data-i18n="legs">Ніжки</span> <output id="legHeightCm-v"></output></label><input type="range" id="legHeightCm" min="0" max="40" step="1"></div>
   </div></details>
 
-  <details><summary>Матеріали / кольори (Issue #2)</summary><div class="body">
-    <div class="row"><label>Сталь <output id="steelThicknessMm-v"></output></label><input type="range" id="steelThicknessMm" min="3" max="8" step="1"></div>
-    <div class="row"><label>Шамот <output id="firebrickThicknessCm-v"></output></label><input type="range" id="firebrickThicknessCm" min="2" max="8" step="0.5"></div>
-    <div class="row"><label>Колір сталі <output id="steelColor-v"></output></label><input type="color" id="steelColor"></div>
-    <div class="row"><label>Колір шамоту <output id="brickColor-v"></output></label><input type="color" id="brickColor"></div>
-    <div class="row"><label>Скло <output id="glassColor-v"></output></label><input type="color" id="glassColor"></div>
-    <div class="row"><label>Підлога <output id="floorColor-v"></output></label><input type="color" id="floorColor"></div>
-    <div class="row"><label>Roughness сталі <output id="steelRoughness-v"></output></label><input type="range" id="steelRoughness" min="0.1" max="0.9" step="0.02"></div>
-    <div class="row"><label>Metalness сталі <output id="steelMetalness-v"></output></label><input type="range" id="steelMetalness" min="0" max="1" step="0.02"></div>
+  <details><summary data-i18n="secMat">Матеріали / кольори (Issue #2)</summary><div class="body">
+    <div class="row"><label><span data-i18n="steel">Сталь</span> <output id="steelThicknessMm-v"></output></label><input type="range" id="steelThicknessMm" min="3" max="8" step="1"></div>
+    <div class="row"><label><span data-i18n="brickT">Шамот</span> <output id="firebrickThicknessCm-v"></output></label><input type="range" id="firebrickThicknessCm" min="2" max="8" step="0.5"></div>
+    <div class="row"><label><span data-i18n="steelColor">Колір сталі</span> <output id="steelColor-v"></output></label><input type="color" id="steelColor"></div>
+    <div class="row"><label><span data-i18n="brickColor">Колір шамоту</span> <output id="brickColor-v"></output></label><input type="color" id="brickColor"></div>
+    <div class="row"><label><span data-i18n="glass">Скло</span> <output id="glassColor-v"></output></label><input type="color" id="glassColor"></div>
+    <div class="row"><label><span data-i18n="floor">Підлога</span> <output id="floorColor-v"></output></label><input type="color" id="floorColor"></div>
+    <div class="row"><label><span data-i18n="steelRough">Roughness сталі</span> <output id="steelRoughness-v"></output></label><input type="range" id="steelRoughness" min="0.1" max="0.9" step="0.02"></div>
+    <div class="row"><label><span data-i18n="steelMetal">Metalness сталі</span> <output id="steelMetalness-v"></output></label><input type="range" id="steelMetalness" min="0" max="1" step="0.02"></div>
   </div></details>
 
-  <details><summary>Бафль / повітря</summary><div class="body">
-    <div class="row"><label>Висота бафля <output id="baffleHeightCm-v"></output></label><input type="range" id="baffleHeightCm" min="20" max="120" step="1"></div>
-    <div class="row"><label>Кут бафля <output id="baffleAngleDeg-v"></output></label><input type="range" id="baffleAngleDeg" min="-20" max="30" step="1"></div>
-    <div class="row"><label>Передній зазор <output id="baffleFrontGapCm-v"></output></label><input type="range" id="baffleFrontGapCm" min="2" max="15" step="0.5"></div>
-    <div class="row"><label>Приток бафля <output id="baffleAirflowPct-v"></output></label><input type="range" id="baffleAirflowPct" min="0" max="100" step="1"></div>
-    <div class="row"><label>Отворів primary <output id="primaryHoleCount-v"></output></label><input type="range" id="primaryHoleCount" min="3" max="14" step="1"></div>
-    <div class="row"><label>Ø отвору <output id="primaryHoleDiameterCm-v"></output></label><input type="range" id="primaryHoleDiameterCm" min="0.6" max="2.5" step="0.1"></div>
-    <div class="row"><label>Крок <output id="primaryHoleSpacingCm-v"></output></label><input type="range" id="primaryHoleSpacingCm" min="2" max="8" step="0.5"></div>
-    <div class="row"><label>Задвижка primary <output id="primaryAirOpenPct-v"></output></label><input type="range" id="primaryAirOpenPct" min="0" max="100" step="1"></div>
-    <div class="row"><label>Перфорацій secondary <output id="secondaryHoleCount-v"></output></label><input type="range" id="secondaryHoleCount" min="4" max="24" step="1"></div>
-    <div class="row"><label>Ø перфорації <output id="secondaryHoleDiameterCm-v"></output></label><input type="range" id="secondaryHoleDiameterCm" min="0.4" max="1.2" step="0.1"></div>
-    <div class="row"><label>Крок secondary <output id="secondaryHoleSpacingCm-v"></output></label><input type="range" id="secondaryHoleSpacingCm" min="1.5" max="4" step="0.1"></div>
-    <div class="row"><label>Air-wash щілина <output id="airWashGapCm-v"></output></label><input type="range" id="airWashGapCm" min="0.5" max="3" step="0.1"></div>
-    <div class="row"><label>Приток air-wash <output id="airWashIntakePct-v"></output></label><input type="range" id="airWashIntakePct" min="0" max="100" step="1"></div>
+  <details><summary data-i18n="secAir">Бафль / повітря</summary><div class="body">
+    <div class="row"><label><span data-i18n="baffleH">Висота бафля</span> <output id="baffleHeightCm-v"></output></label><input type="range" id="baffleHeightCm" min="20" max="120" step="1"></div>
+    <div class="row"><label><span data-i18n="baffleA">Кут бафля</span> <output id="baffleAngleDeg-v"></output></label><input type="range" id="baffleAngleDeg" min="-20" max="30" step="1"></div>
+    <div class="row"><label><span data-i18n="baffleGap">Передній зазор</span> <output id="baffleFrontGapCm-v"></output></label><input type="range" id="baffleFrontGapCm" min="2" max="15" step="0.5"></div>
+    <div class="row"><label><span data-i18n="baffleFlow">Приток бафля</span> <output id="baffleAirflowPct-v"></output></label><input type="range" id="baffleAirflowPct" min="0" max="100" step="1"></div>
+    <div class="row"><label><span data-i18n="primCount">Отворів primary</span> <output id="primaryHoleCount-v"></output></label><input type="range" id="primaryHoleCount" min="3" max="14" step="1"></div>
+    <div class="row"><label><span data-i18n="primDia">Ø отвору</span> <output id="primaryHoleDiameterCm-v"></output></label><input type="range" id="primaryHoleDiameterCm" min="0.6" max="2.5" step="0.1"></div>
+    <div class="row"><label><span data-i18n="primStep">Крок</span> <output id="primaryHoleSpacingCm-v"></output></label><input type="range" id="primaryHoleSpacingCm" min="2" max="8" step="0.5"></div>
+    <div class="row"><label><span data-i18n="primGate">Задвижка primary</span> <output id="primaryAirOpenPct-v"></output></label><input type="range" id="primaryAirOpenPct" min="0" max="100" step="1"></div>
+    <div class="row"><label><span data-i18n="secCount">Перфорацій secondary</span> <output id="secondaryHoleCount-v"></output></label><input type="range" id="secondaryHoleCount" min="4" max="24" step="1"></div>
+    <div class="row"><label><span data-i18n="secDia">Ø перфорації</span> <output id="secondaryHoleDiameterCm-v"></output></label><input type="range" id="secondaryHoleDiameterCm" min="0.4" max="1.2" step="0.1"></div>
+    <div class="row"><label><span data-i18n="secStep">Крок secondary</span> <output id="secondaryHoleSpacingCm-v"></output></label><input type="range" id="secondaryHoleSpacingCm" min="1.5" max="4" step="0.1"></div>
+    <div class="row"><label><span data-i18n="washGap">Air-wash щілина</span> <output id="airWashGapCm-v"></output></label><input type="range" id="airWashGapCm" min="0.5" max="3" step="0.1"></div>
+    <div class="row"><label><span data-i18n="washFlow">Приток air-wash</span> <output id="airWashIntakePct-v"></output></label><input type="range" id="airWashIntakePct" min="0" max="100" step="1"></div>
   </div></details>
 
-  <details><summary>Димохід / дверцята</summary><div class="body">
-    <div class="row"><label>Ø димоходу <output id="chimneyDiameterCm-v"></output></label><input type="range" id="chimneyDiameterCm" min="10" max="25" step="0.5"></div>
-    <div class="row"><label>Висота труби <output id="chimneyHeightCm-v"></output></label><input type="range" id="chimneyHeightCm" min="100" max="150" step="1"></div>
-    <div class="row"><label>Ширина дверцят <output id="doorWidthCm-v"></output></label><input type="range" id="doorWidthCm" min="20" max="70" step="1"></div>
-    <div class="row"><label>Висота дверцят <output id="doorHeightCm-v"></output></label><input type="range" id="doorHeightCm" min="20" max="70" step="1"></div>
-    <div class="row"><label>Відступ скла <output id="glassInsetCm-v"></output></label><input type="range" id="glassInsetCm" min="0.5" max="6" step="0.5"></div>
-    <div class="row"><label>Рамка <output id="doorFrameThicknessCm-v"></output></label><input type="range" id="doorFrameThicknessCm" min="1" max="6" step="0.5"></div>
-    <div class="row"><label>Кут відкриття <output id="doorOpenAngleDeg-v"></output></label><input type="range" id="doorOpenAngleDeg" min="30" max="120" step="1"></div>
+  <details><summary data-i18n="secChimney">Димохід / дверцята</summary><div class="body">
+    <div class="row"><label><span data-i18n="chimDia">Ø димоходу</span> <output id="chimneyDiameterCm-v"></output></label><input type="range" id="chimneyDiameterCm" min="10" max="25" step="0.5"></div>
+    <div class="row"><label><span data-i18n="chimH">Висота труби</span> <output id="chimneyHeightCm-v"></output></label><input type="range" id="chimneyHeightCm" min="100" max="150" step="1"></div>
+    <div class="row"><label><span data-i18n="doorW">Ширина дверцят</span> <output id="doorWidthCm-v"></output></label><input type="range" id="doorWidthCm" min="20" max="70" step="1"></div>
+    <div class="row"><label><span data-i18n="doorH">Висота дверцят</span> <output id="doorHeightCm-v"></output></label><input type="range" id="doorHeightCm" min="20" max="70" step="1"></div>
+    <div class="row"><label><span data-i18n="glassInset">Відступ скла</span> <output id="glassInsetCm-v"></output></label><input type="range" id="glassInsetCm" min="0.5" max="6" step="0.5"></div>
+    <div class="row"><label><span data-i18n="frame">Рамка</span> <output id="doorFrameThicknessCm-v"></output></label><input type="range" id="doorFrameThicknessCm" min="1" max="6" step="0.5"></div>
+    <div class="row"><label><span data-i18n="openAngle">Кут відкриття</span> <output id="doorOpenAngleDeg-v"></output></label><input type="range" id="doorOpenAngleDeg" min="30" max="120" step="1"></div>
   </div></details>
 
-  <details open><summary>Фізика v2</summary><div class="body" id="physics">
+  <details open><summary data-i18n="secPhys">Фізика v2</summary><div class="body" id="physics">
     <div class="kpi">
-      <div class="card"><span>ККД</span><b id="m-eff">—</b></div>
-      <div class="card"><span>Потужність</span><b id="m-kw">—</b></div>
-      <div class="card"><span>Горіння</span><b id="m-burn">—</b></div>
-      <div class="card"><span>Тяга / топка</span><b id="m-draft">—</b></div>
+      <div class="card"><span data-i18n="kEff">ККД</span><b id="m-eff">—</b></div>
+      <div class="card"><span data-i18n="kKw">Потужність</span><b id="m-kw">—</b></div>
+      <div class="card"><span data-i18n="kBurn">Горіння</span><b id="m-burn">—</b></div>
+      <div class="card"><span data-i18n="kDraft">Тяга / топка</span><b id="m-draft">—</b></div>
     </div>
     <ul id="warnings"></ul>
   </div></details>
 
-  <details><summary>Камера</summary><div class="body">
-    <div class="row"><label>FOV <output id="cameraFov-v"></output></label><input type="range" id="cameraFov" min="35" max="85" step="1"></div>
-    <div class="row"><label>Дистанція <output id="cameraDistance-v"></output></label><input type="range" id="cameraDistance" min="140" max="500" step="5"></div>
-    <div class="row"><label>Фокус Y <output id="cameraTargetYCm-v"></output></label><input type="range" id="cameraTargetYCm" min="20" max="180" step="1"></div>
+  <details><summary data-i18n="secCam">Камера</summary><div class="body">
+    <div class="row"><label><span data-i18n="fov">FOV</span> <output id="cameraFov-v"></output></label><input type="range" id="cameraFov" min="35" max="85" step="1"></div>
+    <div class="row"><label><span data-i18n="dist">Дистанція</span> <output id="cameraDistance-v"></output></label><input type="range" id="cameraDistance" min="140" max="500" step="5"></div>
+    <div class="row"><label><span data-i18n="focusY">Фокус Y</span> <output id="cameraTargetYCm-v"></output></label><input type="range" id="cameraTargetYCm" min="20" max="180" step="1"></div>
   </div></details>
 
   <div class="btns">
-    <button id="toggleDoor">Відкрити дверця</button>
+    <button id="toggleDoor" data-i18n="openDoor">Відкрити дверця</button>
     <button id="toggleExplode" class="ghost">Explode</button>
-    <button id="resetConfig" class="ghost">Скинути</button>
+    <button id="resetConfig" class="ghost" data-i18n="reset">Скинути</button>
   </div>
   <div class="btns">
     <button id="saveJson" class="green">JSON ⤓</button>
@@ -119,15 +120,15 @@
 </aside>
 
 <div id="tour"><div class="card">
-  <h2>Тур по Woodstove 2</h2>
-  <ol>
+  <h2 data-i18n="tourTitle">Тур по Woodstove 2</h2>
+  <ol id="tourList">
     <li><b>Бафль</b> — подовжує шлях газів, піднімає догорання. Контролюй висоту/кут/зазор.</li>
     <li><b>Air-wash</b> — щілина над склом + приток. Вузька щілина + сильний вогонь = кіптява.</li>
     <li><b>Режими</b> — пресет повітря і полум'я. Фізика v2 враховує тягу димоходу.</li>
     <li><b>Креслення</b> — front/side/top з SVG-розмірами. Камера фіксується.</li>
     <li><b>Експорт</b> — GLTF/STL для виробництва, JSON — для обміну конфігом.</li>
   </ol>
-  <button id="closeTour">Зрозуміло</button>
+  <button id="closeTour" data-i18n="tourClose">Зрозуміло</button>
 </div></div>
 
 <script type="module" src="./js/app.js"></script>

@@ -5,6 +5,10 @@ import { defaultConfig, loadConfig, saveConfig, normalizeConfig, applyModePreset
 import { PhysicsModel } from './physics-model.js';
 import { buildStove, disposeGroup } from './stove-builder.js';
 import { exportGLTF, exportSTL } from './exporters.js';
+import { STR, WARN_TXT, TOUR, getLang, setLang } from './i18n.js';
+
+let lang = getLang();
+const t = (k) => (STR[lang] && STR[lang][k]) || STR.uk[k] || k;
 
 let config = loadConfig();
 const cache = new Map(); // кеш матеріалів
@@ -117,19 +121,20 @@ function project(v3) {
 }
 function renderOverlaySVG() {
   const { widthCm: W, depthCm: D, heightCm: H, legHeightCm: L } = config.dimensions;
+  const u = t('unitCm');
   const svgNS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(svgNS, 'svg');
   const dims = [];
   if (config.viewMode === 'drawing-front') {
-    dims.push({ t: `W: ${W} см`, a: new THREE.Vector3(-W / 2, L + 4, D / 2 + 3), b: new THREE.Vector3(W / 2, L + 4, D / 2 + 3) });
-    dims.push({ t: `H: ${H + L} см`, a: new THREE.Vector3(W / 2 + 7, L, D / 2 + 3), b: new THREE.Vector3(W / 2 + 7, L + H, D / 2 + 3) });
+    dims.push({ t: `W: ${W} ${u}`, a: new THREE.Vector3(-W / 2, L + 4, D / 2 + 3), b: new THREE.Vector3(W / 2, L + 4, D / 2 + 3) });
+    dims.push({ t: `H: ${H + L} ${u}`, a: new THREE.Vector3(W / 2 + 7, L, D / 2 + 3), b: new THREE.Vector3(W / 2 + 7, L + H, D / 2 + 3) });
   } else if (config.viewMode === 'drawing-side') {
-    dims.push({ t: `D: ${D} см`, a: new THREE.Vector3(W / 2 + 3, L + 4, -D / 2), b: new THREE.Vector3(W / 2 + 3, L + 4, D / 2) });
-    dims.push({ t: `H: ${H + L} см`, a: new THREE.Vector3(W / 2 + 3, L, D / 2 + 8), b: new THREE.Vector3(W / 2 + 3, L + H, D / 2 + 8) });
+    dims.push({ t: `D: ${D} ${u}`, a: new THREE.Vector3(W / 2 + 3, L + 4, -D / 2), b: new THREE.Vector3(W / 2 + 3, L + 4, D / 2) });
+    dims.push({ t: `H: ${H + L} ${u}`, a: new THREE.Vector3(W / 2 + 3, L, D / 2 + 8), b: new THREE.Vector3(W / 2 + 3, L + H, D / 2 + 8) });
   } else {
     const y = L + H + 4;
-    dims.push({ t: `W: ${W} см`, a: new THREE.Vector3(-W / 2, y, D / 2 + 5), b: new THREE.Vector3(W / 2, y, D / 2 + 5) });
-    dims.push({ t: `D: ${D} см`, a: new THREE.Vector3(W / 2 + 5, y, -D / 2), b: new THREE.Vector3(W / 2 + 5, y, D / 2) });
+    dims.push({ t: `W: ${W} ${u}`, a: new THREE.Vector3(-W / 2, y, D / 2 + 5), b: new THREE.Vector3(W / 2, y, D / 2 + 5) });
+    dims.push({ t: `D: ${D} ${u}`, a: new THREE.Vector3(W / 2 + 5, y, -D / 2), b: new THREE.Vector3(W / 2 + 5, y, D / 2) });
   }
   for (const dm of dims) {
     const a = project(dm.a), b = project(dm.b);
@@ -155,14 +160,16 @@ function renderOverlaySVG() {
 // ---------- фізика ----------
 function renderPhysics() {
   const r = PhysicsModel.evaluate(config);
+  const kwU = lang === 'en' ? 'kW' : 'кВт';
   document.getElementById('m-eff').textContent = `${r.metrics.efficiencyPct}%`;
-  document.getElementById('m-kw').textContent = `${r.metrics.heatOutputKw} кВт`;
-  document.getElementById('m-burn').textContent = `${r.metrics.burnTimeHours} год`;
-  document.getElementById('m-draft').textContent = `${r.metrics.draftPa} Па · ${r.metrics.fireboxLiters} л`;
+  document.getElementById('m-kw').textContent = `${r.metrics.heatOutputKw} ${kwU}`;
+  document.getElementById('m-burn').textContent = `${r.metrics.burnTimeHours} ${t('unitH')}`;
+  document.getElementById('m-draft').textContent = `${r.metrics.draftPa} ${t('unitPa')} · ${r.metrics.fireboxLiters} ${t('unitL')}`;
   const ul = document.getElementById('warnings'); ul.innerHTML = '';
-  if (!r.warnings.length) ul.innerHTML = '<li>Проблем не виявлено.</li>';
+  if (!r.warnings.length) ul.innerHTML = `<li>${t('noIssues')}</li>`;
   for (const wmsg of r.warnings) {
-    const li = document.createElement('li'); li.className = wmsg.level; li.textContent = `[${wmsg.code}] ${wmsg.message}`;
+    const li = document.createElement('li'); li.className = wmsg.level;
+    li.textContent = `[${wmsg.code}] ${warnText(wmsg.code, wmsg.message, r.metrics.draftPa)}`;
     ul.appendChild(li);
   }
 }
@@ -184,11 +191,37 @@ const controlMap = {
 };
 function fmt(id, v) {
   if (String(id).includes('Pct') || id === 'baffleAirflowPct' || id === 'airWashIntakePct') return `${v}%`;
-  if (id === 'steelThicknessMm') return `${v} мм`;
+  if (id === 'steelThicknessMm') return `${v} ${t('unitMm')}`;
   if (/Deg|Fov/i.test(id)) return `${v}°`;
   if (id === 'steelRoughness' || id === 'steelMetalness') return `${(+v).toFixed(2)}`;
   if (/Color/i.test(id)) return `${v}`;
-  return `${v} см`;
+  return `${v} ${t('unitCm')}`;
+}
+function warnText(code, fallback, draftPa) {
+  const dict = WARN_TXT[lang] || WARN_TXT.uk;
+  const entry = dict[code];
+  if (typeof entry === 'function') return entry(draftPa);
+  return entry || fallback;
+}
+function applyI18n() {
+  document.documentElement.lang = lang === 'en' ? 'en' : 'uk';
+  document.title = t('title');
+  document.querySelectorAll('[data-i18n]').forEach((el) => {
+    const k = el.getAttribute('data-i18n');
+    if (STR[lang][k] && el.id !== 'toggleDoor') el.textContent = STR[lang][k];
+  });
+  document.getElementById('langToggle').textContent = lang === 'en' ? 'UA' : 'EN';
+  document.getElementById('exportGltf').title = lang === 'en' ? 'Export scene as glTF' : 'Експорт сцени в glTF';
+  document.getElementById('exportStl').title = lang === 'en' ? 'Export scene as STL' : 'Експорт сцени в STL';
+  const ol = document.getElementById('tourList');
+  if (ol) ol.innerHTML = TOUR[lang].map((li) => `<li>${li}</li>`).join('');
+  syncDoorBtn(); syncExplodeBtn(); syncUI(); renderPhysics();
+}
+function syncDoorBtn() {
+  document.getElementById('toggleDoor').textContent = config.door.isOpen ? t('closeDoor') : t('openDoor');
+}
+function syncExplodeBtn() {
+  document.getElementById('toggleExplode').textContent = config.explode.enabled ? t('assemble') : t('explode');
 }
 function syncUI() {
   for (const [id, path] of Object.entries(controlMap)) {
@@ -239,18 +272,18 @@ function bindUI() {
   document.getElementById('toggleDoor').addEventListener('click', () => {
     config.door.isOpen = !config.door.isOpen; saveConfig(config);
     doorTarget = config.door.isOpen ? -THREE.MathUtils.degToRad(config.door.openAngleDeg) : 0;
-    document.getElementById('toggleDoor').textContent = config.door.isOpen ? 'Закрити дверця' : 'Відкрити дверця';
+    syncDoorBtn();
   });
-  document.getElementById('toggleExplode').addEventListener('click', (e) => {
+  document.getElementById('toggleExplode').addEventListener('click', () => {
     config.explode.enabled = !config.explode.enabled; saveConfig(config);
     explodeTarget = config.explode.enabled ? 1 : 0;
-    e.target.textContent = config.explode.enabled ? 'Зібрати' : 'Explode';
+    syncExplodeBtn();
   });
   document.getElementById('resetConfig').addEventListener('click', () => {
     localStorage.removeItem('woodstove2ConfigV1');
     config = normalizeConfig(structuredClone(defaultConfig));
     cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
-    document.getElementById('toggleDoor').textContent = 'Відкрити дверця';
+    syncDoorBtn();
   });
   document.getElementById('saveJson').addEventListener('click', () => {
     const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
@@ -267,8 +300,12 @@ function bindUI() {
       // глибока міграція кольорів
       config.colors = { ...defaultConfig.colors, ...(parsed.colors || {}) };
       saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
-    } catch { alert('Невалідний JSON'); }
+    } catch { alert(lang === 'en' ? 'Invalid JSON' : 'Невалідний JSON'); }
     e.target.value = '';
+  });
+  document.getElementById('langToggle').addEventListener('click', () => {
+    lang = lang === 'en' ? 'uk' : 'en'; setLang(lang); applyI18n();
+    if (config.viewMode !== '3d') renderOverlaySVG();
   });
   document.getElementById('exportGltf').addEventListener('click', () => exportGLTF(stove));
   document.getElementById('exportStl').addEventListener('click', () => exportSTL(stove));
@@ -311,7 +348,5 @@ addEventListener('resize', () => {
 });
 
 // ---------- старт ----------
-bindUI(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
-document.getElementById('toggleDoor').textContent = config.door.isOpen ? 'Закрити дверця' : 'Відкрити дверця';
-document.getElementById('toggleExplode').textContent = config.explode.enabled ? 'Зібрати' : 'Explode';
+bindUI(); applyI18n(); rebuildStove(); applyViewMode();
 animate();
