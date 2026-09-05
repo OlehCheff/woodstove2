@@ -22,7 +22,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0f1115);
 const camera = new THREE.PerspectiveCamera(config.camera.fov, innerWidth / innerHeight, 0.5, 4000);
 camera.position.set(190, 170, 220);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
@@ -225,10 +225,15 @@ function renderTestBurn() {
   if (recommendation) recommendation.textContent = `${t('recommendedLoad')}: ${predicted.metrics.recommendedLoadKg} kg · ${t('maxLoad')}: ${predicted.metrics.maxLoadKg} kg`;
   const usableEnergy = loadKg * 4.1 * (1 - test.woodMoisturePct / 100) * (predicted.metrics.efficiencyPct / 100);
   const measuredPower = usableEnergy / Math.max(test.measuredBurnHours, 0.1);
-  const errorPct = ((measuredPower - predicted.metrics.heatOutputKw) / Math.max(predicted.metrics.heatOutputKw, 0.1)) * 100;
+  const flueTempAdj = clamp(test.flueTempC / Math.max(predicted.metrics.draftPa * 20, 10), 0.5, 2.0);
+  const smokePenalty = test.smokeOpacityPct / 100 * 6;
+  const glassAdj = clamp(test.glassTempC / 180, 0.5, 1.5);
+  const adjustedEfficiency = clamp(predicted.metrics.efficiencyPct * flueTempAdj * glassAdj / 100 * (1 - smokePenalty), 52, 86);
+  const adjustedPower = measuredPower * (adjustedEfficiency / Math.max(predicted.metrics.efficiencyPct, 1));
+  const errorPct = ((adjustedPower - predicted.metrics.heatOutputKw) / Math.max(predicted.metrics.heatOutputKw, 0.1)) * 100;
   const statusClass = Math.abs(errorPct) <= 15 ? '' : 'bad';
-  target.innerHTML = `<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} kW · ${predicted.metrics.burnTimeHours} ${t('unitH')}</div>
-    <div><b>${t('measured')}:</b> ${measuredPower.toFixed(2)} kW · ${test.measuredBurnHours} ${t('unitH')}</div>
+  target.innerHTML = `<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} kW · ${predicted.metrics.efficiencyPct}% ККД</div>
+    <div><b>${t('measured')}:</b> ${adjustedPower.toFixed(2)} kW · ${adjustedEfficiency.toFixed(0)}% (темпер. ${test.flueTempC}°C, дим ${test.smokeOpacityPct}%)</div>
     <div class="${statusClass}"><b>${t('error')}:</b> ${errorPct >= 0 ? '+' : ''}${errorPct.toFixed(1)}%</div>`;
 }
 

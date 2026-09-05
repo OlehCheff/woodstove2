@@ -47,6 +47,30 @@ export function buildStove(cfg, cache = new Map()) {
   const right = plate(steelT, h, d, steel); right.position.set(w / 2 - steelT / 2, h / 2, 0); shell.add(right);
   const back = plate(w, h, steelT, steel); back.position.set(0, h / 2, -d / 2 + steelT / 2); shell.add(back);
 
+  // Передня стінка з вирізом під дверцята (без передньої стінки дверцята "плавали")
+  const doorWc = Math.max(20, Math.min(cfg.door.widthCm, w - steelT * 4));
+  const doorHc = Math.max(20, Math.min(cfg.door.heightCm, h - steelT * 4));
+  const frontShape = new THREE.Shape();
+  frontShape.moveTo(-w / 2, -h / 2);
+  frontShape.lineTo(w / 2, -h / 2);
+  frontShape.lineTo(w / 2, h / 2);
+  frontShape.lineTo(-w / 2, h / 2);
+  frontShape.lineTo(-w / 2, -h / 2);
+  const doorPath = new THREE.Path();
+  const dw = doorWc / 2, dh = doorHc / 2;
+  const doorCenterY = h * 0.48;
+  doorPath.moveTo(-dw, doorCenterY - dh);
+  doorPath.lineTo(dw, doorCenterY - dh);
+  doorPath.lineTo(dw, doorCenterY + dh);
+  doorPath.lineTo(-dw, doorCenterY + dh);
+  doorPath.lineTo(-dw, doorCenterY - dh);
+  frontShape.holes.push(doorPath);
+  const frontGeom = new THREE.ExtrudeGeometry(frontShape, { depth: steelT, bevelEnabled: false });
+  const frontPanel = new THREE.Mesh(frontGeom, steel);
+  frontPanel.position.set(0, 0, d / 2 - steelT / 2);
+  frontPanel.castShadow = frontPanel.receiveShadow = true;
+  shell.add(frontPanel);
+
   // верх з вирізом під димохід: 4 планки навколо коміра (щільне з'єднання, без z-fight)
   const chimR = cfg.chimney.diameterCm / 2;
   const chimZ = -d * 0.2;
@@ -118,8 +142,6 @@ export function buildStove(cfg, cache = new Map()) {
   }
   airSystems.add(secondary);
 
-  const doorWc = Math.max(20, Math.min(cfg.door.widthCm, w - steelT * 4));
-  const doorHc = Math.max(20, Math.min(cfg.door.heightCm, h - steelT * 4));
   const washW = Math.max(12, Math.min(w - steelT * 3, doorWc + 6));
   const washY = h * 0.48 + doorHc / 2 + 4.2;
   const airWash = new THREE.Group(); airWash.name = 'airWashChannel';
@@ -220,8 +242,8 @@ export function buildStove(cfg, cache = new Map()) {
   }
 
   group.add(shell);
-  const refs = { shell, chimney, collar, doorPivot, firebrick, baffle, airSystems, chamber, flame, core, outer, sparks, shutter, flow, flowArrows };
-  for (const n of [chimney, collar, doorPivot, firebrick, baffle, airSystems, chamber, flow]) {
+  const refs = { shell, chimney, collar, doorPivot, frontPanel, firebrick, baffle, airSystems, chamber, flame, core, outer, sparks, shutter, flow, flowArrows };
+  for (const n of [chimney, collar, doorPivot, frontPanel, firebrick, baffle, airSystems, chamber, flow]) {
     if (n) n.userData.basePosition = n.position.clone();
   }
   return { group, refs };

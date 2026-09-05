@@ -34,6 +34,8 @@ export const PhysicsModel = {
     const washWidthPct = +config?.airWash?.slotWidthPct ?? 94;
     const baffleFlow = +config?.baffle?.airflowPct ?? 55;
     const baffleGap = +config?.baffle?.frontGapCm ?? 6;
+    const baffleHeight = +config?.baffle?.heightCm ?? 58;
+    const baffleAngle = +config?.baffle?.angleDeg ?? 6;
     const flame = +config?.operation?.flameIntensity ?? 0.62;
 
     const secondary = config?.secondaryAir || {};
@@ -54,8 +56,13 @@ export const PhysicsModel = {
     const effectiveIntakeAreaCm2 = primaryOpeningAreaCm2 + secondaryOpeningAreaCm2 + airWashOpeningAreaCm2;
 
     // Тяга і пропускна здатність: спрощена модель для порівняння варіантів.
-    const draftPa = clamp((chimH / 100) * (3.2 + flame * 9) * (chimD / 15) ** 2, 4, 30);
-    const stackVelocityMs = clamp(0.75 * Math.sqrt(draftPa), 1, 6);
+    const baffleHeightNorm = clamp((baffleHeight - 20) / 60, 0, 1);
+    const baffleAngleNorm = clamp(baffleAngle / 15, -1, 1);
+    const baffleEfficiencyBonus = baffleHeightNorm * 4 + baffleAngleNorm * 2;
+    const baffleDraftPenalty = baffleHeightNorm * 1.2;
+    const bafflePreheatBonus = baffleHeightNorm * 25 + baffleAngleNorm * 15;
+    const draftPa = clamp((chimH / 100) * (3.2 + flame * 9) * (chimD / 15) ** 2 - baffleDraftPenalty, 4, 30);
+    const stackVelocityMs = clamp(0.75 * Math.sqrt(Math.max(draftPa, 0.1)), 1, 6);
     const draftFlowM3s = clamp((chimneyAreaCm2 / 10000) * stackVelocityMs, 0.003, 0.15);
     const secondaryVelocityMs = clamp((draftPa * 0.12) / Math.max(secondaryOpeningAreaCm2, 0.4), 0.05, 8);
     const airWashVelocityMs = clamp((draftPa * 0.04) / Math.max(airWashOpeningAreaCm2 / 10, 0.6), 0.05, 5);
@@ -63,7 +70,7 @@ export const PhysicsModel = {
     const secondaryDemandCm2 = clamp(fireboxLiters * 0.02, 2, 12);
     const secondaryCoverage = clamp(secondaryOpeningAreaCm2 / secondaryDemandCm2, 0, 1.5);
     const airWashCoverage = clamp(airWashOpeningAreaCm2 / Math.max(doorWidth * 0.9, 1), 0, 1.5);
-    const secondaryPreheatC = clamp(20 + (+secondary.preheatLengthCm || 55) * 1.9 + flame * 95, 60, 420);
+    const secondaryPreheatC = clamp(20 + (+secondary.preheatLengthCm || 55) * 1.9 + flame * 95 + bafflePreheatBonus, 60, 420);
     const airWashPreheatC = clamp(20 + (+airWash.preheatLengthCm || 45) * 1.7 + flame * 65, 50, 340);
 
     const washEffPct = clamp((washGap / 3) * (washIntake / 100) * 100, 0, 100);
@@ -71,13 +78,13 @@ export const PhysicsModel = {
     const staging = clamp((secondaryPct - 20) * 0.06 + (baffleFlow - 50) * 0.04, -4, +5);
     const secondaryQuality = clamp((secondaryCoverage - 0.75) * 4 + (secondaryPreheatC - 160) / 120, -3, 4);
     const draftBonus = (clamp(chimH / 120, 0.8, 1.25) - 1) * 8;
-    const efficiencyPct = clamp(62 + airMix * 20 + staging + secondaryQuality + draftBonus + mc.effBias, 52, 86);
+    const efficiencyPct = clamp(62 + airMix * 20 + staging + secondaryQuality + draftBonus + baffleEfficiencyBonus + mc.effBias, 52, 86);
 
     const draftFactor = clamp(draftPa / 12, 0.7, 1.3);
     const geometryFactor = clamp((w * d * h) / 1e6 / 0.36, 0.75, 1.25);
     const heatOutputKw = clamp(
       fireboxLiters * 0.065 * (0.35 + 0.65 * airMix) * mc.powerFactor * draftFactor * geometryFactor,
-      2.0, 16.0
+      1.0, 20.0
     );
     // Орієнтир: ~120 кг/м³ насипної маси сухих полін, не щільність деревини.
     // Безпечна максимальна закладка залишає місце для полум'я та вторинного повітря.
