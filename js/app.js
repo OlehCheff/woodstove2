@@ -296,19 +296,24 @@ function shareConfig() {
 }
 
 function downloadScreenshot() {
-  const link = document.createElement('a');
-  link.download = `woodstove-${Date.now()}.png`;
-  link.href = renderer.domElement.toDataURL('image/png'); link.click();
+  try {
+    const dataUrl = renderer.domElement.toDataURL('image/png');
+    const link = document.createElement('a');
+    link.download = `woodstove-${Date.now()}.png`;
+    link.href = dataUrl; link.click();
+  } catch(e) { console.error('Screenshot failed:', e); }
 }
 
 function printReport() {
-  const report = window.open('', '_blank', 'noopener,noreferrer');
-  if (!report) return;
-  const metrics = getCompareMetrics(config);
-  const rows = Object.entries(metrics).map(([key, value]) => `<tr><td>${key}</td><td>${value}</td></tr>`).join('');
-  const image = renderer.domElement.toDataURL('image/png');
-  report.document.write(`<!doctype html><html lang="${lang}"><head><title>${t('title')}</title><style>body{font:14px Arial;color:#172033;padding:24px}h1{font-size:22px}img{max-width:100%;background:#101318;border-radius:10px}table{border-collapse:collapse;margin-top:14px}td{border-bottom:1px solid #ddd;padding:7px 14px 7px 0}</style></head><body><h1>🔥 Woodstove 2</h1><p>${new Date().toLocaleString()}</p><img src="${image}"><table>${rows}</table><script>window.onload=()=>window.print()<\/script></body></html>`);
-  report.document.close();
+  try {
+    const dataUrl = renderer.domElement.toDataURL('image/png');
+    const report = window.open('about:blank', '_blank', 'noopener,noreferrer');
+    if (!report) return;
+    const metrics = getCompareMetrics(config);
+    const rows = Object.entries(metrics).map(([key, value]) => `<tr><td>${key}</td><td>${value}</td></tr>`).join('');
+    report.document.write(`<!doctype html><html lang="${lang}"><head><title>${t('title')}</title><style>body{font:14px Arial;color:#172033;padding:24px}h1{font-size:22px}img{max-width:100%;background:#101318;border-radius:10px}table{border-collapse:collapse;margin-top:14px}td{border-bottom:1px solid #ddd;padding:7px 14px 7px 0}</style></head><body><h1>🔥 Woodstove 2</h1><p>${new Date().toLocaleString()}</p><img id="repImg" src="${dataUrl}"><table>${rows}</table><script>document.getElementById('repImg').onload=function(){window.print()}<\/script></body></html>`);
+    report.document.close();
+  } catch(e) { console.error('Print report failed:', e); alert(lang === 'en' ? 'Print failed' : 'Друк не вдався'); }
 }
 
 // ---------- UI прив'язка ----------
