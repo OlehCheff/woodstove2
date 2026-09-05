@@ -1,6 +1,4 @@
-// PhysicsModel v2 — прозора оціночна модель (не CFD).
-// Входи: config (dimensions, materials, chimney, baffle, primaryAir, secondaryAir, airWash, operation)
-// Виходи: { mode, metrics:{efficiencyPct, heatOutputKw, burnTimeHours, draftPa, fireboxLiters}, warnings[], breakdown{} }
+// PhysicsModel v3 — оціночна airflow/thermal модель, не CFD і не сертифікація.
 import { OPERATION_PRESETS } from './config.js';
 
 const MODE_COEFF = {
@@ -10,16 +8,17 @@ const MODE_COEFF = {
   'high':      { effBias: -2, powerFactor: 1.18, burnFactor: 0.74, fillFactor: 0.85 },
   'overnight': { effBias: -6, powerFactor: 0.42, burnFactor: 1.75, fillFactor: 1.0 },
 };
-const WOOD_KWH_PER_KG = 4.1; // бук, ~15% вологи
+const WOOD_KWH_PER_KG = 4.1;
+const PI = Math.PI;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const round = (v, d) => Math.round(v * 10 ** d) / 10 ** d;
 const safeMode = (m) => (MODE_COEFF[m] ? m : 'medium');
+const circleArea = (diameterCm) => PI * (diameterCm / 2) ** 2;
 
 export const PhysicsModel = {
   evaluate(config) {
     const mode = safeMode(config?.operation?.mode);
     const mc = { ...MODE_COEFF[mode], ...(OPERATION_PRESETS[mode] || {}) };
-
     const w = +config?.dimensions?.widthCm || 70;
     const d = +config?.dimensions?.depthCm || 55;
     const h = +config?.dimensions?.heightCm || 95;
@@ -32,38 +31,54 @@ export const PhysicsModel = {
     const secondaryPct = +config?.operation?.secondaryAirPct ?? 55;
     const washGap = +config?.airWash?.gapCm ?? 1.4;
     const washIntake = +config?.airWash?.intakePct ?? 60;
+    const washWidthPct = +config?.airWash?.slotWidthPct ?? 94;
     const baffleFlow = +config?.baffle?.airflowPct ?? 55;
     const baffleGap = +config?.baffle?.frontGapCm ?? 6;
     const flame = +config?.operation?.flameIntensity ?? 0.62;
 
-    // --- топка ---
+    const secondary = config?.secondaryAir || {};
+    const airWash = config?.airWash || {};
     const steelCm = steelMm / 10;
     const innerW = Math.max(10, w - steelCm * 2 - brickCm * 2);
     const innerD = Math.max(10, d - steelCm * 2 - brickCm * 2);
-    const innerH = Math.max(10, h * 0.62 - brickCm); // корисна висота над колосником, під бафлем
+    const innerH = Math.max(10, h * 0.62 - brickCm);
     const fireboxLiters = (innerW * innerD * innerH) / 1000;
 
-    // --- повітря ---
-    const washEffPct = (washGap / 3) * (washIntake / 100) * 100; // 0..100
-    const airMix = (primaryPct * 0.55 + secondaryPct * 0.35 + washEffPct * 0.10) / 100; // 0..1
-    const staging = clamp((secondaryPct - 20) * 0.06 + (baffleFlow - 50) * 0.04, -4, +5);
+    // Фізичні площі проходів, а не тільки UI-відсотки.
+    const primaryOpeningAreaCm2 = circleArea(+config?.primaryAir?.holeDiameterCm || 1.2) * (+config?.primaryAir?.holeCount || 8) * primaryPct / 100;
+    const secondaryOpeningAreaCm2 = circleArea(+secondary.holeDiameterCm || 0.7) * (+secondary.holeCount || 10) * (baffleFlow / 100);
+    const doorWidth = Math.max(20, Math.min(+config?.door?.widthCm || 42, w - steelCm * 4));
+    const slotWidthCm = doorWidth * washWidthPct / 100;
+    const airWashOpeningAreaCm2 = slotWidthCm * washGap * washIntake / 100;
+    const chimneyAreaCm2 = circleArea(chimD);
+    const effectiveIntakeAreaCm2 = primaryOpeningAreaCm2 + secondaryOpeningAreaCm2 + airWashOpeningAreaCm2;
 
-    // --- тяга (спрощено: висота × переріз × температура) ---
+    // Тяга і пропускна здатність: спрощена модель для порівняння варіантів.
     const draftPa = clamp((chimH / 100) * (3.2 + flame * 9) * (chimD / 15) ** 2, 4, 30);
+    const stackVelocityMs = clamp(0.75 * Math.sqrt(draftPa), 1, 6);
+    const draftFlowM3s = clamp((chimneyAreaCm2 / 10000) * stackVelocityMs, 0.003, 0.15);
+    const secondaryVelocityMs = clamp((draftPa * 0.12) / Math.max(secondaryOpeningAreaCm2, 0.4), 0.05, 8);
+    const airWashVelocityMs = clamp((draftPa * 0.04) / Math.max(airWashOpeningAreaCm2 / 10, 0.6), 0.05, 5);
 
-    // --- ККД ---
+    const secondaryDemandCm2 = clamp(fireboxLiters * 0.02, 2, 12);
+    const secondaryCoverage = clamp(secondaryOpeningAreaCm2 / secondaryDemandCm2, 0, 1.5);
+    const airWashCoverage = clamp(airWashOpeningAreaCm2 / Math.max(doorWidth * 0.9, 1), 0, 1.5);
+    const secondaryPreheatC = clamp(20 + (+secondary.preheatLengthCm || 55) * 1.9 + flame * 95, 60, 420);
+    const airWashPreheatC = clamp(20 + (+airWash.preheatLengthCm || 45) * 1.7 + flame * 65, 50, 340);
+
+    const washEffPct = clamp((washGap / 3) * (washIntake / 100) * 100, 0, 100);
+    const airMix = (primaryPct * 0.55 + secondaryPct * 0.35 + washEffPct * 0.10) / 100;
+    const staging = clamp((secondaryPct - 20) * 0.06 + (baffleFlow - 50) * 0.04, -4, +5);
+    const secondaryQuality = clamp((secondaryCoverage - 0.75) * 4 + (secondaryPreheatC - 160) / 120, -3, 4);
     const draftBonus = (clamp(chimH / 120, 0.8, 1.25) - 1) * 8;
-    const efficiencyPct = clamp(62 + airMix * 20 + staging + draftBonus + mc.effBias, 52, 86);
+    const efficiencyPct = clamp(62 + airMix * 20 + staging + secondaryQuality + draftBonus + mc.effBias, 52, 86);
 
-    // --- потужність ---
     const draftFactor = clamp(draftPa / 12, 0.7, 1.3);
     const geometryFactor = clamp((w * d * h) / 1e6 / 0.36, 0.75, 1.25);
     const heatOutputKw = clamp(
       fireboxLiters * 0.065 * (0.35 + 0.65 * airMix) * mc.powerFactor * draftFactor * geometryFactor,
       2.0, 16.0
     );
-
-    // --- час горіння: енергія закладки / потужність ---
     const loadKg = fireboxLiters * 0.10 * (mc.fillFactor ?? 0.7);
     const burnTimeHours = clamp(
       ((loadKg * WOOD_KWH_PER_KG * (efficiencyPct / 100)) / Math.max(heatOutputKw, 0.1)) * mc.burnFactor * (1 + steelMm * 0.015),
@@ -83,25 +98,37 @@ export const PhysicsModel = {
       warnings.push({ level: 'warn', code: 'DRAFT_WEAK', message: `Слабка тяга (${round(draftPa, 1)} Па): збільшіть висоту/Ø димоходу або інтенсивність.` });
     if (baffleGap > 12)
       warnings.push({ level: 'info', code: 'BAFFLE_GAP', message: 'Великий передній зазор бафля — гази йдуть повз догорання.' });
+    if (secondaryCoverage < 0.62)
+      warnings.push({ level: 'warn', code: 'SECONDARY_RESTRICTED', message: 'Замала площа secondary-отворів для обʼєму топки.' });
+    if (secondaryPreheatC < 130)
+      warnings.push({ level: 'warn', code: 'SECONDARY_COLD', message: 'Secondary air недостатньо підігрівається перед догоранням.' });
+    if (airWashVelocityMs > 2.0 && washWidthPct < 80)
+      warnings.push({ level: 'warn', code: 'AIRWASH_JETS', message: 'Air-wash може працювати струменями: розширте slot або зменште intake.' });
+    if (airWashCoverage < 0.55)
+      warnings.push({ level: 'warn', code: 'AIRWASH_LOW', message: 'Недостатнє покриття скла повітряною завісою.' });
     if (mode === 'start-up' && burnTimeHours > 6)
       warnings.push({ level: 'info', code: 'STARTUP_LONG', message: 'Start-up з довгим горінням — перевірте подачу повітря.' });
 
     return {
+      version: 3,
       mode,
       metrics: {
-        efficiencyPct: round(efficiencyPct, 1),
-        heatOutputKw: round(heatOutputKw, 2),
-        burnTimeHours: round(burnTimeHours, 1),
-        draftPa: round(draftPa, 1),
-        fireboxLiters: round(fireboxLiters, 1),
+        efficiencyPct: round(efficiencyPct, 1), heatOutputKw: round(heatOutputKw, 2), burnTimeHours: round(burnTimeHours, 1),
+        draftPa: round(draftPa, 1), fireboxLiters: round(fireboxLiters, 1),
+        primaryOpeningAreaCm2: round(primaryOpeningAreaCm2, 2), secondaryOpeningAreaCm2: round(secondaryOpeningAreaCm2, 2),
+        airWashOpeningAreaCm2: round(airWashOpeningAreaCm2, 2), chimneyAreaCm2: round(chimneyAreaCm2, 2),
+        stackVelocityMs: round(stackVelocityMs, 2), secondaryVelocityMs: round(secondaryVelocityMs, 2), airWashVelocityMs: round(airWashVelocityMs, 2),
+        secondaryPreheatC: round(secondaryPreheatC, 0), airWashPreheatC: round(airWashPreheatC, 0), draftFlowM3s: round(draftFlowM3s, 3),
       },
-      breakdown: { airMix: round(airMix, 3), staging: round(staging, 2), loadKg: round(loadKg, 1) },
+      breakdown: {
+        airMix: round(airMix, 3), staging: round(staging, 2), loadKg: round(loadKg, 1),
+        secondaryCoverage: round(secondaryCoverage, 2), airWashCoverage: round(airWashCoverage, 2),
+        effectiveIntakeAreaCm2: round(effectiveIntakeAreaCm2, 2),
+      },
       warnings,
     };
   },
 };
 
-// Node-сумісність для тестів
 if (typeof module !== 'undefined' && module.exports) module.exports = { PhysicsModel };
-// Браузерний fallback (не-модульний доступ)
 if (typeof window !== 'undefined') window.PhysicsModel = PhysicsModel;

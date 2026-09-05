@@ -1,4 +1,4 @@
-# Woodstove 2 — Sprint 9 (Product Configurator)
+# Woodstove 2 — Sprint 10 (Airflow Engineering)
 
 Що виправлено відносно `woodstove1` (Sprint 1–7):
 
@@ -12,6 +12,10 @@
 - **Експорт:** GLTF + STL, Save/Load JSON, міграція localStorage V1←V2
 - **Product Sprint 9:** готові моделі `Compact / Standard / Wide / Workshop`, share-link через URL hash, compare конфігурацій, screenshot і Print/PDF-звіт.
 - **Geometry validation:** перевірка дверцят, бафля, primary-отворів, шамоту та димоходу до виробничого етапу.
+- **Airflow Engineering:** бафль має реальний передній газовий прохід; secondary air проходить через вертикальні підігрівальні стояки й manifold; air-wash має бокові канали та суцільну регульовану щілину.
+- **Physics v3:** площі opening, швидкості потоків, draft flow, температури підігріву, secondary/air-wash coverage та stability warnings.
+- **Flow visualization:** синій primary, зелений preheat, помаранчевий secondary, блакитний air-wash, червоний hot gas.
+- **Test Burn:** вологість дров, маса закладки, виміряний час, температури й smoke opacity з порівнянням `predicted vs measured`.
 
 ## Запуск
 - Варіант без збірки: `npx serve .` → відкрити `index.html` (потрібен інтернет для CDN three.js)

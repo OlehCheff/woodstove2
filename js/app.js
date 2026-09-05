@@ -73,6 +73,7 @@ function applyVisibility() {
   refs.baffle.visible = config.visibility.baffle;
   refs.airSystems.visible = config.visibility.airChannels;
   refs.chimney.visible = refs.collar.visible = config.visibility.chimney;
+  if (refs.flow) refs.flow.visible = config.flow.visible;
 }
 function applyExplode(snap = 0) {
   if (snap) explodeCur = explodeTarget;
@@ -168,6 +169,12 @@ function renderPhysics() {
   document.getElementById('m-kw').textContent = `${r.metrics.heatOutputKw} ${kwU}`;
   document.getElementById('m-burn').textContent = `${r.metrics.burnTimeHours} ${t('unitH')}`;
   document.getElementById('m-draft').textContent = `${r.metrics.draftPa} ${t('unitPa')} · ${r.metrics.fireboxLiters} ${t('unitL')}`;
+  document.getElementById('m-secondary-area').textContent = `${r.metrics.secondaryOpeningAreaCm2} cm²`;
+  document.getElementById('m-secondary-velocity').textContent = `${r.metrics.secondaryVelocityMs} m/s`;
+  document.getElementById('m-secondary-preheat').textContent = `${r.metrics.secondaryPreheatC} °C`;
+  document.getElementById('m-airwash-area').textContent = `${r.metrics.airWashOpeningAreaCm2} cm²`;
+  document.getElementById('m-airwash-velocity').textContent = `${r.metrics.airWashVelocityMs} m/s`;
+  document.getElementById('m-airwash-preheat').textContent = `${r.metrics.airWashPreheatC} °C`;
   const ul = document.getElementById('warnings'); ul.innerHTML = '';
   if (!r.warnings.length) ul.innerHTML = `<li>${t('noIssues')}</li>`;
   for (const wmsg of r.warnings) {
@@ -176,6 +183,7 @@ function renderPhysics() {
     ul.appendChild(li);
   }
   renderValidation();
+  renderTestBurn();
 }
 
 function validationText(item) {
@@ -200,6 +208,20 @@ function renderValidation() {
     const li = document.createElement('li'); li.className = 'warning';
     li.textContent = `! ${validationText(item)}`; list.appendChild(li);
   });
+}
+
+function renderTestBurn() {
+  const target = document.getElementById('testBurnResult');
+  if (!target || !config.testBurn) return;
+  const predicted = PhysicsModel.evaluate(config);
+  const test = config.testBurn;
+  const usableEnergy = test.loadKg * 4.1 * (1 - test.woodMoisturePct / 100) * (predicted.metrics.efficiencyPct / 100);
+  const measuredPower = usableEnergy / Math.max(test.measuredBurnHours, 0.1);
+  const errorPct = ((measuredPower - predicted.metrics.heatOutputKw) / Math.max(predicted.metrics.heatOutputKw, 0.1)) * 100;
+  const statusClass = Math.abs(errorPct) <= 15 ? '' : 'bad';
+  target.innerHTML = `<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} kW · ${predicted.metrics.burnTimeHours} ${t('unitH')}</div>
+    <div><b>${t('measured')}:</b> ${measuredPower.toFixed(2)} kW · ${test.measuredBurnHours} ${t('unitH')}</div>
+    <div class="${statusClass}"><b>${t('error')}:</b> ${errorPct >= 0 ? '+' : ''}${errorPct.toFixed(1)}%</div>`;
 }
 
 function syncModelOptions() {
@@ -277,15 +299,23 @@ const controlMap = {
   primaryHoleCount: 'primaryAir.holeCount', primaryHoleDiameterCm: 'primaryAir.holeDiameterCm', primaryHoleSpacingCm: 'primaryAir.holeSpacingCm', primaryAirOpenPct: 'primaryAir.openPct',
   secondaryHoleCount: 'secondaryAir.holeCount', secondaryHoleDiameterCm: 'secondaryAir.holeDiameterCm', secondaryHoleSpacingCm: 'secondaryAir.holeSpacingCm',
   airWashGapCm: 'airWash.gapCm', airWashIntakePct: 'airWash.intakePct',
+  secondaryChannelWidthCm: 'secondaryAir.channelWidthCm', secondaryChannelDepthCm: 'secondaryAir.channelDepthCm',
+  secondaryPreheatLengthCm: 'secondaryAir.preheatLengthCm', secondaryManifoldHeightCm: 'secondaryAir.manifoldHeightCm',
+  airWashSlotWidthPct: 'airWash.slotWidthPct', airWashChannelWidthCm: 'airWash.channelWidthCm', airWashPreheatLengthCm: 'airWash.preheatLengthCm',
   chimneyDiameterCm: 'chimney.diameterCm', chimneyHeightCm: 'chimney.heightCm',
   doorWidthCm: 'door.widthCm', doorHeightCm: 'door.heightCm', glassInsetCm: 'door.glassInsetCm', doorFrameThicknessCm: 'door.frameThicknessCm', doorOpenAngleDeg: 'door.openAngleDeg',
   explodeDistanceCm: 'explode.distanceCm',
   cameraFov: 'camera.fov', cameraDistance: 'camera.distance', cameraTargetYCm: 'camera.targetY',
   steelColor: 'colors.steel', brickColor: 'colors.brick', glassColor: 'colors.glass', floorColor: 'colors.floor',
   steelRoughness: 'colors.steelRoughness', steelMetalness: 'colors.steelMetalness',
+  woodMoisturePct: 'testBurn.woodMoisturePct', loadKg: 'testBurn.loadKg', measuredBurnHours: 'testBurn.measuredBurnHours',
+  flueTempC: 'testBurn.flueTempC', stoveTopTempC: 'testBurn.stoveTopTempC', glassTempC: 'testBurn.glassTempC', smokeOpacityPct: 'testBurn.smokeOpacityPct',
 };
 function fmt(id, v) {
   if (String(id).includes('Pct') || id === 'baffleAirflowPct' || id === 'airWashIntakePct') return `${v}%`;
+  if (id === 'loadKg') return `${v} kg`;
+  if (id === 'measuredBurnHours') return `${v} ${t('unitH')}`;
+  if (/TempC$/.test(id)) return `${v} °C`;
   if (id === 'steelThicknessMm') return `${v} ${t('unitMm')}`;
   if (/Deg|Fov/i.test(id)) return `${v}°`;
   if (id === 'steelRoughness' || id === 'steelMetalness') return `${(+v).toFixed(2)}`;
@@ -329,6 +359,8 @@ function syncUI() {
   for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney' })) {
     const el = document.getElementById(id); if (el) el.checked = config.visibility[k];
   }
+  document.getElementById('showFlow').checked = config.flow.visible;
+  document.getElementById('animateFlow').checked = config.flow.animated;
   document.getElementById('modeHint').textContent =
     `${config.operation.mode} · primary ${Math.round(config.primaryAir.openPct)}% · secondary ${Math.round(config.operation.secondaryAirPct)}%`;
 }
@@ -348,6 +380,9 @@ function bindUI() {
       if (id === 'doorOpenAngleDeg' && config.door.isOpen) doorTarget = -THREE.MathUtils.degToRad(config.door.openAngleDeg);
       if (id === 'explodeDistanceCm') { applyExplode(1); renderPhysics(); return; }
       if (id.startsWith('camera')) { syncCamera(id !== 'cameraTargetYCm'); renderPhysics(); return; }
+      if (id in { woodMoisturePct: 1, loadKg: 1, measuredBurnHours: 1, flueTempC: 1, stoveTopTempC: 1, glassTempC: 1, smokeOpacityPct: 1 }) {
+        renderTestBurn(); return;
+      }
       scheduleRebuild(); renderPhysics();
       if (config.viewMode !== '3d') renderOverlaySVG();
     });
@@ -370,6 +405,12 @@ function bindUI() {
       config.visibility[k] = e.target.checked; saveConfig(config); applyVisibility();
     });
   }
+  document.getElementById('showFlow').addEventListener('change', (e) => {
+    config.flow.visible = e.target.checked; saveConfig(config); applyVisibility();
+  });
+  document.getElementById('animateFlow').addEventListener('change', (e) => {
+    config.flow.animated = e.target.checked; saveConfig(config);
+  });
   document.getElementById('toggleDoor').addEventListener('click', () => {
     config.door.isOpen = !config.door.isOpen; saveConfig(config);
     doorTarget = config.door.isOpen ? -THREE.MathUtils.degToRad(config.door.openAngleDeg) : 0;
@@ -397,9 +438,7 @@ function bindUI() {
     const f = e.target.files?.[0]; if (!f) return;
     try {
       const parsed = JSON.parse(await f.text());
-      config = normalizeConfig({ ...structuredClone(defaultConfig), ...parsed, dimensions: { ...defaultConfig.dimensions, ...parsed.dimensions } });
-      // глибока міграція кольорів
-      config.colors = { ...defaultConfig.colors, ...(parsed.colors || {}) };
+      config = normalizeConfig(deepMerge(structuredClone(defaultConfig), parsed));
       saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
     } catch { alert(lang === 'en' ? 'Invalid JSON' : 'Невалідний JSON'); }
     e.target.value = '';
@@ -420,6 +459,9 @@ function bindUI() {
   });
   document.getElementById('clearCompare').addEventListener('click', () => {
     localStorage.removeItem(COMPARE_KEY); renderCompare();
+  });
+  document.getElementById('saveTestBurn').addEventListener('click', () => {
+    saveConfig(config); renderTestBurn();
   });
   document.getElementById('langToggle').addEventListener('click', () => {
     lang = lang === 'en' ? 'uk' : 'en'; setLang(lang); applyI18n();
@@ -453,6 +495,13 @@ function animate() {
     refs.core.material.opacity = 0.25 + inten * 0.45;
     refs.outer.material.opacity = 0.12 + inten * 0.28;
     refs.sparks.forEach((s, i) => { s.position.y = 1 + ((t * (2 + i * 0.4) + i) % 7); });
+  }
+  if (refs.flow?.visible && config.flow.animated) {
+    const pulse = 0.58 + (Math.sin(t * 5) + 1) * 0.12;
+    refs.flowArrows.forEach((arrow, i) => {
+      arrow.line.material.opacity = pulse + (i % 2) * 0.08;
+      arrow.cone.material.opacity = Math.min(1, pulse + 0.2);
+    });
   }
   controls.update();
   renderer.render(scene, camera);

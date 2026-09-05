@@ -63,11 +63,22 @@ export const defaultConfig = {
   chimney: { diameterCm: 15, heightCm: 120 },
   baffle: { heightCm: 58, angleDeg: 6, frontGapCm: 6, airflowPct: 55 },
   primaryAir: { holeCount: 8, holeDiameterCm: 1.2, holeSpacingCm: 4, openPct: 52 },
-  secondaryAir: { holeCount: 10, holeDiameterCm: 0.7, holeSpacingCm: 2.4 },
-  airWash: { gapCm: 1.4, intakePct: 60 },
+  secondaryAir: {
+    holeCount: 10, holeDiameterCm: 0.7, holeSpacingCm: 2.4,
+    channelWidthCm: 5, channelDepthCm: 4, preheatLengthCm: 55, manifoldHeightCm: 4,
+  },
+  airWash: {
+    gapCm: 1.4, intakePct: 60, slotWidthPct: 94,
+    channelWidthCm: 4, channelDepthCm: 4, preheatLengthCm: 45,
+  },
+  flow: { visible: false, animated: true },
   visibility: { firebrick: true, baffle: true, airChannels: true, chimney: true },
   explode: { enabled: false, distanceCm: 18 },
   operation: { mode: 'medium', secondaryAirPct: 55, flameIntensity: 0.62 },
+  testBurn: {
+    woodMoisturePct: 15, loadKg: 8, measuredBurnHours: 7.5,
+    flueTempC: 260, stoveTopTempC: 420, glassTempC: 180, smokeOpacityPct: 5,
+  },
   viewMode: '3d',
   door: { widthCm: 42, heightCm: 38, frameThicknessCm: 3, glassInsetCm: 2, openAngleDeg: 70, isOpen: false },
   camera: { fov: 50, distance: 270, targetY: 60 },
@@ -125,9 +136,20 @@ export function normalizeConfig(cfg) {
   cfg.secondaryAir.holeCount = clamp(Math.round(+cfg.secondaryAir.holeCount || 10), 4, 24);
   cfg.secondaryAir.holeDiameterCm = clamp(+cfg.secondaryAir.holeDiameterCm || 0.7, 0.4, 1.2);
   cfg.secondaryAir.holeSpacingCm = clamp(+cfg.secondaryAir.holeSpacingCm || 2.4, 1.5, 4);
+  cfg.secondaryAir.channelWidthCm = clamp(+cfg.secondaryAir.channelWidthCm || 5, 2, 12);
+  cfg.secondaryAir.channelDepthCm = clamp(+cfg.secondaryAir.channelDepthCm || 4, 2, 10);
+  cfg.secondaryAir.preheatLengthCm = clamp(+cfg.secondaryAir.preheatLengthCm || 55, 15, 140);
+  cfg.secondaryAir.manifoldHeightCm = clamp(+cfg.secondaryAir.manifoldHeightCm || 4, 2, 10);
 
   cfg.airWash.gapCm = clamp(+cfg.airWash.gapCm || 1.4, 0.5, 3);
   cfg.airWash.intakePct = clamp(+cfg.airWash.intakePct ?? 60, 0, 100);
+  cfg.airWash.slotWidthPct = clamp(+cfg.airWash.slotWidthPct || 94, 40, 100);
+  cfg.airWash.channelWidthCm = clamp(+cfg.airWash.channelWidthCm || 4, 2, 10);
+  cfg.airWash.channelDepthCm = clamp(+cfg.airWash.channelDepthCm || 4, 2, 10);
+  cfg.airWash.preheatLengthCm = clamp(+cfg.airWash.preheatLengthCm || 45, 15, 120);
+
+  cfg.flow.visible = Boolean(cfg.flow.visible);
+  cfg.flow.animated = cfg.flow.animated !== false;
 
   for (const k of ['firebrick', 'baffle', 'airChannels', 'chimney']) cfg.visibility[k] = Boolean(cfg.visibility[k]);
   cfg.explode.enabled = Boolean(cfg.explode.enabled);
@@ -149,6 +171,13 @@ export function normalizeConfig(cfg) {
   cfg.camera.fov = clamp(+cfg.camera.fov || 50, 35, 85);
   cfg.camera.distance = clamp(+cfg.camera.distance || 270, 140, 500);
   cfg.camera.targetY = clamp(+cfg.camera.targetY || 60, 20, 180);
+  cfg.testBurn.woodMoisturePct = clamp(+cfg.testBurn.woodMoisturePct || 15, 8, 35);
+  cfg.testBurn.loadKg = clamp(+cfg.testBurn.loadKg || 8, 1, 30);
+  cfg.testBurn.measuredBurnHours = clamp(+cfg.testBurn.measuredBurnHours || 7.5, 0.1, 30);
+  cfg.testBurn.flueTempC = clamp(+cfg.testBurn.flueTempC || 260, 20, 800);
+  cfg.testBurn.stoveTopTempC = clamp(+cfg.testBurn.stoveTopTempC || 420, 20, 1000);
+  cfg.testBurn.glassTempC = clamp(+cfg.testBurn.glassTempC || 180, 20, 600);
+  cfg.testBurn.smokeOpacityPct = clamp(+cfg.testBurn.smokeOpacityPct || 5, 0, 100);
   return cfg;
 }
 

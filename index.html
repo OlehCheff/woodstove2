@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Woodstove 2 — Sprint 9</title>
+<title>Woodstove 2 — Sprint 10</title>
 <link rel="stylesheet" href="./css/styles.css">
 <script type="importmap">
 { "imports": {
@@ -26,7 +26,7 @@
 </div>
 
 <aside id="panel">
-  <h1>🔥 Woodstove 2 · Sprint 9</h1>
+  <h1>🔥 Woodstove 2 · Sprint 10</h1>
   <p class="sub" data-i18n="subtitle">1 од. = 1 см · three@160 · модулі · дебаунс 120мс</p>
 
   <details open><summary data-i18n="secMode">Режим роботи / вид</summary><div class="body">
@@ -45,6 +45,8 @@
     <div class="row check"><input type="checkbox" id="showBaffle"><label for="showBaffle" data-i18n="showBaffle">Бафль</label></div>
     <div class="row check"><input type="checkbox" id="showAirChannels"><label for="showAirChannels" data-i18n="showAirChannels">Повітряні канали</label></div>
     <div class="row check"><input type="checkbox" id="showChimney"><label for="showChimney" data-i18n="showChimney">Димохід</label></div>
+    <div class="row check"><input type="checkbox" id="showFlow"><label for="showFlow" data-i18n="flowVisible">Показувати потоки</label></div>
+    <div class="row check"><input type="checkbox" id="animateFlow"><label for="animateFlow" data-i18n="flowAnimated">Анімувати потоки</label></div>
     <div class="row"><label>Explode <output id="explodeDistanceCm-v"></output></label>
       <input type="range" id="explodeDistanceCm" min="5" max="40" step="1"></div>
   </div></details>
@@ -87,8 +89,15 @@
     <div class="row"><label><span data-i18n="secCount">Перфорацій secondary</span> <output id="secondaryHoleCount-v"></output></label><input type="range" id="secondaryHoleCount" min="4" max="24" step="1"></div>
     <div class="row"><label><span data-i18n="secDia">Ø перфорації</span> <output id="secondaryHoleDiameterCm-v"></output></label><input type="range" id="secondaryHoleDiameterCm" min="0.4" max="1.2" step="0.1"></div>
     <div class="row"><label><span data-i18n="secStep">Крок secondary</span> <output id="secondaryHoleSpacingCm-v"></output></label><input type="range" id="secondaryHoleSpacingCm" min="1.5" max="4" step="0.1"></div>
+    <div class="row"><label><span data-i18n="secChannelWidth">Ширина secondary каналу</span> <output id="secondaryChannelWidthCm-v"></output></label><input type="range" id="secondaryChannelWidthCm" min="2" max="12" step="0.5"></div>
+    <div class="row"><label><span data-i18n="secChannelDepth">Глибина secondary каналу</span> <output id="secondaryChannelDepthCm-v"></output></label><input type="range" id="secondaryChannelDepthCm" min="2" max="10" step="0.5"></div>
+    <div class="row"><label><span data-i18n="secPreheatLength">Довжина підігріву secondary</span> <output id="secondaryPreheatLengthCm-v"></output></label><input type="range" id="secondaryPreheatLengthCm" min="15" max="140" step="1"></div>
+    <div class="row"><label><span data-i18n="secManifoldHeight">Висота secondary manifold</span> <output id="secondaryManifoldHeightCm-v"></output></label><input type="range" id="secondaryManifoldHeightCm" min="2" max="10" step="0.5"></div>
     <div class="row"><label><span data-i18n="washGap">Air-wash щілина</span> <output id="airWashGapCm-v"></output></label><input type="range" id="airWashGapCm" min="0.5" max="3" step="0.1"></div>
     <div class="row"><label><span data-i18n="washFlow">Приток air-wash</span> <output id="airWashIntakePct-v"></output></label><input type="range" id="airWashIntakePct" min="0" max="100" step="1"></div>
+    <div class="row"><label><span data-i18n="airwashSlotWidth">Ширина air-wash slot</span> <output id="airWashSlotWidthPct-v"></output></label><input type="range" id="airWashSlotWidthPct" min="40" max="100" step="1"></div>
+    <div class="row"><label><span data-i18n="airwashChannelWidth">Ширина air-wash каналу</span> <output id="airWashChannelWidthCm-v"></output></label><input type="range" id="airWashChannelWidthCm" min="2" max="10" step="0.5"></div>
+    <div class="row"><label><span data-i18n="airwashPreheatLength">Довжина підігріву air-wash</span> <output id="airWashPreheatLengthCm-v"></output></label><input type="range" id="airWashPreheatLengthCm" min="15" max="120" step="1"></div>
   </div></details>
 
   <details><summary data-i18n="secChimney">Димохід / дверцята</summary><div class="body">
@@ -113,6 +122,29 @@
 
   <details open><summary data-i18n="secValidation">Перевірка конфігурації</summary><div class="body" id="validation">
     <ul id="validationList"></ul>
+  </div></details>
+
+  <details><summary data-i18n="secFlow">Airflow / потоки</summary><div class="body" id="airflowMetrics">
+    <div class="flow-grid">
+      <div><span data-i18n="secondaryArea">Площа secondary</span><b id="m-secondary-area">—</b></div>
+      <div><span data-i18n="secondaryVelocity">Швидкість secondary</span><b id="m-secondary-velocity">—</b></div>
+      <div><span data-i18n="secondaryPreheat">Підігрів secondary</span><b id="m-secondary-preheat">—</b></div>
+      <div><span data-i18n="airwashArea">Площа air-wash</span><b id="m-airwash-area">—</b></div>
+      <div><span data-i18n="airwashVelocity">Швидкість air-wash</span><b id="m-airwash-velocity">—</b></div>
+      <div><span data-i18n="airwashPreheat">Підігрів air-wash</span><b id="m-airwash-preheat">—</b></div>
+    </div>
+  </div></details>
+
+  <details><summary data-i18n="secTest">Test Burn / тестове горіння</summary><div class="body" id="testBurn">
+    <div class="row"><label><span data-i18n="moisture">Вологість дров</span> <output id="woodMoisturePct-v"></output></label><input type="range" id="woodMoisturePct" min="8" max="35" step="1"></div>
+    <div class="row"><label><span data-i18n="load">Маса закладки</span> <output id="loadKg-v"></output></label><input type="range" id="loadKg" min="1" max="30" step="0.5"></div>
+    <div class="row"><label><span data-i18n="measuredBurn">Фактичне горіння</span> <output id="measuredBurnHours-v"></output></label><input type="range" id="measuredBurnHours" min="0.1" max="30" step="0.1"></div>
+    <div class="row"><label><span data-i18n="flueTemp">Температура димоходу</span> <output id="flueTempC-v"></output></label><input type="range" id="flueTempC" min="20" max="800" step="5"></div>
+    <div class="row"><label><span data-i18n="stoveTemp">Температура верху</span> <output id="stoveTopTempC-v"></output></label><input type="range" id="stoveTopTempC" min="20" max="1000" step="5"></div>
+    <div class="row"><label><span data-i18n="glassTemp">Температура скла</span> <output id="glassTempC-v"></output></label><input type="range" id="glassTempC" min="20" max="600" step="5"></div>
+    <div class="row"><label><span data-i18n="smokeOpacity">Непрозорість диму</span> <output id="smokeOpacityPct-v"></output></label><input type="range" id="smokeOpacityPct" min="0" max="100" step="1"></div>
+    <div class="btns"><button id="saveTestBurn" class="green" data-i18n="saveTest">Зберегти тест</button></div>
+    <div id="testBurnResult" class="test-result"></div>
   </div></details>
 
   <details><summary data-i18n="secCam">Камера</summary><div class="body">

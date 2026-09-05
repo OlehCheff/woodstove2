@@ -44,6 +44,13 @@ button:active{transform:translateY(1px)}
 #warnings li.warn{border-color:#7c4a03;color:#fcd34d}
 #warnings li.danger{border-color:#7f1d1d;color:#fca5a5}
 #warnings li.info{border-color:#1e40af;color:#93c5fd}
+.flow-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.flow-grid>div{background:#12161d;border:1px solid var(--line);border-radius:8px;padding:7px}
+.flow-grid span{display:block;font-size:10px;color:var(--muted)}
+.flow-grid b{display:block;font-size:13px;margin-top:3px}
+.test-result{margin-top:10px;padding:9px;border-radius:9px;background:#12161d;border:1px solid var(--line);font-size:12px;line-height:1.55}
+.test-result strong{color:#86efac}
+.test-result .bad{color:#fca5a5}
 #tour{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55)}
 #tour .card{max-width:520px;background:#151a23;border:1px solid var(--line);border-radius:14px;padding:18px}
 #tour h2{font-size:16px;margin-bottom:8px}
