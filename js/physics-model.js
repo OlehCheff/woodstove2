@@ -79,7 +79,11 @@ export const PhysicsModel = {
       fireboxLiters * 0.065 * (0.35 + 0.65 * airMix) * mc.powerFactor * draftFactor * geometryFactor,
       2.0, 16.0
     );
-    const loadKg = fireboxLiters * 0.10 * (mc.fillFactor ?? 0.7);
+    // Орієнтир: ~120 кг/м³ насипної маси сухих полін, не щільність деревини.
+    // Безпечна максимальна закладка залишає місце для полум'я та вторинного повітря.
+    const maxLoadKg = fireboxLiters * 0.12 * 0.9;
+    const recommendedLoadKg = maxLoadKg * (mc.fillFactor ?? 0.7);
+    const loadKg = recommendedLoadKg;
     const burnTimeHours = clamp(
       ((loadKg * WOOD_KWH_PER_KG * (efficiencyPct / 100)) / Math.max(heatOutputKw, 0.1)) * mc.burnFactor * (1 + steelMm * 0.015),
       2.0, 14.0
@@ -119,6 +123,7 @@ export const PhysicsModel = {
         airWashOpeningAreaCm2: round(airWashOpeningAreaCm2, 2), chimneyAreaCm2: round(chimneyAreaCm2, 2),
         stackVelocityMs: round(stackVelocityMs, 2), secondaryVelocityMs: round(secondaryVelocityMs, 2), airWashVelocityMs: round(airWashVelocityMs, 2),
         secondaryPreheatC: round(secondaryPreheatC, 0), airWashPreheatC: round(airWashPreheatC, 0), draftFlowM3s: round(draftFlowM3s, 3),
+        recommendedLoadKg: round(recommendedLoadKg, 1), maxLoadKg: round(maxLoadKg, 1), loadingVolumePct: round((mc.fillFactor ?? 0.7) * 100, 0),
       },
       breakdown: {
         airMix: round(airMix, 3), staging: round(staging, 2), loadKg: round(loadKg, 1),
@@ -129,6 +134,32 @@ export const PhysicsModel = {
     };
   },
 };
+
+export function optimizeConfig(config) {
+  let best = null;
+  const h = config.dimensions.heightCm;
+  const heightStart = Math.max(24, Math.round(h * 0.42));
+  const heightEnd = Math.min(h - 12, Math.round(h * 0.74));
+  const heights = [];
+  for (let value = heightStart; value <= heightEnd; value += 6) heights.push(value);
+  const angles = [-2, 2, 6, 10];
+  const gaps = [4, 6, 8, 10];
+  const airflows = [45, 55, 65];
+
+  for (const heightCm of heights) for (const angleDeg of angles) for (const frontGapCm of gaps) for (const airflowPct of airflows) {
+    const candidate = structuredClone(config);
+    candidate.baffle.heightCm = heightCm;
+    candidate.baffle.angleDeg = angleDeg;
+    candidate.baffle.frontGapCm = frontGapCm;
+    candidate.baffle.airflowPct = airflowPct;
+    const result = PhysicsModel.evaluate(candidate);
+    const penalty = result.warnings.reduce((total, warning) => total + (warning.level === 'danger' ? 20 : warning.level === 'warn' ? 6 : 1), 0);
+    const comfortBonus = result.metrics.heatOutputKw >= 2.5 && result.metrics.heatOutputKw <= 12 ? 2 : 0;
+    const score = result.metrics.efficiencyPct + result.breakdown.secondaryCoverage * 2 + result.breakdown.airWashCoverage + comfortBonus - penalty;
+    if (!best || score > best.score) best = { score, config: candidate, result };
+  }
+  return best;
+}
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { PhysicsModel };
 if (typeof window !== 'undefined') window.PhysicsModel = PhysicsModel;

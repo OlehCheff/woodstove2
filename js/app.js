@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { defaultConfig, loadConfig, saveConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, encodeConfig, decodeConfig, deepMerge, getByPath, setByPath, OPERATION_PRESETS, MODEL_PRESETS } from './config.js';
-import { PhysicsModel } from './physics-model.js';
+import { PhysicsModel, optimizeConfig } from './physics-model.js';
 import { buildStove, disposeGroup } from './stove-builder.js';
 import { exportGLTF, exportSTL } from './exporters.js';
 import { STR, WARN_TXT, VALIDATION_TXT, TOUR, getLang, setLang } from './i18n.js';
@@ -53,13 +53,14 @@ scene.add(new THREE.AxesHelper(80));
 let stove = null, refs = {};
 let doorCur = 0, doorTarget = 0;
 let explodeCur = config.explode.enabled ? 1 : 0, explodeTarget = explodeCur;
+const doorOpenAngle = () => (config.door.hingeSide === 'right' ? 1 : -1) * THREE.MathUtils.degToRad(config.door.openAngleDeg);
 
 function rebuildStove() {
   if (stove) { scene.remove(stove); disposeGroup(stove); }
   const built = buildStove(config, cache);
   stove = built.group; refs = built.refs;
   scene.add(stove);
-  doorTarget = config.door.isOpen ? -THREE.MathUtils.degToRad(config.door.openAngleDeg) : 0;
+  doorTarget = config.door.isOpen ? doorOpenAngle() : 0;
   doorCur = doorTarget; refs.doorPivot.rotation.y = doorCur;
   floor.material.color.set(config.colors.floor);
   applyVisibility(); applyExplode(1); syncCamera(false);
@@ -215,13 +216,27 @@ function renderTestBurn() {
   if (!target || !config.testBurn) return;
   const predicted = PhysicsModel.evaluate(config);
   const test = config.testBurn;
-  const usableEnergy = test.loadKg * 4.1 * (1 - test.woodMoisturePct / 100) * (predicted.metrics.efficiencyPct / 100);
+  const loadKg = test.loadMode === 'auto' ? predicted.metrics.recommendedLoadKg : test.loadKg;
+  const loadInput = document.getElementById('loadKg');
+  const loadOutput = document.getElementById('loadKg-v');
+  if (loadInput) { loadInput.value = loadKg; loadInput.disabled = test.loadMode === 'auto'; }
+  if (loadOutput) loadOutput.textContent = `${loadKg} kg`;
+  const recommendation = document.getElementById('loadRecommendation');
+  if (recommendation) recommendation.textContent = `${t('recommendedLoad')}: ${predicted.metrics.recommendedLoadKg} kg · ${t('maxLoad')}: ${predicted.metrics.maxLoadKg} kg`;
+  const usableEnergy = loadKg * 4.1 * (1 - test.woodMoisturePct / 100) * (predicted.metrics.efficiencyPct / 100);
   const measuredPower = usableEnergy / Math.max(test.measuredBurnHours, 0.1);
   const errorPct = ((measuredPower - predicted.metrics.heatOutputKw) / Math.max(predicted.metrics.heatOutputKw, 0.1)) * 100;
   const statusClass = Math.abs(errorPct) <= 15 ? '' : 'bad';
   target.innerHTML = `<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} kW · ${predicted.metrics.burnTimeHours} ${t('unitH')}</div>
     <div><b>${t('measured')}:</b> ${measuredPower.toFixed(2)} kW · ${test.measuredBurnHours} ${t('unitH')}</div>
     <div class="${statusClass}"><b>${t('error')}:</b> ${errorPct >= 0 ? '+' : ''}${errorPct.toFixed(1)}%</div>`;
+}
+
+function renderOptimization(result) {
+  const target = document.getElementById('optimizationResult');
+  if (!target || !result) return;
+  const b = result.config.baffle;
+  target.innerHTML = `<strong>${t('optimizationDone')}</strong><br>${t('optimizeHint')}<br>H ${b.heightCm} cm · ${b.angleDeg}° · gap ${b.frontGapCm} cm · ${result.result.metrics.efficiencyPct}%`;
 }
 
 function syncModelOptions() {
@@ -356,6 +371,8 @@ function syncUI() {
   }
   document.getElementById('operationMode').value = config.operation.mode;
   document.getElementById('viewMode').value = config.viewMode;
+  document.getElementById('doorHingeSide').value = config.door.hingeSide;
+  document.getElementById('loadMode').value = config.testBurn.loadMode;
   for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney' })) {
     const el = document.getElementById(id); if (el) el.checked = config.visibility[k];
   }
@@ -377,7 +394,7 @@ function bindUI() {
       if (id.startsWith('steel') || id.endsWith('Color') || id === 'brickColor' || id === 'glassColor' || id === 'floorColor' || id === 'steelRoughness' || id === 'steelMetalness') {
         cache.clear(); // кольори/матеріали — скинути кеш
       }
-      if (id === 'doorOpenAngleDeg' && config.door.isOpen) doorTarget = -THREE.MathUtils.degToRad(config.door.openAngleDeg);
+      if (id === 'doorOpenAngleDeg' && config.door.isOpen) doorTarget = doorOpenAngle();
       if (id === 'explodeDistanceCm') { applyExplode(1); renderPhysics(); return; }
       if (id.startsWith('camera')) { syncCamera(id !== 'cameraTargetYCm'); renderPhysics(); return; }
       if (id in { woodMoisturePct: 1, loadKg: 1, measuredBurnHours: 1, flueTempC: 1, stoveTopTempC: 1, glassTempC: 1, smokeOpacityPct: 1 }) {
@@ -394,11 +411,24 @@ function bindUI() {
   document.getElementById('viewMode').addEventListener('change', (e) => {
     config.viewMode = e.target.value; normalizeConfig(config); saveConfig(config); applyViewMode();
   });
+  document.getElementById('doorHingeSide').addEventListener('change', (e) => {
+    config.door.hingeSide = e.target.value === 'right' ? 'right' : 'left';
+    normalizeConfig(config); saveConfig(config); rebuildStove();
+  });
   document.getElementById('applyPreset').addEventListener('click', () => {
     const presetName = document.getElementById('modelPreset').value;
     config = applyModelPreset(config, presetName);
     applyModePreset(config, config.operation.mode);
     saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
+  });
+  document.getElementById('autoOptimize').addEventListener('click', () => {
+    const result = optimizeConfig(config);
+    config = normalizeConfig(result.config);
+    saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode(); renderOptimization(result);
+  });
+  document.getElementById('loadMode').addEventListener('change', (e) => {
+    config.testBurn.loadMode = e.target.value === 'manual' ? 'manual' : 'auto';
+    saveConfig(config); syncUI(); renderTestBurn();
   });
   for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney' })) {
     document.getElementById(id).addEventListener('change', (e) => {
@@ -413,7 +443,7 @@ function bindUI() {
   });
   document.getElementById('toggleDoor').addEventListener('click', () => {
     config.door.isOpen = !config.door.isOpen; saveConfig(config);
-    doorTarget = config.door.isOpen ? -THREE.MathUtils.degToRad(config.door.openAngleDeg) : 0;
+    doorTarget = config.door.isOpen ? doorOpenAngle() : 0;
     syncDoorBtn();
   });
   document.getElementById('toggleExplode').addEventListener('click', () => {

@@ -76,11 +76,11 @@ export const defaultConfig = {
   explode: { enabled: false, distanceCm: 18 },
   operation: { mode: 'medium', secondaryAirPct: 55, flameIntensity: 0.62 },
   testBurn: {
-    woodMoisturePct: 15, loadKg: 8, measuredBurnHours: 7.5,
+    loadMode: 'auto', woodMoisturePct: 15, loadKg: 8, measuredBurnHours: 7.5,
     flueTempC: 260, stoveTopTempC: 420, glassTempC: 180, smokeOpacityPct: 5,
   },
   viewMode: '3d',
-  door: { widthCm: 42, heightCm: 38, frameThicknessCm: 3, glassInsetCm: 2, openAngleDeg: 70, isOpen: false },
+  door: { widthCm: 42, heightCm: 38, frameThicknessCm: 3, glassInsetCm: 2, openAngleDeg: 70, hingeSide: 'left', isOpen: false },
   camera: { fov: 50, distance: 270, targetY: 60 },
   colors: {
     steel: '#3a3d43', steelRoughness: 0.34, steelMetalness: 0.78,
@@ -166,11 +166,13 @@ export function normalizeConfig(cfg) {
   cfg.door.frameThicknessCm = clamp(+cfg.door.frameThicknessCm || 3, 1, 6);
   cfg.door.glassInsetCm = clamp(+cfg.door.glassInsetCm || 2, 0.5, 6);
   cfg.door.openAngleDeg = clamp(+cfg.door.openAngleDeg || 70, 30, 120);
+  cfg.door.hingeSide = cfg.door.hingeSide === 'right' ? 'right' : 'left';
   cfg.door.isOpen = Boolean(cfg.door.isOpen);
 
   cfg.camera.fov = clamp(+cfg.camera.fov || 50, 35, 85);
   cfg.camera.distance = clamp(+cfg.camera.distance || 270, 140, 500);
   cfg.camera.targetY = clamp(+cfg.camera.targetY || 60, 20, 180);
+  cfg.testBurn.loadMode = cfg.testBurn.loadMode === 'manual' ? 'manual' : 'auto';
   cfg.testBurn.woodMoisturePct = clamp(+cfg.testBurn.woodMoisturePct || 15, 8, 35);
   cfg.testBurn.loadKg = clamp(+cfg.testBurn.loadKg || 8, 1, 30);
   cfg.testBurn.measuredBurnHours = clamp(+cfg.testBurn.measuredBurnHours || 7.5, 0.1, 30);

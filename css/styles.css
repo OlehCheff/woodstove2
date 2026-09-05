@@ -33,6 +33,7 @@ select{width:100%;padding:8px;border-radius:8px;background:#11151c;color:var(--t
 button{flex:1 1 auto;padding:9px 10px;border:0;border-radius:9px;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;font-size:13px}
 button.ghost{background:#2a3040}
 button.green{background:var(--accent2)}
+button.accent{background:#c56a2d}
 button:active{transform:translateY(1px)}
 #physics{font-size:13px}
 #physics .kpi{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}
@@ -51,6 +52,8 @@ button:active{transform:translateY(1px)}
 .test-result{margin-top:10px;padding:9px;border-radius:9px;background:#12161d;border:1px solid var(--line);font-size:12px;line-height:1.55}
 .test-result strong{color:#86efac}
 .test-result .bad{color:#fca5a5}
+.optimization-result{margin-top:8px;font-size:12px;line-height:1.45;color:var(--muted)}
+.optimization-result strong{color:#fbbf24}
 #tour{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55)}
 #tour .card{max-width:520px;background:#151a23;border:1px solid var(--line);border-radius:14px;padding:18px}
 #tour h2{font-size:16px;margin-bottom:8px}

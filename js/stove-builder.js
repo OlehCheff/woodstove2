@@ -33,6 +33,8 @@ export function buildStove(cfg, cache = new Map()) {
     () => new THREE.MeshStandardMaterial({ color: cfg.colors.brick, roughness: 0.95, metalness: 0.04 }));
   const darkM = mat(cache, 'dark', () => new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.45, metalness: 0.6 }));
   const ductM = mat(cache, 'duct', () => new THREE.MeshStandardMaterial({ color: 0x616872, roughness: 0.4, metalness: 0.58 }));
+  const controlM = mat(cache, 'control', () => new THREE.MeshStandardMaterial({ color: 0xffb347, roughness: 0.35, metalness: 0.35 }));
+  const primaryControlM = mat(cache, 'primary-control', () => new THREE.MeshStandardMaterial({ color: 0x4f8cff, roughness: 0.35, metalness: 0.35 }));
   const holeM = mat(cache, 'hole', () => new THREE.MeshStandardMaterial({ color: 0x0b0c0e, roughness: 0.95 }));
   const glassM = mat(cache, `glass|${cfg.colors.glass}`,
     () => new THREE.MeshStandardMaterial({ color: cfg.colors.glass, transparent: true, opacity: 0.42, roughness: 0.06, metalness: 0.15 }));
@@ -71,8 +73,11 @@ export function buildStove(cfg, cache = new Map()) {
   baffle.name = 'bafflePlate'; shell.add(baffle);
   const regTravel = Math.max(8, w * 0.22);
   const baffleReg = plate(Math.max(12, w * 0.35), 1.2, 2, darkM);
-  baffleReg.position.set(-regTravel / 2 + regTravel * (cfg.baffle.airflowPct / 100), baffleY - 2.4, d * 0.16);
+  const baffleControlX = -regTravel / 2 + regTravel * (cfg.baffle.airflowPct / 100);
+  baffleReg.position.set(baffleControlX, baffleY - 2.4, d * 0.16);
   shell.add(baffleReg);
+  const baffleHandle = new THREE.Mesh(new THREE.SphereGeometry(1.6, 16, 16), controlM);
+  baffleHandle.position.set(baffleControlX, baffleY - 2.4, d / 2 + 1.8); baffleHandle.name = 'baffleHandle'; shell.add(baffleHandle);
 
   // Повітряні канали: primary знизу, secondary через два підігрівальні стояки,
   // air-wash через бокові канали у верхню суцільну щілину.
@@ -89,6 +94,9 @@ export function buildStove(cfg, cache = new Map()) {
   const closedOff = -(panelW * 0.52);
   shutter.position.set(closedOff + (0 - closedOff) * (cfg.primaryAir.openPct / 100), 16, d / 2 + steelT * 0.9);
   shutter.name = 'primaryShutter'; airSystems.add(shutter);
+  const primaryHandle = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 3.2, 16), primaryControlM);
+  primaryHandle.rotation.x = Math.PI / 2; primaryHandle.position.set(shutter.position.x, 16, d / 2 + steelT * 2.4);
+  primaryHandle.name = 'primaryHandle'; airSystems.add(primaryHandle);
 
   const secY = Math.min(h - steelT * 3, baffleY + 7);
   const secW = Math.max(12, Math.min(innerW - 2, cfg.secondaryAir.holeCount * cfg.secondaryAir.holeSpacingCm + 10));
@@ -184,16 +192,17 @@ export function buildStove(cfg, cache = new Map()) {
 
   // дверцята: рама з 4 планок + скло + ручка, pivot зліва
   const frameT = cfg.door.frameThicknessCm;
+  const hingeSign = cfg.door.hingeSide === 'right' ? 1 : -1;
   const doorPivot = new THREE.Group(); doorPivot.name = 'doorPivot';
-  doorPivot.position.set(-doorWc / 2, h * 0.48, d / 2 + steelT * 0.5);
-  const leaf = new THREE.Group(); leaf.position.set(doorWc / 2, 0, 0);
+  doorPivot.position.set(hingeSign * doorWc / 2, h * 0.48, d / 2 + steelT * 0.5);
+  const leaf = new THREE.Group(); leaf.position.set(-hingeSign * doorWc / 2, 0, 0);
   const fh = (bw, bh, x, y) => { const m = plate(bw, bh, frameT, darkM); m.position.set(x, y, 0); leaf.add(m); };
   fh(doorWc, frameT, 0, doorHc / 2 - frameT / 2); fh(doorWc, frameT, 0, -doorHc / 2 + frameT / 2);
   fh(frameT, doorHc - frameT * 2, -doorWc / 2 + frameT / 2, 0); fh(frameT, doorHc - frameT * 2, doorWc / 2 - frameT / 2, 0);
   const glass = new THREE.Mesh(new THREE.BoxGeometry(Math.max(1, doorWc - cfg.door.glassInsetCm * 2), Math.max(1, doorHc - cfg.door.glassInsetCm * 2), 0.7), glassM);
   glass.position.z = frameT / 2 + 0.3; leaf.add(glass);
   const handle = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 12, 16), mat(cache, 'handle', () => new THREE.MeshStandardMaterial({ color: 0xd6d6d6, metalness: 0.85, roughness: 0.25 })));
-  handle.rotation.z = Math.PI / 2; handle.position.set(doorWc * 0.33, 0, frameT / 2 + 1.8); leaf.add(handle);
+  handle.rotation.z = Math.PI / 2; handle.position.set(hingeSign * doorWc * 0.33, 0, frameT / 2 + 1.8); leaf.add(handle);
   doorPivot.add(leaf); shell.add(doorPivot);
 
   // димохід + комір (щільна посадка)

@@ -16,6 +16,8 @@
 - **Physics v3:** площі opening, швидкості потоків, draft flow, температури підігріву, secondary/air-wash coverage та stability warnings.
 - **Flow visualization:** синій primary, зелений preheat, помаранчевий secondary, блакитний air-wash, червоний hot gas.
 - **Test Burn:** вологість дров, маса закладки, виміряний час, температури й smoke opacity з порівнянням `predicted vs measured`.
+- **Usability:** `Auto from firebox` підбирає закладку за обʼємом топки та режимом; `Find optimum` підбирає бафль/airflow для поточної моделі; експертні контролі сховані в Expert-секціях.
+- **Hardware controls:** кольорові ручки primary/baffle у 3D та вибір лівої/правої петлі дверцят.
 
 ## Запуск
 - Варіант без збірки: `npx serve .` → відкрити `index.html` (потрібен інтернет для CDN three.js)

@@ -1,5 +1,5 @@
 // Швидкі тести PhysicsModel v2 — запуск: node tests/physics.test.js
-import { PhysicsModel } from '../js/physics-model.js';
+import { PhysicsModel, optimizeConfig } from '../js/physics-model.js';
 import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, MODEL_PRESETS } from '../js/config.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -19,6 +19,7 @@ ok(r.metrics.burnTimeHours >= 3 && r.metrics.burnTimeHours <= 10, 'medium burn',
 ok(r.metrics.draftPa > 0 && r.metrics.fireboxLiters > 20, 'draft+firebox', JSON.stringify(r.metrics));
 ok(r.metrics.secondaryOpeningAreaCm2 > 0 && r.metrics.airWashOpeningAreaCm2 > 0, 'airflow areas', JSON.stringify(r.metrics));
 ok(r.metrics.secondaryPreheatC > 100 && r.metrics.airWashPreheatC > 80, 'airflow preheat', JSON.stringify(r.metrics));
+ok(r.metrics.recommendedLoadKg > 0 && r.metrics.maxLoadKg > r.metrics.recommendedLoadKg, 'load from firebox volume', JSON.stringify(r.metrics));
 ok(base.secondaryAir.preheatLengthCm > 0 && base.airWash.slotWidthPct >= 40, 'airflow config normalized', JSON.stringify({ secondary: base.secondaryAir, airWash: base.airWash }));
 
 // 2. overnight: мала потужність, довге горіння + SMOKE_RISK можливий
@@ -82,6 +83,13 @@ invalid.dimensions.widthCm = 40;
 const invalidResult = validateConfig(invalid);
 ok(!invalidResult.valid, 'invalid door geometry detected', JSON.stringify(invalidResult.errors));
 ok(invalidResult.errors.some((item) => item.code === 'DOOR_TOO_WIDE'), 'invalid geometry has stable code');
+
+// 10. optimizer returns a valid candidate and does not mutate the source
+const beforeOptimization = JSON.stringify(base.baffle);
+const optimized = optimizeConfig(base);
+ok(optimized?.result?.metrics?.efficiencyPct >= 52, 'optimizer returns candidate', JSON.stringify(optimized?.result?.metrics));
+ok(validateConfig(optimized.config).valid, 'optimized geometry valid', JSON.stringify(validateConfig(optimized.config).errors));
+ok(JSON.stringify(base.baffle) === beforeOptimization, 'optimizer keeps source immutable');
 
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);
 process.exit(fails === 0 ? 0 : 1);

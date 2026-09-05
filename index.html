@@ -55,6 +55,8 @@
     <div class="row"><label data-i18n="presetLabel">Готова модель</label>
       <select id="modelPreset"></select></div>
     <div class="btns"><button id="applyPreset" class="green" data-i18n="applyPreset">Застосувати</button></div>
+    <div class="btns"><button id="autoOptimize" class="accent" data-i18n="autoOptimize">Підібрати оптимум</button></div>
+    <div id="optimizationResult" class="optimization-result"></div>
     <div class="btns"><button id="saveCompare" class="ghost" data-i18n="saveCompare">Запамʼятати для порівняння</button>
       <button id="openCompare" class="ghost" data-i18n="compare">Порівняння</button></div>
   </div></details>
@@ -77,7 +79,7 @@
     <div class="row"><label><span data-i18n="steelMetal">Metalness сталі</span> <output id="steelMetalness-v"></output></label><input type="range" id="steelMetalness" min="0" max="1" step="0.02"></div>
   </div></details>
 
-  <details><summary data-i18n="secAir">Бафль / повітря</summary><div class="body">
+  <details><summary data-i18n="secAir">Expert: бафль / повітря</summary><div class="body">
     <div class="row"><label><span data-i18n="baffleH">Висота бафля</span> <output id="baffleHeightCm-v"></output></label><input type="range" id="baffleHeightCm" min="20" max="120" step="1"></div>
     <div class="row"><label><span data-i18n="baffleA">Кут бафля</span> <output id="baffleAngleDeg-v"></output></label><input type="range" id="baffleAngleDeg" min="-20" max="30" step="1"></div>
     <div class="row"><label><span data-i18n="baffleGap">Передній зазор</span> <output id="baffleFrontGapCm-v"></output></label><input type="range" id="baffleFrontGapCm" min="2" max="15" step="0.5"></div>
@@ -108,6 +110,7 @@
     <div class="row"><label><span data-i18n="glassInset">Відступ скла</span> <output id="glassInsetCm-v"></output></label><input type="range" id="glassInsetCm" min="0.5" max="6" step="0.5"></div>
     <div class="row"><label><span data-i18n="frame">Рамка</span> <output id="doorFrameThicknessCm-v"></output></label><input type="range" id="doorFrameThicknessCm" min="1" max="6" step="0.5"></div>
     <div class="row"><label><span data-i18n="openAngle">Кут відкриття</span> <output id="doorOpenAngleDeg-v"></output></label><input type="range" id="doorOpenAngleDeg" min="30" max="120" step="1"></div>
+    <div class="row"><label data-i18n="doorHinge">Петля дверцят</label><select id="doorHingeSide"><option value="left" data-i18n="hingeLeft">Ліва сторона</option><option value="right" data-i18n="hingeRight">Права сторона</option></select></div>
   </div></details>
 
   <details open><summary data-i18n="secPhys">Фізика v3</summary><div class="body" id="physics">
@@ -124,7 +127,7 @@
     <ul id="validationList"></ul>
   </div></details>
 
-  <details><summary data-i18n="secFlow">Airflow / потоки</summary><div class="body" id="airflowMetrics">
+  <details><summary data-i18n="secFlow">Expert: airflow / потоки</summary><div class="body" id="airflowMetrics">
     <div class="flow-grid">
       <div><span data-i18n="secondaryArea">Площа secondary</span><b id="m-secondary-area">—</b></div>
       <div><span data-i18n="secondaryVelocity">Швидкість secondary</span><b id="m-secondary-velocity">—</b></div>
@@ -137,12 +140,14 @@
 
   <details><summary data-i18n="secTest">Test Burn / тестове горіння</summary><div class="body" id="testBurn">
     <div class="row"><label><span data-i18n="moisture">Вологість дров</span> <output id="woodMoisturePct-v"></output></label><input type="range" id="woodMoisturePct" min="8" max="35" step="1"></div>
+    <div class="row"><label data-i18n="load">Маса закладки</label><select id="loadMode"><option value="auto" data-i18n="loadAuto">Авто від топки</option><option value="manual" data-i18n="loadManual">Ручне значення</option></select></div>
     <div class="row"><label><span data-i18n="load">Маса закладки</span> <output id="loadKg-v"></output></label><input type="range" id="loadKg" min="1" max="30" step="0.5"></div>
+    <div id="loadRecommendation" class="sub"></div>
     <div class="row"><label><span data-i18n="measuredBurn">Фактичне горіння</span> <output id="measuredBurnHours-v"></output></label><input type="range" id="measuredBurnHours" min="0.1" max="30" step="0.1"></div>
     <div class="row"><label><span data-i18n="flueTemp">Температура димоходу</span> <output id="flueTempC-v"></output></label><input type="range" id="flueTempC" min="20" max="800" step="5"></div>
     <div class="row"><label><span data-i18n="stoveTemp">Температура верху</span> <output id="stoveTopTempC-v"></output></label><input type="range" id="stoveTopTempC" min="20" max="1000" step="5"></div>
     <div class="row"><label><span data-i18n="glassTemp">Температура скла</span> <output id="glassTempC-v"></output></label><input type="range" id="glassTempC" min="20" max="600" step="5"></div>
-    <div class="row"><label><span data-i18n="smokeOpacity">Непрозорість диму</span> <output id="smokeOpacityPct-v"></output></label><input type="range" id="smokeOpacityPct" min="0" max="100" step="1"></div>
+    <div class="row"><label><span data-i18n="smokeOpacity">Непрозорість диму</span> <output id="smokeOpacityPct-v"></output></label><input type="range" id="smokeOpacityPct" min="0" max="100" step="1"><div class="hint" data-i18n="smokeHint">Оціночна непрозорість видимого диму після прогріву: 0% — майже невидимий, 100% — густий дим. Це не лабораторний PM/CO вимір.</div></div>
     <div class="btns"><button id="saveTestBurn" class="green" data-i18n="saveTest">Зберегти тест</button></div>
     <div id="testBurnResult" class="test-result"></div>
   </div></details>
