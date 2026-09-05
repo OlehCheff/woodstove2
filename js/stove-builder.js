@@ -52,10 +52,10 @@ export function buildStove(cfg, cache = new Map()) {
   const doorHc = Math.max(20, Math.min(cfg.door.heightCm, h - steelT * 4));
   const frontShape = new THREE.Shape();
   frontShape.moveTo(-w / 2, -h / 2);
-  frontShape.lineTo(w / 2, -h / 2);
-  frontShape.lineTo(w / 2, h / 2);
   frontShape.lineTo(-w / 2, h / 2);
-  frontShape.lineTo(-w / 2, -h / 2);
+  frontShape.lineTo(w / 2, h / 2);
+  frontShape.lineTo(w / 2, -h / 2);
+  frontShape.closePath();
   const doorPath = new THREE.Path();
   const dw = doorWc / 2, dh = doorHc / 2;
   const doorCenterY = h * 0.48;
@@ -63,7 +63,7 @@ export function buildStove(cfg, cache = new Map()) {
   doorPath.lineTo(dw, doorCenterY - dh);
   doorPath.lineTo(dw, doorCenterY + dh);
   doorPath.lineTo(-dw, doorCenterY + dh);
-  doorPath.lineTo(-dw, doorCenterY - dh);
+  doorPath.closePath();
   frontShape.holes.push(doorPath);
   const frontGeom = new THREE.ExtrudeGeometry(frontShape, { depth: steelT, bevelEnabled: false });
   const frontPanel = new THREE.Mesh(frontGeom, steel);
