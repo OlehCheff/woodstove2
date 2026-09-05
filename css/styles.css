@@ -50,7 +50,21 @@ button:active{transform:translateY(1px)}
 #tour ol{margin:8px 0 12px 18px;font-size:13.5px;line-height:1.55;color:#d5dbe6}
 #topbar{position:fixed;top:14px;right:14px;z-index:10;display:flex;gap:8px}
 #topbar button{flex:0 0 auto}
+#validationList{list-style:none;display:grid;gap:6px}
+#validationList li{font-size:12px;padding:7px 9px;border-radius:8px;border:1px solid var(--line);background:#141922}
+#validationList li.error{border-color:#991b1b;color:#fecaca}
+#validationList li.warning{border-color:#854d0e;color:#fde68a}
+#validationList li.ok{border-color:#166534;color:#bbf7d0}
+#compareModal{position:fixed;inset:0;z-index:40;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.62);padding:16px}
+#compareModal .card{width:min(620px,100%);max-height:90vh;overflow:auto;background:#151a23;border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 20px 70px rgba(0,0,0,.55)}
+.modal-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.modal-head h2{font-size:16px}
+.compare-table{width:100%;border-collapse:collapse;font-size:13px}
+.compare-table th,.compare-table td{border-bottom:1px solid var(--line);padding:8px;text-align:right}
+.compare-table th:first-child,.compare-table td:first-child{text-align:left;color:var(--muted)}
+.delta-positive{color:#86efac}.delta-negative{color:#fca5a5}
 @media (max-width:760px){
   #panel{left:8px;right:8px;top:auto;bottom:8px;width:auto;max-height:46vh}
-  #topbar{top:8px;right:8px}
+  #topbar{top:8px;right:8px;left:8px;overflow-x:auto;justify-content:flex-end}
+  #topbar button{white-space:nowrap}
 }

@@ -10,6 +10,53 @@ export const OPERATION_PRESETS = {
   'overnight': { primaryAirOpenPct: 15, secondaryAirPct: 24, airWashGapCm: 0.8, airWashIntakePct: 30, baffleAirflowPct: 25, flameIntensity: 0.22, flameColor: 0xff6a33, fillFactor: 1.0 },
 };
 
+export const MODEL_PRESETS = {
+  compact: {
+    labelKey: 'presetCompact',
+    patch: {
+      dimensions: { widthCm: 58, depthCm: 46, heightCm: 78, legHeightCm: 12 },
+      materials: { steelThicknessMm: 4, firebrickThicknessCm: 3 },
+      chimney: { diameterCm: 13, heightCm: 120 },
+      door: { widthCm: 34, heightCm: 32 },
+      baffle: { heightCm: 48, frontGapCm: 5 },
+      operation: { mode: 'low' },
+    },
+  },
+  standard: {
+    labelKey: 'presetStandard',
+    patch: {
+      dimensions: { widthCm: 70, depthCm: 55, heightCm: 95, legHeightCm: 15 },
+      materials: { steelThicknessMm: 5, firebrickThicknessCm: 4 },
+      chimney: { diameterCm: 15, heightCm: 120 },
+      door: { widthCm: 42, heightCm: 38 },
+      baffle: { heightCm: 58, frontGapCm: 6 },
+      operation: { mode: 'medium' },
+    },
+  },
+  wide: {
+    labelKey: 'presetWide',
+    patch: {
+      dimensions: { widthCm: 96, depthCm: 62, heightCm: 105, legHeightCm: 18 },
+      materials: { steelThicknessMm: 6, firebrickThicknessCm: 5 },
+      chimney: { diameterCm: 18, heightCm: 135 },
+      door: { widthCm: 58, heightCm: 45 },
+      baffle: { heightCm: 64, frontGapCm: 7 },
+      operation: { mode: 'medium' },
+    },
+  },
+  workshop: {
+    labelKey: 'presetWorkshop',
+    patch: {
+      dimensions: { widthCm: 118, depthCm: 82, heightCm: 128, legHeightCm: 10 },
+      materials: { steelThicknessMm: 8, firebrickThicknessCm: 6 },
+      chimney: { diameterCm: 22, heightCm: 150 },
+      door: { widthCm: 64, heightCm: 54 },
+      baffle: { heightCm: 78, frontGapCm: 9 },
+      operation: { mode: 'high' },
+    },
+  },
+};
+
 export const defaultConfig = {
   dimensions: { widthCm: 70, depthCm: 55, heightCm: 95, legHeightCm: 15 },
   materials: { steelThicknessMm: 5, firebrickThicknessCm: 4 },
@@ -117,6 +164,59 @@ export function loadConfig() {
 
 export function saveConfig(cfg) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); } catch { /* ignore */ }
+}
+
+export function applyModelPreset(cfg, presetName) {
+  const preset = MODEL_PRESETS[presetName];
+  if (!preset) return cfg;
+  return normalizeConfig(deepMerge(cfg, preset.patch));
+}
+
+export function validateConfig(cfg) {
+  const errors = [];
+  const warnings = [];
+  const steelCm = cfg.materials.steelThicknessMm / 10;
+  const usableW = cfg.dimensions.widthCm - steelCm * 4;
+  const usableH = cfg.dimensions.heightCm - steelCm * 4;
+  const doorW = cfg.door.widthCm;
+  const doorH = cfg.door.heightCm;
+  const primarySpan = (cfg.primaryAir.holeCount - 1) * cfg.primaryAir.holeSpacingCm;
+
+  if (doorW > usableW) errors.push({ code: 'DOOR_TOO_WIDE', values: { doorW, usableW } });
+  if (doorH > usableH) errors.push({ code: 'DOOR_TOO_HIGH', values: { doorH, usableH } });
+  if (cfg.baffle.heightCm >= cfg.dimensions.heightCm - steelCm * 3) {
+    errors.push({ code: 'BAFFLE_TOO_HIGH', values: { height: cfg.baffle.heightCm } });
+  }
+  if (primarySpan + cfg.primaryAir.holeDiameterCm > usableW) {
+    errors.push({ code: 'PRIMARY_OUTSIDE', values: { span: primarySpan } });
+  }
+  if (cfg.baffle.frontGapCm >= cfg.dimensions.depthCm * 0.45) {
+    warnings.push({ code: 'BAFFLE_GAP_LARGE', values: { gap: cfg.baffle.frontGapCm } });
+  }
+  if (cfg.chimney.diameterCm < Math.sqrt(cfg.dimensions.widthCm * cfg.dimensions.depthCm) / 8) {
+    warnings.push({ code: 'CHIMNEY_SMALL', values: { diameter: cfg.chimney.diameterCm } });
+  }
+  if (cfg.materials.firebrickThicknessCm > Math.min(cfg.dimensions.widthCm, cfg.dimensions.depthCm) / 8) {
+    warnings.push({ code: 'LINING_THICK', values: { thickness: cfg.materials.firebrickThicknessCm } });
+  }
+  return { valid: errors.length === 0, errors, warnings };
+}
+
+export function encodeConfig(cfg) {
+  const bytes = new TextEncoder().encode(JSON.stringify(cfg));
+  let binary = '';
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+export function decodeConfig(value) {
+  try {
+    const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4));
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return null;
+  }
 }
 
 export function applyModePreset(cfg, modeName) {

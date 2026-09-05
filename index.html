@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Woodstove 2 — Sprint 8</title>
+<title>Woodstove 2 — Sprint 9</title>
 <link rel="stylesheet" href="./css/styles.css">
 <script type="importmap">
 { "imports": {
@@ -18,13 +18,15 @@
 
 <div id="topbar">
   <button id="langToggle" class="ghost" title="UA / EN">EN</button>
+  <button id="shareConfig" class="ghost" data-i18n="share">Поділитися</button>
+  <button id="screenshot" class="ghost" data-i18n="screenshot">Знімок</button>
   <button id="exportGltf" class="ghost" title="Export scene as glTF">GLTF</button>
   <button id="exportStl" class="ghost" title="Export scene as STL">STL</button>
   <button id="showTour" class="ghost" data-i18n="tourBtn">Тур</button>
 </div>
 
 <aside id="panel">
-  <h1>🔥 Woodstove 2 · Sprint 8</h1>
+  <h1>🔥 Woodstove 2 · Sprint 9</h1>
   <p class="sub" data-i18n="subtitle">1 од. = 1 см · three@160 · модулі · дебаунс 120мс</p>
 
   <details open><summary data-i18n="secMode">Режим роботи / вид</summary><div class="body">
@@ -45,6 +47,14 @@
     <div class="row check"><input type="checkbox" id="showChimney"><label for="showChimney" data-i18n="showChimney">Димохід</label></div>
     <div class="row"><label>Explode <output id="explodeDistanceCm-v"></output></label>
       <input type="range" id="explodeDistanceCm" min="5" max="40" step="1"></div>
+  </div></details>
+
+  <details open><summary data-i18n="secProduct">Модель / проєкт</summary><div class="body">
+    <div class="row"><label data-i18n="presetLabel">Готова модель</label>
+      <select id="modelPreset"></select></div>
+    <div class="btns"><button id="applyPreset" class="green" data-i18n="applyPreset">Застосувати</button></div>
+    <div class="btns"><button id="saveCompare" class="ghost" data-i18n="saveCompare">Запамʼятати для порівняння</button>
+      <button id="openCompare" class="ghost" data-i18n="compare">Порівняння</button></div>
   </div></details>
 
   <details><summary data-i18n="secDims">Габарити</summary><div class="body">
@@ -101,6 +111,10 @@
     <ul id="warnings"></ul>
   </div></details>
 
+  <details open><summary data-i18n="secValidation">Перевірка конфігурації</summary><div class="body" id="validation">
+    <ul id="validationList"></ul>
+  </div></details>
+
   <details><summary data-i18n="secCam">Камера</summary><div class="body">
     <div class="row"><label><span data-i18n="fov">FOV</span> <output id="cameraFov-v"></output></label><input type="range" id="cameraFov" min="35" max="85" step="1"></div>
     <div class="row"><label><span data-i18n="dist">Дистанція</span> <output id="cameraDistance-v"></output></label><input type="range" id="cameraDistance" min="140" max="500" step="5"></div>
@@ -112,12 +126,19 @@
     <button id="toggleExplode" class="ghost">Explode</button>
     <button id="resetConfig" class="ghost" data-i18n="reset">Скинути</button>
   </div>
+  <div class="btns"><button id="printPdf" class="ghost" data-i18n="printPdf">Друк / PDF</button></div>
   <div class="btns">
     <button id="saveJson" class="green">JSON ⤓</button>
     <button id="loadJson" class="ghost">JSON ⤒</button>
     <input type="file" id="fileJson" accept="application/json" hidden>
   </div>
 </aside>
+
+<div id="compareModal"><div class="card">
+  <div class="modal-head"><h2 data-i18n="compareTitle">Порівняння конфігурацій</h2><button id="closeCompare" class="ghost">×</button></div>
+  <div id="compareContent"></div>
+  <div class="btns"><button id="clearCompare" class="ghost" data-i18n="clearCompare">Очистити порівняння</button></div>
+</div></div>
 
 <div id="tour"><div class="card">
   <h2 data-i18n="tourTitle">Тур по Woodstove 2</h2>

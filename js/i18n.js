@@ -4,7 +4,7 @@ export function getLang() {
   try {
     const q = new URLSearchParams(location.search).get('lang');
     if (q === 'en' || q === 'uk') return q;
-    return localStorage.getItem(LANG_KEY) || 'uk';
+    return localStorage.getItem(LANG_KEY) === 'en' ? 'en' : 'uk';
   } catch { return 'uk'; }
 }
 export function setLang(l) {
@@ -13,7 +13,7 @@ export function setLang(l) {
 
 export const STR = {
   uk: {
-    title: 'Woodstove 2 — Sprint 8',
+    title: 'Woodstove 2 — Sprint 9',
     subtitle: '1 од. = 1 см · three@160 · модулі · дебаунс 120мс',
     tourBtn: 'Тур', tourTitle: 'Тур по Woodstove 2', tourClose: 'Зрозуміло',
     secMode: 'Режим роботи / вид', lblMode: 'Режим', lblView: 'Вид',
@@ -33,9 +33,20 @@ export const STR = {
     secCam: 'Камера', fov: 'FOV', dist: 'Дистанція', focusY: 'Фокус Y',
     openDoor: 'Відкрити дверця', closeDoor: 'Закрити дверця', explode: 'Explode', assemble: 'Зібрати', reset: 'Скинути',
     unitCm: 'см', unitMm: 'мм', unitH: 'год', unitPa: 'Па', unitL: 'л',
+    secProduct: 'Модель / проєкт', presetLabel: 'Готова модель', applyPreset: 'Застосувати',
+    presetCompact: 'Compact · мала', presetStandard: 'Standard · базова', presetWide: 'Wide · широка', presetWorkshop: 'Workshop · майстерня',
+    share: 'Поділитися', copied: 'Посилання скопійовано', compare: 'Порівняння', saveCompare: 'Запамʼятати для порівняння',
+    clearCompare: 'Очистити порівняння', screenshot: 'Знімок', printPdf: 'Друк / PDF',
+    secValidation: 'Перевірка конфігурації', validConfig: 'Конфігурація коректна', noWarnings: 'Попереджень немає.',
+    errorDoorWide: 'Дверцята ширші за доступний фасад.', errorDoorHigh: 'Дверцята вищі за доступну висоту.',
+    errorBaffleHigh: 'Бафль знаходиться занадто близько до кришки.', errorPrimaryOutside: 'Отвори primary виходять за ширину панелі.',
+    warnBaffleGap: 'Передній зазор бафля завеликий для цієї глибини.', warnChimneySmall: 'Діаметр димоходу може бути замалим для корпусу.',
+    warnLiningThick: 'Шар шамоту займає надто великий обʼєм топки.',
+    compareTitle: 'Порівняння конфігурацій', compareSaved: 'Запамʼятана', compareCurrent: 'Поточна', compareNone: 'Спочатку запамʼятайте конфігурацію.',
+    metricPower: 'Потужність', metricEfficiency: 'ККД', metricBurn: 'Горіння', metricDraft: 'Тяга', metricWidth: 'Ширина', metricDepth: 'Глибина', metricHeight: 'Висота',
   },
   en: {
-    title: 'Woodstove 2 — Sprint 8',
+    title: 'Woodstove 2 — Sprint 9',
     subtitle: '1 unit = 1 cm · three@160 · modules · 120ms debounce',
     tourBtn: 'Tour', tourTitle: 'Woodstove 2 tour', tourClose: 'Got it',
     secMode: 'Operation mode / view', lblMode: 'Mode', lblView: 'View',
@@ -55,6 +66,17 @@ export const STR = {
     secCam: 'Camera', fov: 'FOV', dist: 'Distance', focusY: 'Focus Y',
     openDoor: 'Open door', closeDoor: 'Close door', explode: 'Explode', assemble: 'Assemble', reset: 'Reset',
     unitCm: 'cm', unitMm: 'mm', unitH: 'h', unitPa: 'Pa', unitL: 'L',
+    secProduct: 'Model / project', presetLabel: 'Ready-made model', applyPreset: 'Apply',
+    presetCompact: 'Compact · small', presetStandard: 'Standard · base', presetWide: 'Wide · wide', presetWorkshop: 'Workshop · shop',
+    share: 'Share', copied: 'Link copied', compare: 'Compare', saveCompare: 'Save for comparison',
+    clearCompare: 'Clear comparison', screenshot: 'Screenshot', printPdf: 'Print / PDF',
+    secValidation: 'Configuration check', validConfig: 'Configuration is valid', noWarnings: 'No warnings.',
+    errorDoorWide: 'The door is wider than the available front panel.', errorDoorHigh: 'The door is higher than the available body height.',
+    errorBaffleHigh: 'The baffle is too close to the top cover.', errorPrimaryOutside: 'Primary holes extend beyond the panel width.',
+    warnBaffleGap: 'The baffle front gap is too large for this depth.', warnChimneySmall: 'The chimney diameter may be too small for this body.',
+    warnLiningThick: 'The firebrick lining takes too much firebox volume.',
+    compareTitle: 'Configuration comparison', compareSaved: 'Saved', compareCurrent: 'Current', compareNone: 'Save a configuration first.',
+    metricPower: 'Output', metricEfficiency: 'Efficiency', metricBurn: 'Burn time', metricDraft: 'Draft', metricWidth: 'Width', metricDepth: 'Depth', metricHeight: 'Height',
   },
 };
 
@@ -76,6 +98,27 @@ export const WARN_TXT = {
     DRAFT_WEAK: (pa) => `Weak draft (${pa} Pa): increase stack height/Ø or intensity.`,
     BAFFLE_GAP: 'Large baffle front gap — gases bypass afterburning.',
     STARTUP_LONG: 'Start-up with long burn — check air supply.',
+  },
+};
+
+export const VALIDATION_TXT = {
+  uk: {
+    DOOR_TOO_WIDE: (v) => `Дверцята ${v.doorW} см > доступні ${v.usableW.toFixed(1)} см.`,
+    DOOR_TOO_HIGH: (v) => `Дверцята ${v.doorH} см > доступні ${v.usableH.toFixed(1)} см.`,
+    BAFFLE_TOO_HIGH: (v) => `Висота бафля ${v.height} см конфліктує з верхньою кришкою.`,
+    PRIMARY_OUTSIDE: (v) => `Розкладка primary має проліт ${v.span.toFixed(1)} см і виходить за панель.`,
+    BAFFLE_GAP_LARGE: (v) => `Зазор бафля ${v.gap} см завеликий.`,
+    CHIMNEY_SMALL: (v) => `Діаметр димоходу ${v.diameter} см може бути замалим.`,
+    LINING_THICK: (v) => `Шамот ${v.thickness} см суттєво зменшує топку.`,
+  },
+  en: {
+    DOOR_TOO_WIDE: (v) => `Door ${v.doorW} cm > available ${v.usableW.toFixed(1)} cm.`,
+    DOOR_TOO_HIGH: (v) => `Door ${v.doorH} cm > available ${v.usableH.toFixed(1)} cm.`,
+    BAFFLE_TOO_HIGH: (v) => `Baffle height ${v.height} cm conflicts with the top cover.`,
+    PRIMARY_OUTSIDE: (v) => `Primary layout span ${v.span.toFixed(1)} cm exceeds the panel.`,
+    BAFFLE_GAP_LARGE: (v) => `Baffle gap ${v.gap} cm is too large.`,
+    CHIMNEY_SMALL: (v) => `Chimney diameter ${v.diameter} cm may be too small.`,
+    LINING_THICK: (v) => `Firebrick ${v.thickness} cm significantly reduces the firebox.`,
   },
 };
 

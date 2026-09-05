@@ -1,6 +1,6 @@
 // Швидкі тести PhysicsModel v2 — запуск: node tests/physics.test.js
 import { PhysicsModel } from '../js/physics-model.js';
-import { defaultConfig, normalizeConfig, applyModePreset } from '../js/config.js';
+import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, MODEL_PRESETS } from '../js/config.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 let fails = 0;
@@ -51,6 +51,23 @@ for (const m of ['start-up','low','medium','high','overnight']) {
   const rr = PhysicsModel.evaluate(c);
   ok(Number.isFinite(rr.metrics.efficiencyPct) && Number.isFinite(rr.metrics.heatOutputKw), `preset ${m} finite`, JSON.stringify(rr.metrics));
 }
+
+// 7. модельні пресети дають валідну геометрію
+for (const [name, preset] of Object.entries(MODEL_PRESETS)) {
+  let c = normalizeConfig(clone(defaultConfig));
+  c = applyModelPreset(c, name);
+  const validation = validateConfig(c);
+  ok(validation.valid, `model preset ${name} valid`, JSON.stringify(validation.errors));
+  ok(c.dimensions.widthCm >= 40 && c.dimensions.widthCm <= 140, `model preset ${name} dimensions`, JSON.stringify(c.dimensions));
+}
+
+// 8. некоректна геометрія повертає зрозумілий код, а не ламає сцену
+const invalid = normalizeConfig(clone(defaultConfig));
+invalid.door.widthCm = 70;
+invalid.dimensions.widthCm = 40;
+const invalidResult = validateConfig(invalid);
+ok(!invalidResult.valid, 'invalid door geometry detected', JSON.stringify(invalidResult.errors));
+ok(invalidResult.errors.some((item) => item.code === 'DOOR_TOO_WIDE'), 'invalid geometry has stable code');
 
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);
 process.exit(fails === 0 ? 0 : 1);

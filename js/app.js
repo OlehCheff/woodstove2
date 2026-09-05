@@ -1,17 +1,20 @@
 // woodstove2 app: сцена + UI + креслення SVG + тур + експорт
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { defaultConfig, loadConfig, saveConfig, normalizeConfig, applyModePreset, getByPath, setByPath, OPERATION_PRESETS } from './config.js';
+import { defaultConfig, loadConfig, saveConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, encodeConfig, decodeConfig, deepMerge, getByPath, setByPath, OPERATION_PRESETS, MODEL_PRESETS } from './config.js';
 import { PhysicsModel } from './physics-model.js';
 import { buildStove, disposeGroup } from './stove-builder.js';
 import { exportGLTF, exportSTL } from './exporters.js';
-import { STR, WARN_TXT, TOUR, getLang, setLang } from './i18n.js';
+import { STR, WARN_TXT, VALIDATION_TXT, TOUR, getLang, setLang } from './i18n.js';
 
 let lang = getLang();
 const t = (k) => (STR[lang] && STR[lang][k]) || STR.uk[k] || k;
 
 let config = loadConfig();
+const sharedValue = location.hash.startsWith('#config=') ? decodeConfig(location.hash.slice(8)) : null;
+if (sharedValue) config = normalizeConfig(deepMerge(structuredClone(defaultConfig), sharedValue));
 const cache = new Map(); // кеш матеріалів
+const COMPARE_KEY = 'woodstove2CompareV1';
 
 // ---------- сцена ----------
 const container = document.getElementById('canvas-container');
@@ -172,6 +175,98 @@ function renderPhysics() {
     li.textContent = `[${wmsg.code}] ${warnText(wmsg.code, wmsg.message, r.metrics.draftPa)}`;
     ul.appendChild(li);
   }
+  renderValidation();
+}
+
+function validationText(item) {
+  const entry = VALIDATION_TXT[lang]?.[item.code] || VALIDATION_TXT.uk[item.code];
+  return typeof entry === 'function' ? entry(item.values || {}) : item.code;
+}
+
+function renderValidation() {
+  const list = document.getElementById('validationList');
+  if (!list) return;
+  const result = validateConfig(config);
+  list.innerHTML = '';
+  if (result.valid && !result.warnings.length) {
+    list.innerHTML = `<li class="ok">✓ ${t('validConfig')}</li>`;
+    return;
+  }
+  result.errors.forEach((item) => {
+    const li = document.createElement('li'); li.className = 'error';
+    li.textContent = `✕ ${validationText(item)}`; list.appendChild(li);
+  });
+  result.warnings.forEach((item) => {
+    const li = document.createElement('li'); li.className = 'warning';
+    li.textContent = `! ${validationText(item)}`; list.appendChild(li);
+  });
+}
+
+function syncModelOptions() {
+  const select = document.getElementById('modelPreset');
+  if (!select) return;
+  const selected = select.value || 'standard';
+  select.innerHTML = Object.entries(MODEL_PRESETS)
+    .map(([id, preset]) => `<option value="${id}">${t(preset.labelKey)}</option>`).join('');
+  select.value = MODEL_PRESETS[selected] ? selected : 'standard';
+}
+
+function getSavedCompare() {
+  try {
+    const raw = localStorage.getItem(COMPARE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function getCompareMetrics(cfg) {
+  const physics = PhysicsModel.evaluate(cfg).metrics;
+  return {
+    [t('metricPower')]: `${physics.heatOutputKw} ${lang === 'en' ? 'kW' : 'кВт'}`,
+    [t('metricEfficiency')]: `${physics.efficiencyPct}%`,
+    [t('metricBurn')]: `${physics.burnTimeHours} ${t('unitH')}`,
+    [t('metricDraft')]: `${physics.draftPa} ${t('unitPa')}`,
+    [t('metricWidth')]: `${cfg.dimensions.widthCm} ${t('unitCm')}`,
+    [t('metricDepth')]: `${cfg.dimensions.depthCm} ${t('unitCm')}`,
+    [t('metricHeight')]: `${cfg.dimensions.heightCm} ${t('unitCm')}`,
+  };
+}
+
+function renderCompare() {
+  const target = document.getElementById('compareContent');
+  const saved = getSavedCompare();
+  if (!saved) { target.innerHTML = `<p class="sub">${t('compareNone')}</p>`; return; }
+  const before = getCompareMetrics(saved);
+  const current = getCompareMetrics(config);
+  const rows = Object.keys(current).map((key) => `<tr><td>${key}</td><td>${before[key]}</td><td>${current[key]}</td></tr>`).join('');
+  target.innerHTML = `<table class="compare-table"><thead><tr><th></th><th>${t('compareSaved')}</th><th>${t('compareCurrent')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function shareConfig() {
+  const url = new URL(location.href);
+  url.hash = `config=${encodeConfig(config)}`;
+  const copied = navigator.clipboard?.writeText(url.href);
+  if (copied) copied.then(() => {
+    const button = document.getElementById('shareConfig');
+    button.textContent = t('copied'); setTimeout(() => { button.textContent = t('share'); }, 1600);
+  }).catch(() => window.prompt(t('share'), url.href));
+  else window.prompt(t('share'), url.href);
+  history.replaceState(null, '', url);
+}
+
+function downloadScreenshot() {
+  const link = document.createElement('a');
+  link.download = `woodstove-${Date.now()}.png`;
+  link.href = renderer.domElement.toDataURL('image/png'); link.click();
+}
+
+function printReport() {
+  const report = window.open('', '_blank', 'noopener,noreferrer');
+  if (!report) return;
+  const metrics = getCompareMetrics(config);
+  const rows = Object.entries(metrics).map(([key, value]) => `<tr><td>${key}</td><td>${value}</td></tr>`).join('');
+  const image = renderer.domElement.toDataURL('image/png');
+  report.document.write(`<!doctype html><html lang="${lang}"><head><title>${t('title')}</title><style>body{font:14px Arial;color:#172033;padding:24px}h1{font-size:22px}img{max-width:100%;background:#101318;border-radius:10px}table{border-collapse:collapse;margin-top:14px}td{border-bottom:1px solid #ddd;padding:7px 14px 7px 0}</style></head><body><h1>🔥 Woodstove 2</h1><p>${new Date().toLocaleString()}</p><img src="${image}"><table>${rows}</table><script>window.onload=()=>window.print()<\/script></body></html>`);
+  report.document.close();
 }
 
 // ---------- UI прив'язка ----------
@@ -215,7 +310,7 @@ function applyI18n() {
   document.getElementById('exportStl').title = lang === 'en' ? 'Export scene as STL' : 'Експорт сцени в STL';
   const ol = document.getElementById('tourList');
   if (ol) ol.innerHTML = TOUR[lang].map((li) => `<li>${li}</li>`).join('');
-  syncDoorBtn(); syncExplodeBtn(); syncUI(); renderPhysics();
+  syncModelOptions(); syncDoorBtn(); syncExplodeBtn(); syncUI(); renderPhysics();
 }
 function syncDoorBtn() {
   document.getElementById('toggleDoor').textContent = config.door.isOpen ? t('closeDoor') : t('openDoor');
@@ -264,6 +359,12 @@ function bindUI() {
   document.getElementById('viewMode').addEventListener('change', (e) => {
     config.viewMode = e.target.value; normalizeConfig(config); saveConfig(config); applyViewMode();
   });
+  document.getElementById('applyPreset').addEventListener('click', () => {
+    const presetName = document.getElementById('modelPreset').value;
+    config = applyModelPreset(config, presetName);
+    applyModePreset(config, config.operation.mode);
+    saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
+  });
   for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney' })) {
     document.getElementById(id).addEventListener('change', (e) => {
       config.visibility[k] = e.target.checked; saveConfig(config); applyVisibility();
@@ -302,6 +403,23 @@ function bindUI() {
       saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
     } catch { alert(lang === 'en' ? 'Invalid JSON' : 'Невалідний JSON'); }
     e.target.value = '';
+  });
+  document.getElementById('shareConfig').addEventListener('click', shareConfig);
+  document.getElementById('screenshot').addEventListener('click', downloadScreenshot);
+  document.getElementById('printPdf').addEventListener('click', printReport);
+  document.getElementById('saveCompare').addEventListener('click', () => {
+    try { localStorage.setItem(COMPARE_KEY, JSON.stringify(config)); } catch { /* ignore */ }
+    renderCompare();
+  });
+  document.getElementById('openCompare').addEventListener('click', () => {
+    renderCompare(); document.getElementById('compareModal').style.display = 'flex';
+  });
+  document.getElementById('closeCompare').addEventListener('click', () => { document.getElementById('compareModal').style.display = 'none'; });
+  document.getElementById('compareModal').addEventListener('click', (e) => {
+    if (e.target.id === 'compareModal') e.target.style.display = 'none';
+  });
+  document.getElementById('clearCompare').addEventListener('click', () => {
+    localStorage.removeItem(COMPARE_KEY); renderCompare();
   });
   document.getElementById('langToggle').addEventListener('click', () => {
     lang = lang === 'en' ? 'uk' : 'en'; setLang(lang); applyI18n();

@@ -1,4 +1,4 @@
-# Woodstove 2 — Sprint 8 (Full)
+# Woodstove 2 — Sprint 9 (Product Configurator)
 
 Що виправлено відносно `woodstove1` (Sprint 1–7):
 
@@ -10,6 +10,8 @@
 - **Фізика v2:** враховує висоту/Ø димоходу (тяга Па), `intakePct`, `baffle.airflowPct`, об'єм топки (л), масу закладки (кг); breakdown + 7 варнінгів
 - **Issue #2 закрито:** колір сталі/шамоту/скла/підлоги + roughness/metalness
 - **Експорт:** GLTF + STL, Save/Load JSON, міграція localStorage V1←V2
+- **Product Sprint 9:** готові моделі `Compact / Standard / Wide / Workshop`, share-link через URL hash, compare конфігурацій, screenshot і Print/PDF-звіт.
+- **Geometry validation:** перевірка дверцят, бафля, primary-отворів, шамоту та димоходу до виробничого етапу.
 
 ## Запуск
 - Варіант без збірки: `npx serve .` → відкрити `index.html` (потрібен інтернет для CDN three.js)
@@ -25,6 +27,7 @@ woodstove2/
 ├── js/stove-builder.js
 ├── js/app.js
 ├── js/exporters.js
+├── js/i18n.js
 ├── tests/physics.test.js
 └── package.json
 ```
