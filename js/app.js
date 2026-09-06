@@ -5,6 +5,7 @@ import { defaultConfig, loadConfig, saveConfig, normalizeConfig, applyModePreset
 import { PhysicsModel, optimizeConfig } from './physics-model.js';
 import { buildStove, disposeGroup } from './stove-builder.js';
 import { exportGLTF, exportSTL } from './exporters.js';
+import { buildBOM, bomToCsv, buildDrawingSVG } from './bom.js';
 import { STR, WARN_TXT, VALIDATION_TXT, TOUR, getLang, setLang } from './i18n.js';
 
 let lang = getLang();
@@ -210,6 +211,7 @@ function renderPhysics() {
   renderValidation();
   renderTestBurn();
   renderTestLog();
+  renderBomSummary();
 }
 
 function validationText(item) {
@@ -360,6 +362,30 @@ function renderCompare() {
   const current = getCompareMetrics(config);
   const rows = Object.keys(current).map((key) => `<tr><td>${key}</td><td>${before[key]}</td><td>${current[key]}</td></tr>`).join('');
   target.innerHTML = `<table class="compare-table"><thead><tr><th></th><th>${t('compareSaved')}</th><th>${t('compareCurrent')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function downloadBlob(blob, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+function exportBomCsv() {
+  const bom = buildBOM(config);
+  const csv = bomToCsv(bom, lang);
+  downloadBlob(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), `woodstove-bom-${Date.now()}.csv`);
+}
+
+function exportDrawingSvg() {
+  const svg = buildDrawingSVG(config);
+  downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), `woodstove-drawing-${Date.now()}.svg`);
+}
+
+function renderBomSummary() {
+  const target = document.getElementById('bomSummary');
+  if (!target) return;
+  const bom = buildBOM(config);
+  target.innerHTML = `${t('bomSteel')}: <b>${bom.totals.steelMassKg} kg</b> · ${t('bomArea')}: <b>${bom.totals.steelAreaM2} m²</b> · ${t('bomBrick')}: <b>${bom.totals.brickMassKg} kg</b> · ${t('bomTotal')}: <b>${bom.totals.totalMassKg} kg</b>`;
 }
 
 function shareConfig() {
@@ -616,6 +642,8 @@ function bindUI() {
   });
   document.getElementById('exportGltf').addEventListener('click', () => exportGLTF(buildExportModel()));
   document.getElementById('exportStl').addEventListener('click', () => exportSTL(buildExportModel()));
+  document.getElementById('exportBom').addEventListener('click', exportBomCsv);
+  document.getElementById('exportDrawing').addEventListener('click', exportDrawingSvg);
   document.getElementById('showTour').addEventListener('click', () => { document.getElementById('tour').style.display = 'flex'; });
   document.getElementById('closeTour').addEventListener('click', () => { document.getElementById('tour').style.display = 'none'; });
   document.getElementById('tour').addEventListener('click', (e) => { if (e.target.id === 'tour') e.target.style.display = 'none'; });

@@ -56,6 +56,8 @@ button:active{transform:translateY(1px)}
 .test-result .bad{color:#fca5a5}
 .optimization-result{margin-top:8px;font-size:12px;line-height:1.45;color:var(--muted)}
 .optimization-result strong{color:#fbbf24}
+.bom-summary{margin-top:8px;font-size:11.5px;line-height:1.5;color:var(--muted);background:#12161d;border:1px solid var(--line);border-radius:9px;padding:8px}
+.bom-summary b{color:#86efac}
 #tour{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55)}
 #tour .card{max-width:520px;background:#151a23;border:1px solid var(--line);border-radius:14px;padding:18px}
 #tour h2{font-size:16px;margin-bottom:8px}
