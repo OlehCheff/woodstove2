@@ -143,10 +143,18 @@ function renderOverlaySVG() {
   const dims = [];
   if (config.viewMode === 'drawing-front') {
     dims.push({ t: `W: ${W} ${u}`, a: new THREE.Vector3(-W / 2, L + 4, D / 2 + 3), b: new THREE.Vector3(W / 2, L + 4, D / 2 + 3) });
-    dims.push({ t: `H: ${H + L} ${u}`, a: new THREE.Vector3(W / 2 + 7, L, D / 2 + 3), b: new THREE.Vector3(W / 2 + 7, L + H, D / 2 + 3) });
+    dims.push({ t: `${t('bodyH')}: ${H} ${u}`, a: new THREE.Vector3(W / 2 + 7, L, D / 2 + 3), b: new THREE.Vector3(W / 2 + 7, L + H, D / 2 + 3) });
+    if (L > 0) {
+      dims.push({ t: `${t('legsH')}: ${L} ${u}`, a: new THREE.Vector3(-W / 2 - 7, 0, D / 2 + 3), b: new THREE.Vector3(-W / 2 - 7, L, D / 2 + 3) });
+      dims.push({ t: `${t('totalH')}: ${H + L} ${u}`, a: new THREE.Vector3(W / 2 + 22, 0, D / 2 + 3), b: new THREE.Vector3(W / 2 + 22, L + H, D / 2 + 3) });
+    }
   } else if (config.viewMode === 'drawing-side') {
     dims.push({ t: `D: ${D} ${u}`, a: new THREE.Vector3(W / 2 + 3, L + 4, -D / 2), b: new THREE.Vector3(W / 2 + 3, L + 4, D / 2) });
-    dims.push({ t: `H: ${H + L} ${u}`, a: new THREE.Vector3(W / 2 + 3, L, D / 2 + 8), b: new THREE.Vector3(W / 2 + 3, L + H, D / 2 + 8) });
+    dims.push({ t: `${t('bodyH')}: ${H} ${u}`, a: new THREE.Vector3(W / 2 + 3, L, D / 2 + 8), b: new THREE.Vector3(W / 2 + 3, L + H, D / 2 + 8) });
+    if (L > 0) {
+      dims.push({ t: `${t('legsH')}: ${L} ${u}`, a: new THREE.Vector3(W / 2 + 3, 0, -D / 2 - 7), b: new THREE.Vector3(W / 2 + 3, L, -D / 2 - 7) });
+      dims.push({ t: `${t('totalH')}: ${H + L} ${u}`, a: new THREE.Vector3(W / 2 + 18, 0, D / 2 + 8), b: new THREE.Vector3(W / 2 + 18, L + H, D / 2 + 8) });
+    }
   } else {
     const y = L + H + 4;
     dims.push({ t: `W: ${W} ${u}`, a: new THREE.Vector3(-W / 2, y, D / 2 + 5), b: new THREE.Vector3(W / 2, y, D / 2 + 5) });
