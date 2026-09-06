@@ -78,7 +78,7 @@ export const PhysicsModel = {
     const baffleHeightNorm = clamp((baffleHeight - 20) / 60, 0, 1);
     const baffleAngleNorm = clamp(baffleAngle / 15, -1, 1);
     const baffleDraftPenalty = baffleHeightNorm * 1.2;
-    const draftPa = clamp((chimH / 100) * (3.2 + flame * 9) * (chimD / 15) ** 2 - baffleDraftPenalty, 4, 30);
+    const draftPa = clamp((chimH / 100) * (3.2 + flame * 9) * (chimD / 15) ** 1.15 - baffleDraftPenalty, 4, 30);
     const stackVelocityMs = clamp(0.75 * Math.sqrt(Math.max(draftPa, 0.1)), 1, 6);
     const draftFlowM3s = clamp((chimneyAreaCm2 / 10000) * stackVelocityMs, 0.003, 0.15);
     const secondaryVelocityMs = clamp((draftPa * 0.12) / Math.max(secondaryOpeningAreaCm2, 0.4), 0.05, 8);
@@ -147,7 +147,7 @@ export const PhysicsModel = {
       warnings.push({ level: 'warn', code: 'INEFFICIENT_MODE', message: 'Неефективний режим: ККД < 62%.' });
     if (washGap < 0.9 && flame > 0.75)
       warnings.push({ level: 'warn', code: 'DIRTY_GLASS', message: 'Закопчення скла: вузький air-wash при сильному полум’ї.' });
-    if (draftPa < 8)
+    if (draftPa < 7)
       warnings.push({ level: 'warn', code: 'DRAFT_WEAK', message: `Слабка тяга (${round(draftPa, 1)} Па): збільшіть висоту/Ø димоходу або інтенсивність.` });
     if (baffleGap > 12)
       warnings.push({ level: 'info', code: 'BAFFLE_GAP', message: 'Великий передній зазор бафля — гази йдуть повз догорання.' });

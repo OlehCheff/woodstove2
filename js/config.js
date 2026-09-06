@@ -4,7 +4,7 @@ export const LEGACY_KEYS = ['woodstove1ConfigV2', 'woodstove1Config'];
 
 export const OPERATION_PRESETS = {
   'start-up':  { primaryAirOpenPct: 95, secondaryAirPct: 85, airWashGapCm: 2.4, airWashIntakePct: 85, baffleAirflowPct: 75, flameIntensity: 1.0,  flameColor: 0xffb347, fillFactor: 0.5 },
-  'low':       { primaryAirOpenPct: 28, secondaryAirPct: 35, airWashGapCm: 1.0, airWashIntakePct: 45, baffleAirflowPct: 35, flameIntensity: 0.35, flameColor: 0xff8844, fillFactor: 0.6 },
+  'low':       { primaryAirOpenPct: 28, secondaryAirPct: 35, airWashGapCm: 1.2, airWashIntakePct: 55, baffleAirflowPct: 35, flameIntensity: 0.35, flameColor: 0xff8844, fillFactor: 0.6 },
   'medium':    { primaryAirOpenPct: 52, secondaryAirPct: 55, airWashGapCm: 1.4, airWashIntakePct: 60, baffleAirflowPct: 55, flameIntensity: 0.62, flameColor: 0xffa04d, fillFactor: 0.7 },
   'high':      { primaryAirOpenPct: 82, secondaryAirPct: 78, airWashGapCm: 2.0, airWashIntakePct: 80, baffleAirflowPct: 70, flameIntensity: 0.88, flameColor: 0xffc261, fillFactor: 0.85 },
   'overnight': { primaryAirOpenPct: 15, secondaryAirPct: 24, airWashGapCm: 0.8, airWashIntakePct: 30, baffleAirflowPct: 25, flameIntensity: 0.22, flameColor: 0xff6a33, fillFactor: 0.7 },
@@ -16,10 +16,10 @@ export const MODEL_PRESETS = {
     patch: {
       dimensions: { widthCm: 58, depthCm: 46, heightCm: 78, legHeightCm: 12 },
       materials: { steelThicknessMm: 4, firebrickThicknessCm: 3 },
-      chimney: { diameterCm: 13, heightCm: 100 },
+      chimney: { diameterCm: 13, heightCm: 120 },
       door: { widthCm: 34, heightCm: 32 },
       baffle: { heightCm: 48, frontGapCm: 5 },
-      operation: { mode: 'low' },
+      operation: { mode: 'medium' },
     },
   },
   standard: {

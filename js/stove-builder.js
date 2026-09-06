@@ -39,6 +39,7 @@ export function buildStove(cfg, cache = new Map()) {
   const darkM = mat(cache, 'dark', () => new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.45, metalness: 0.6 }));
   const ductM = mat(cache, 'duct', () => new THREE.MeshStandardMaterial({ color: 0x616872, roughness: 0.4, metalness: 0.58 }));
   const controlM = mat(cache, 'control', () => new THREE.MeshStandardMaterial({ color: 0xffb347, roughness: 0.35, metalness: 0.35 }));
+  const baffleControlM = mat(cache, 'baffle-control', () => new THREE.MeshStandardMaterial({ color: 0x8b5cf6, roughness: 0.35, metalness: 0.35 }));
   const primaryControlM = mat(cache, 'primary-control', () => new THREE.MeshStandardMaterial({ color: 0x4f8cff, roughness: 0.35, metalness: 0.35 }));
   const holeM = mat(cache, 'hole', () => new THREE.MeshStandardMaterial({ color: 0x0b0c0e, roughness: 0.95 }));
   const gasketM = mat(cache, 'gasket', () => new THREE.MeshStandardMaterial({ color: 0x16181c, roughness: 0.9, metalness: 0.1 }));
@@ -114,7 +115,7 @@ export function buildStove(cfg, cache = new Map()) {
   const baffleControlX = -regTravel / 2 + regTravel * (cfg.baffle.airflowPct / 100);
   baffleReg.position.set(baffleControlX, baffleY - 2.4, d * 0.16);
   shell.add(baffleReg);
-  const baffleHandle = new THREE.Mesh(new THREE.SphereGeometry(1.6, 16, 16), controlM);
+  const baffleHandle = new THREE.Mesh(new THREE.SphereGeometry(1.6, 16, 16), baffleControlM);
   baffleHandle.position.set(baffleControlX, baffleY - 2.4, d / 2 + 1.8); baffleHandle.name = 'baffleHandle'; shell.add(baffleHandle);
 
   // Повітряні канали: primary знизу, secondary через два підігрівальні стояки,
@@ -352,6 +353,16 @@ export function buildStove(cfg, cache = new Map()) {
   chimney.position.set(0, chimneyBaseY + cfg.chimney.heightCm / 2, chimZ); chimney.castShadow = true; shell.add(chimney);
   const collar = new THREE.Mesh(new THREE.CylinderGeometry(collarR, collarR * 1.06, steelT * 2.2, 28), darkM);
   collar.position.set(0, h + steelT * 0.35, chimZ); shell.add(collar);
+  // Внутрішня димова труба від зони над бафлем до кришки: закриває комірний
+  // отвір, щоб крізь нього не було видно внутрішніх шарів.
+  const flueBellBottom = Math.min(h - steelT * 2, Math.max(baffleY + steelT * 4, h * 0.55));
+  const flueBellH = Math.max(6, (h - steelT) - flueBellBottom);
+  const flueBell = new THREE.Mesh(new THREE.CylinderGeometry(chimR * 1.06, chimR * 1.06, flueBellH, 28), ductM);
+  flueBell.position.set(0, flueBellBottom + flueBellH / 2, chimZ);
+  flueBell.name = 'flueBell'; gasChannels.add(flueBell);
+  const flueBellBase = new THREE.Mesh(new THREE.CylinderGeometry(chimR * 1.3, chimR * 1.16, 2.2, 28), darkM);
+  flueBellBase.position.set(0, flueBellBottom - 0.4, chimZ);
+  gasChannels.add(flueBellBase);
 
   // ніжки
   if (legH > 0) {
