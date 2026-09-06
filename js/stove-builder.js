@@ -47,28 +47,27 @@ export function buildStove(cfg, cache = new Map()) {
   const right = plate(steelT, h, d, steel); right.position.set(w / 2 - steelT / 2, h / 2, 0); shell.add(right);
   const back = plate(w, h, steelT, steel); back.position.set(0, h / 2, -d / 2 + steelT / 2); shell.add(back);
 
-  // Передня стінка з вирізом під дверцята (без передньої стінки дверцята "плавали")
+  // Передня стінка з вирізом під дверцята. Чотири панелі замість boolean/shape
+  // роблять отвір стабільним для WebGL і дають окремі деталі для STL/GLTF.
   const doorWc = Math.max(20, Math.min(cfg.door.widthCm, w - steelT * 4));
   const doorHc = Math.max(20, Math.min(cfg.door.heightCm, h - steelT * 4));
-  const frontShape = new THREE.Shape();
-  frontShape.moveTo(-w / 2, -h / 2);
-  frontShape.lineTo(-w / 2, h / 2);
-  frontShape.lineTo(w / 2, h / 2);
-  frontShape.lineTo(w / 2, -h / 2);
-  frontShape.closePath();
-  const doorPath = new THREE.Path();
-  const dw = doorWc / 2, dh = doorHc / 2;
-  const doorCenterY = h * 0.48;
-  doorPath.moveTo(-dw, doorCenterY - dh);
-  doorPath.lineTo(dw, doorCenterY - dh);
-  doorPath.lineTo(dw, doorCenterY + dh);
-  doorPath.lineTo(-dw, doorCenterY + dh);
-  doorPath.closePath();
-  frontShape.holes.push(doorPath);
-  const frontGeom = new THREE.ExtrudeGeometry(frontShape, { depth: steelT, bevelEnabled: false });
-  const frontPanel = new THREE.Mesh(frontGeom, steel);
-  frontPanel.position.set(0, 0, d / 2 - steelT / 2);
-  frontPanel.castShadow = frontPanel.receiveShadow = true;
+  const frontPanel = new THREE.Group(); frontPanel.name = 'frontPanel';
+  const openingW = Math.min(w - steelT * 2, doorWc + 0.8);
+  const openingH = Math.min(h - steelT * 2, doorHc + 0.8);
+  const openingBottom = Math.max(steelT, h * 0.48 - openingH / 2);
+  const openingTop = Math.min(h - steelT, openingBottom + openingH);
+  const sideW = Math.max(steelT, (w - openingW) / 2);
+  const frontZ = d / 2 - steelT / 2;
+  const addFrontPiece = (pw, ph, px, py) => {
+    const piece = plate(pw, ph, steelT, steel);
+    piece.position.set(px, py, 0);
+    frontPanel.add(piece);
+  };
+  addFrontPiece(sideW, h, -w / 2 + sideW / 2, h / 2);
+  addFrontPiece(sideW, h, w / 2 - sideW / 2, h / 2);
+  addFrontPiece(openingW, openingBottom, 0, openingBottom / 2);
+  addFrontPiece(openingW, h - openingTop, 0, openingTop + (h - openingTop) / 2);
+  frontPanel.position.z = frontZ;
   shell.add(frontPanel);
 
   // верх з вирізом під димохід: 4 планки навколо коміра (щільне з'єднання, без z-fight)
