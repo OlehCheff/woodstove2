@@ -102,6 +102,14 @@
     <div class="row"><label><span data-i18n="airwashPreheatLength">Довжина підігріву air-wash</span> <output id="airWashPreheatLengthCm-v"></output></label><input type="range" id="airWashPreheatLengthCm" min="15" max="120" step="1"></div>
   </div></details>
 
+  <details><summary data-i18n="secThermal">Expert: теплова архітектура</summary><div class="body">
+    <div class="row"><label><span data-i18n="insulationT">Товщина ізоляції топки</span> <output id="insulationThicknessCm-v"></output></label><input type="range" id="insulationThicknessCm" min="0" max="8" step="0.5"></div>
+    <div class="row"><label><span data-i18n="refractoryT">Refractory шар бафля</span> <output id="baffleRefractoryThicknessCm-v"></output></label><input type="range" id="baffleRefractoryThicknessCm" min="0" max="8" step="0.5"></div>
+    <div class="row"><label><span data-i18n="targetTemp">Цільова температура горіння</span> <output id="targetCombustionTempC-v"></output></label><input type="range" id="targetCombustionTempC" min="600" max="1100" step="10"></div>
+    <div class="row"><label><span data-i18n="heatPasses">Проходів теплообміну</span> <output id="heatExchangePasses-v"></output></label><input type="range" id="heatExchangePasses" min="1" max="4" step="1"></div>
+    <div class="hint" data-i18n="thermalHint">Гаряча ізольована зона допалювання, після якої гази проходять теплообмінні канали. Це інженерна оцінка, не сертифікація.</div>
+  </div></details>
+
   <details><summary data-i18n="secChimney">Димохід / дверцята</summary><div class="body">
     <div class="row"><label><span data-i18n="chimDia">Ø димоходу</span> <output id="chimneyDiameterCm-v"></output></label><input type="range" id="chimneyDiameterCm" min="10" max="25" step="0.5"></div>
     <div class="row"><label><span data-i18n="chimH">Висота труби</span> <output id="chimneyHeightCm-v"></output></label><input type="range" id="chimneyHeightCm" min="100" max="150" step="1"></div>
@@ -113,7 +121,7 @@
     <div class="row"><label data-i18n="doorHinge">Петля дверцят</label><select id="doorHingeSide"><option value="left" data-i18n="hingeLeft">Ліва сторона</option><option value="right" data-i18n="hingeRight">Права сторона</option></select></div>
   </div></details>
 
-  <details open><summary data-i18n="secPhys">Фізика v3</summary><div class="body" id="physics">
+  <details open><summary data-i18n="secPhys">Фізика v4</summary><div class="body" id="physics">
     <div class="kpi">
       <div class="card"><span data-i18n="kEff">ККД</span><b id="m-eff">—</b></div>
       <div class="card"><span data-i18n="kKw">Потужність</span><b id="m-kw">—</b></div>
@@ -135,6 +143,11 @@
       <div><span data-i18n="airwashArea">Площа air-wash</span><b id="m-airwash-area">—</b></div>
       <div><span data-i18n="airwashVelocity">Швидкість air-wash</span><b id="m-airwash-velocity">—</b></div>
       <div><span data-i18n="airwashPreheat">Підігрів air-wash</span><b id="m-airwash-preheat">—</b></div>
+      <div><span data-i18n="combustionTemp">Температура допалювання</span><b id="m-combustion-temp">—</b></div>
+      <div><span data-i18n="flueModelTemp">Розрахункова температура димоходу</span><b id="m-flue-temp">—</b></div>
+      <div><span data-i18n="gasResidence">Час газів у каналі</span><b id="m-residence">—</b></div>
+      <div><span data-i18n="flueLoss">Втрати через димохід</span><b id="m-flue-loss">—</b></div>
+      <div><span data-i18n="thermalEff">Допалювання → корисний ККД</span><b id="m-thermal-eff">—</b></div>
     </div>
   </div></details>
 
@@ -144,6 +157,7 @@
     <div class="row"><label><span data-i18n="load">Маса закладки</span> <output id="loadKg-v"></output></label><input type="range" id="loadKg" min="1" max="30" step="0.5"></div>
     <div id="loadRecommendation" class="sub"></div>
     <div class="row"><label><span data-i18n="measuredBurn">Фактичне горіння</span> <output id="measuredBurnHours-v"></output></label><input type="range" id="measuredBurnHours" min="0.1" max="30" step="0.1"></div>
+    <div class="row"><label><span data-i18n="usefulHeat">Виміряне корисне тепло</span> <output id="measuredUsefulHeatKwh-v"></output></label><input type="range" id="measuredUsefulHeatKwh" min="0" max="100" step="0.1"></div>
     <div class="row"><label><span data-i18n="flueTemp">Температура димоходу</span> <output id="flueTempC-v"></output></label><input type="range" id="flueTempC" min="20" max="800" step="5"></div>
     <div class="row"><label><span data-i18n="stoveTemp">Температура верху</span> <output id="stoveTopTempC-v"></output></label><input type="range" id="stoveTopTempC" min="20" max="1000" step="5"></div>
     <div class="row"><label><span data-i18n="glassTemp">Температура скла</span> <output id="glassTempC-v"></output></label><input type="range" id="glassTempC" min="20" max="600" step="5"></div>

@@ -75,9 +75,15 @@ export const defaultConfig = {
   visibility: { firebrick: true, baffle: true, airChannels: true, chimney: true },
   explode: { enabled: false, distanceCm: 18 },
   operation: { mode: 'medium', secondaryAirPct: 55, flameIntensity: 0.62 },
+  thermal: {
+    insulationThicknessCm: 3,
+    baffleRefractoryThicknessCm: 3,
+    targetCombustionTempC: 850,
+    heatExchangePasses: 2,
+  },
   testBurn: {
     loadMode: 'auto', woodMoisturePct: 15, loadKg: 8, measuredBurnHours: 7.5,
-    flueTempC: 260, stoveTopTempC: 420, glassTempC: 180, smokeOpacityPct: 5,
+    measuredUsefulHeatKwh: 0, flueTempC: 260, stoveTopTempC: 420, glassTempC: 180, smokeOpacityPct: 5,
   },
   viewMode: '3d',
   door: { widthCm: 42, heightCm: 38, frameThicknessCm: 3, glassInsetCm: 2, openAngleDeg: 70, hingeSide: 'left', isOpen: false },
@@ -160,6 +166,12 @@ export function normalizeConfig(cfg) {
   cfg.operation.secondaryAirPct = clamp(+cfg.operation.secondaryAirPct ?? 55, 0, 100);
   cfg.operation.flameIntensity = clamp(+cfg.operation.flameIntensity ?? 0.62, 0, 1);
 
+  cfg.thermal ??= {};
+  cfg.thermal.insulationThicknessCm = clamp(cfg.thermal.insulationThicknessCm == null ? 3 : +cfg.thermal.insulationThicknessCm, 0, 8);
+  cfg.thermal.baffleRefractoryThicknessCm = clamp(cfg.thermal.baffleRefractoryThicknessCm == null ? 3 : +cfg.thermal.baffleRefractoryThicknessCm, 0, 8);
+  cfg.thermal.targetCombustionTempC = clamp(+cfg.thermal.targetCombustionTempC || 850, 600, 1100);
+  cfg.thermal.heatExchangePasses = clamp(Math.round(+cfg.thermal.heatExchangePasses || 2), 1, 4);
+
   // дверцята не більші за фасад
   cfg.door.widthCm = clamp(+cfg.door.widthCm || 42, 20, 70);
   cfg.door.heightCm = clamp(+cfg.door.heightCm || 38, 20, 70);
@@ -176,6 +188,7 @@ export function normalizeConfig(cfg) {
   cfg.testBurn.woodMoisturePct = clamp(+cfg.testBurn.woodMoisturePct || 15, 8, 35);
   cfg.testBurn.loadKg = clamp(+cfg.testBurn.loadKg || 8, 1, 30);
   cfg.testBurn.measuredBurnHours = clamp(+cfg.testBurn.measuredBurnHours || 7.5, 0.1, 30);
+  cfg.testBurn.measuredUsefulHeatKwh = clamp(+cfg.testBurn.measuredUsefulHeatKwh || 0, 0, 100);
   cfg.testBurn.flueTempC = clamp(+cfg.testBurn.flueTempC || 260, 20, 800);
   cfg.testBurn.stoveTopTempC = clamp(+cfg.testBurn.stoveTopTempC || 420, 20, 1000);
   cfg.testBurn.glassTempC = clamp(+cfg.testBurn.glassTempC || 180, 20, 600);

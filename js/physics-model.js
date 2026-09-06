@@ -6,7 +6,7 @@ const MODE_COEFF = {
   'low':       { effBias: +2, powerFactor: 0.58, burnFactor: 1.38, fillFactor: 0.6 },
   'medium':    { effBias: +4, powerFactor: 0.82, burnFactor: 1.0,  fillFactor: 0.7 },
   'high':      { effBias: -2, powerFactor: 1.18, burnFactor: 0.74, fillFactor: 0.85 },
-  'overnight': { effBias: -6, powerFactor: 0.42, burnFactor: 1.75, fillFactor: 1.0 },
+  'overnight': { effBias: -6, powerFactor: 0.42, burnFactor: 1.75, fillFactor: 0.7 },
 };
 const WOOD_KWH_PER_KG = 4.1;
 const PI = Math.PI;
@@ -37,13 +37,19 @@ export const PhysicsModel = {
     const baffleHeight = +config?.baffle?.heightCm ?? 58;
     const baffleAngle = +config?.baffle?.angleDeg ?? 6;
     const flame = +config?.operation?.flameIntensity ?? 0.62;
+    const thermal = config?.thermal || {};
+    const insulationCm = thermal.insulationThicknessCm == null ? 3 : +thermal.insulationThicknessCm;
+    const baffleRefractoryCm = thermal.baffleRefractoryThicknessCm == null ? 3 : +thermal.baffleRefractoryThicknessCm;
+    const targetCombustionTempC = +thermal.targetCombustionTempC || 850;
+    const heatExchangePasses = Math.max(1, Math.round(+thermal.heatExchangePasses || 2));
 
     const secondary = config?.secondaryAir || {};
     const airWash = config?.airWash || {};
     const steelCm = steelMm / 10;
-    const innerW = Math.max(10, w - steelCm * 2 - brickCm * 2);
-    const innerD = Math.max(10, d - steelCm * 2 - brickCm * 2);
-    const innerH = Math.max(10, h * 0.62 - brickCm);
+    const linerCm = brickCm + insulationCm;
+    const innerW = Math.max(10, w - steelCm * 2 - linerCm * 2);
+    const innerD = Math.max(10, d - steelCm * 2 - linerCm * 2);
+    const innerH = Math.max(10, h * 0.62 - linerCm);
     const fireboxLiters = (innerW * innerD * innerH) / 1000;
 
     // Фізичні площі проходів, а не тільки UI-відсотки.
@@ -58,9 +64,7 @@ export const PhysicsModel = {
     // Тяга і пропускна здатність: спрощена модель для порівняння варіантів.
     const baffleHeightNorm = clamp((baffleHeight - 20) / 60, 0, 1);
     const baffleAngleNorm = clamp(baffleAngle / 15, -1, 1);
-    const baffleEfficiencyBonus = baffleHeightNorm * 4 + baffleAngleNorm * 2;
     const baffleDraftPenalty = baffleHeightNorm * 1.2;
-    const bafflePreheatBonus = baffleHeightNorm * 25 + baffleAngleNorm * 15;
     const draftPa = clamp((chimH / 100) * (3.2 + flame * 9) * (chimD / 15) ** 2 - baffleDraftPenalty, 4, 30);
     const stackVelocityMs = clamp(0.75 * Math.sqrt(Math.max(draftPa, 0.1)), 1, 6);
     const draftFlowM3s = clamp((chimneyAreaCm2 / 10000) * stackVelocityMs, 0.003, 0.15);
@@ -70,20 +74,40 @@ export const PhysicsModel = {
     const secondaryDemandCm2 = clamp(fireboxLiters * 0.02, 2, 12);
     const secondaryCoverage = clamp(secondaryOpeningAreaCm2 / secondaryDemandCm2, 0, 1.5);
     const airWashCoverage = clamp(airWashOpeningAreaCm2 / Math.max(doorWidth * 0.9, 1), 0, 1.5);
+    const bafflePreheatBonus = baffleHeightNorm * 25 + baffleAngleNorm * 15;
     const secondaryPreheatC = clamp(20 + (+secondary.preheatLengthCm || 55) * 1.9 + flame * 95 + bafflePreheatBonus, 60, 420);
     const airWashPreheatC = clamp(20 + (+airWash.preheatLengthCm || 45) * 1.7 + flame * 65, 50, 340);
-
     const washEffPct = clamp((washGap / 3) * (washIntake / 100) * 100, 0, 100);
     const airMix = (primaryPct * 0.55 + secondaryPct * 0.35 + washEffPct * 0.10) / 100;
     const staging = clamp((secondaryPct - 20) * 0.06 + (baffleFlow - 50) * 0.04, -4, +5);
-    const secondaryQuality = clamp((secondaryCoverage - 0.75) * 4 + (secondaryPreheatC - 160) / 120, -3, 4);
     const draftBonus = (clamp(chimH / 120, 0.8, 1.25) - 1) * 8;
-    const efficiencyPct = clamp(62 + airMix * 20 + staging + secondaryQuality + draftBonus + baffleEfficiencyBonus + mc.effBias, 52, 86);
+
+    // Thermal architecture: a hotter insulated firebox, a defined gas path,
+    // and heat extraction after secondary combustion. This remains an estimate,
+    // not CFD or a certification calculation.
+    const thermalRetention = clamp(0.58 + insulationCm * 0.055 + baffleRefractoryCm * 0.035, 0.58, 0.94);
+    const gasPathCm = Math.max(20, baffleHeight * 0.55 + Math.max(8, innerD - baffleGap) * 0.65 + heatExchangePasses * innerD * 0.8) * (1 / Math.max(Math.cos(baffleAngle * Math.PI / 180), 0.75));
+    const gasResidenceSeconds = clamp((gasPathCm / 100) / Math.max(stackVelocityMs, 0.2), 0.15, 8);
+    const combustionTempC = clamp(480 + flame * 260 + secondaryPreheatC * 0.55 + thermalRetention * 160 + gasResidenceSeconds * 12, 450, 1100);
+    const targetTemperatureFit = clamp(2 - Math.abs(combustionTempC - targetCombustionTempC) / 180, -2, 2);
+    const secondaryQuality = clamp((secondaryCoverage - 0.75) * 4 + (secondaryPreheatC - 160) / 120, -3, 4);
+    const combustionEfficiencyPct = clamp(
+      68 + (combustionTempC - 600) * 0.04 + secondaryQuality * 1.2 + thermalRetention * 5 + gasResidenceSeconds
+        + airMix * 5 + staging + draftBonus * 0.3 + targetTemperatureFit + mc.effBias,
+      48, 92
+    );
+    const modeledFlueTempC = clamp(combustionTempC - heatExchangePasses * 110 - insulationCm * 18 - baffleRefractoryCm * 12, 120, 650);
+    const flueLossPct = clamp(7 + (modeledFlueTempC - 150) * 0.025 + (1 - thermalRetention) * 8 - heatExchangePasses * 1.5, 8, 28);
+    const efficiencyPct = clamp(combustionEfficiencyPct - flueLossPct, 35, 88);
 
     const draftFactor = clamp(draftPa / 12, 0.7, 1.3);
     const geometryFactor = clamp((w * d * h) / 1e6 / 0.36, 0.75, 1.25);
+    const grossHeatOutputKw = clamp(
+      fireboxLiters * 0.105 * (0.35 + 0.65 * airMix) * mc.powerFactor * draftFactor * geometryFactor,
+      1.5, 24.0
+    );
     const heatOutputKw = clamp(
-      fireboxLiters * 0.065 * (0.35 + 0.65 * airMix) * mc.powerFactor * draftFactor * geometryFactor,
+      grossHeatOutputKw * efficiencyPct / 100,
       1.0, 20.0
     );
     // Орієнтир: ~120 кг/м³ насипної маси сухих полін, не щільність деревини.
@@ -91,8 +115,10 @@ export const PhysicsModel = {
     const maxLoadKg = fireboxLiters * 0.12 * 0.9;
     const recommendedLoadKg = maxLoadKg * (mc.fillFactor ?? 0.7);
     const loadKg = recommendedLoadKg;
+    const inputEnergyKwh = loadKg * WOOD_KWH_PER_KG * 0.85;
+    const usefulEnergyKwh = inputEnergyKwh * efficiencyPct / 100;
     const burnTimeHours = clamp(
-      ((loadKg * WOOD_KWH_PER_KG * (efficiencyPct / 100)) / Math.max(heatOutputKw, 0.1)) * mc.burnFactor * (1 + steelMm * 0.015),
+      (usefulEnergyKwh / Math.max(heatOutputKw, 0.1)) * mc.burnFactor * (1 + steelMm * 0.015),
       2.0, 14.0
     );
 
@@ -121,7 +147,7 @@ export const PhysicsModel = {
       warnings.push({ level: 'info', code: 'STARTUP_LONG', message: 'Start-up з довгим горінням — перевірте подачу повітря.' });
 
     return {
-      version: 3,
+      version: 4,
       mode,
       metrics: {
         efficiencyPct: round(efficiencyPct, 1), heatOutputKw: round(heatOutputKw, 2), burnTimeHours: round(burnTimeHours, 1),
@@ -130,6 +156,11 @@ export const PhysicsModel = {
         airWashOpeningAreaCm2: round(airWashOpeningAreaCm2, 2), chimneyAreaCm2: round(chimneyAreaCm2, 2),
         stackVelocityMs: round(stackVelocityMs, 2), secondaryVelocityMs: round(secondaryVelocityMs, 2), airWashVelocityMs: round(airWashVelocityMs, 2),
         secondaryPreheatC: round(secondaryPreheatC, 0), airWashPreheatC: round(airWashPreheatC, 0), draftFlowM3s: round(draftFlowM3s, 3),
+        combustionTempC: round(combustionTempC, 0), modeledFlueTempC: round(modeledFlueTempC, 0),
+        combustionEfficiencyPct: round(combustionEfficiencyPct, 1), flueLossPct: round(flueLossPct, 1),
+        thermalRetentionPct: round(thermalRetention * 100, 1), gasPathCm: round(gasPathCm, 1),
+        gasResidenceSeconds: round(gasResidenceSeconds, 2), grossHeatOutputKw: round(grossHeatOutputKw, 2),
+        inputEnergyKwh: round(inputEnergyKwh, 1), usefulEnergyKwh: round(usefulEnergyKwh, 1),
         recommendedLoadKg: round(recommendedLoadKg, 1), maxLoadKg: round(maxLoadKg, 1), loadingVolumePct: round((mc.fillFactor ?? 0.7) * 100, 0),
       },
       breakdown: {

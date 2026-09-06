@@ -176,6 +176,11 @@ function renderPhysics() {
   document.getElementById('m-airwash-area').textContent = `${r.metrics.airWashOpeningAreaCm2} cm²`;
   document.getElementById('m-airwash-velocity').textContent = `${r.metrics.airWashVelocityMs} m/s`;
   document.getElementById('m-airwash-preheat').textContent = `${r.metrics.airWashPreheatC} °C`;
+  document.getElementById('m-combustion-temp').textContent = `${r.metrics.combustionTempC} °C`;
+  document.getElementById('m-flue-temp').textContent = `${r.metrics.modeledFlueTempC} °C`;
+  document.getElementById('m-residence').textContent = `${r.metrics.gasResidenceSeconds} s`;
+  document.getElementById('m-flue-loss').textContent = `${r.metrics.flueLossPct}%`;
+  document.getElementById('m-thermal-eff').textContent = `${r.metrics.combustionEfficiencyPct}% → ${r.metrics.efficiencyPct}%`;
   const ul = document.getElementById('warnings'); ul.innerHTML = '';
   if (!r.warnings.length) ul.innerHTML = `<li>${t('noIssues')}</li>`;
   for (const wmsg of r.warnings) {
@@ -223,17 +228,23 @@ function renderTestBurn() {
   if (loadOutput) loadOutput.textContent = `${loadKg} kg`;
   const recommendation = document.getElementById('loadRecommendation');
   if (recommendation) recommendation.textContent = `${t('recommendedLoad')}: ${predicted.metrics.recommendedLoadKg} kg · ${t('maxLoad')}: ${predicted.metrics.maxLoadKg} kg`;
-  const usableEnergy = loadKg * 4.1 * (1 - test.woodMoisturePct / 100) * (predicted.metrics.efficiencyPct / 100);
-  const measuredPower = usableEnergy / Math.max(test.measuredBurnHours, 0.1);
-  const flueTempAdj = clamp(test.flueTempC / Math.max(predicted.metrics.draftPa * 20, 10), 0.5, 2.0);
-  const smokePenalty = test.smokeOpacityPct / 100 * 6;
-  const glassAdj = clamp(test.glassTempC / 180, 0.5, 1.5);
-  const adjustedEfficiency = clamp(predicted.metrics.efficiencyPct * flueTempAdj * glassAdj / 100 * (1 - smokePenalty), 52, 86);
-  const adjustedPower = measuredPower * (adjustedEfficiency / Math.max(predicted.metrics.efficiencyPct, 1));
-  const errorPct = ((adjustedPower - predicted.metrics.heatOutputKw) / Math.max(predicted.metrics.heatOutputKw, 0.1)) * 100;
+  const fuelEnergyKwh = loadKg * 4.1 * (1 - test.woodMoisturePct / 100);
+  const fuelInputPowerKw = fuelEnergyKwh / Math.max(test.measuredBurnHours, 0.1);
+  const measuredHeatKwh = +test.measuredUsefulHeatKwh || 0;
+  const tempSummary = `${test.flueTempC}°C / ${test.stoveTopTempC}°C / ${test.glassTempC}°C · smoke ${test.smokeOpacityPct}%`;
+  if (measuredHeatKwh <= 0) {
+    target.innerHTML = `<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} kW · ${predicted.metrics.efficiencyPct}%</div>
+      <div><b>${t('fuelInput')}:</b> ${fuelInputPowerKw.toFixed(2)} kW · ${fuelEnergyKwh.toFixed(1)} kWh</div>
+      <div class="sub">${t('needUsefulHeat')} · ${tempSummary}</div>`;
+    return;
+  }
+  const measuredPower = measuredHeatKwh / Math.max(test.measuredBurnHours, 0.1);
+  const measuredEfficiency = Math.max(0, Math.min(100, measuredHeatKwh / Math.max(fuelEnergyKwh, 0.1) * 100));
+  const errorPct = ((measuredPower - predicted.metrics.heatOutputKw) / Math.max(predicted.metrics.heatOutputKw, 0.1)) * 100;
   const statusClass = Math.abs(errorPct) <= 15 ? '' : 'bad';
-  target.innerHTML = `<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} kW · ${predicted.metrics.efficiencyPct}% ККД</div>
-    <div><b>${t('measured')}:</b> ${adjustedPower.toFixed(2)} kW · ${adjustedEfficiency.toFixed(0)}% (темпер. ${test.flueTempC}°C, дим ${test.smokeOpacityPct}%)</div>
+  target.innerHTML = `<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} kW · ${predicted.metrics.efficiencyPct}%</div>
+    <div><b>${t('measured')}:</b> ${measuredPower.toFixed(2)} kW · ${measuredEfficiency.toFixed(1)}%</div>
+    <div>${tempSummary}</div>
     <div class="${statusClass}"><b>${t('error')}:</b> ${errorPct >= 0 ? '+' : ''}${errorPct.toFixed(1)}%</div>`;
 }
 
@@ -321,6 +332,8 @@ const controlMap = {
   widthCm: 'dimensions.widthCm', depthCm: 'dimensions.depthCm', heightCm: 'dimensions.heightCm', legHeightCm: 'dimensions.legHeightCm',
   steelThicknessMm: 'materials.steelThicknessMm', firebrickThicknessCm: 'materials.firebrickThicknessCm',
   baffleHeightCm: 'baffle.heightCm', baffleAngleDeg: 'baffle.angleDeg', baffleFrontGapCm: 'baffle.frontGapCm', baffleAirflowPct: 'baffle.airflowPct',
+  insulationThicknessCm: 'thermal.insulationThicknessCm', baffleRefractoryThicknessCm: 'thermal.baffleRefractoryThicknessCm',
+  targetCombustionTempC: 'thermal.targetCombustionTempC', heatExchangePasses: 'thermal.heatExchangePasses',
   primaryHoleCount: 'primaryAir.holeCount', primaryHoleDiameterCm: 'primaryAir.holeDiameterCm', primaryHoleSpacingCm: 'primaryAir.holeSpacingCm', primaryAirOpenPct: 'primaryAir.openPct',
   secondaryHoleCount: 'secondaryAir.holeCount', secondaryHoleDiameterCm: 'secondaryAir.holeDiameterCm', secondaryHoleSpacingCm: 'secondaryAir.holeSpacingCm',
   airWashGapCm: 'airWash.gapCm', airWashIntakePct: 'airWash.intakePct',
@@ -333,13 +346,15 @@ const controlMap = {
   cameraFov: 'camera.fov', cameraDistance: 'camera.distance', cameraTargetYCm: 'camera.targetY',
   steelColor: 'colors.steel', brickColor: 'colors.brick', glassColor: 'colors.glass', floorColor: 'colors.floor',
   steelRoughness: 'colors.steelRoughness', steelMetalness: 'colors.steelMetalness',
-  woodMoisturePct: 'testBurn.woodMoisturePct', loadKg: 'testBurn.loadKg', measuredBurnHours: 'testBurn.measuredBurnHours',
+  woodMoisturePct: 'testBurn.woodMoisturePct', loadKg: 'testBurn.loadKg', measuredBurnHours: 'testBurn.measuredBurnHours', measuredUsefulHeatKwh: 'testBurn.measuredUsefulHeatKwh',
   flueTempC: 'testBurn.flueTempC', stoveTopTempC: 'testBurn.stoveTopTempC', glassTempC: 'testBurn.glassTempC', smokeOpacityPct: 'testBurn.smokeOpacityPct',
 };
 function fmt(id, v) {
   if (String(id).includes('Pct') || id === 'baffleAirflowPct' || id === 'airWashIntakePct') return `${v}%`;
   if (id === 'loadKg') return `${v} kg`;
   if (id === 'measuredBurnHours') return `${v} ${t('unitH')}`;
+  if (id === 'measuredUsefulHeatKwh') return `${v} kWh`;
+  if (id === 'heatExchangePasses') return `${v}`;
   if (/TempC$/.test(id)) return `${v} °C`;
   if (id === 'steelThicknessMm') return `${v} ${t('unitMm')}`;
   if (/Deg|Fov/i.test(id)) return `${v}°`;
@@ -407,7 +422,7 @@ function bindUI() {
       if (id === 'doorOpenAngleDeg' && config.door.isOpen) doorTarget = doorOpenAngle();
       if (id === 'explodeDistanceCm') { applyExplode(1); renderPhysics(); return; }
       if (id.startsWith('camera')) { syncCamera(id !== 'cameraTargetYCm'); renderPhysics(); return; }
-      if (id in { woodMoisturePct: 1, loadKg: 1, measuredBurnHours: 1, flueTempC: 1, stoveTopTempC: 1, glassTempC: 1, smokeOpacityPct: 1 }) {
+      if (id in { woodMoisturePct: 1, loadKg: 1, measuredBurnHours: 1, measuredUsefulHeatKwh: 1, flueTempC: 1, stoveTopTempC: 1, glassTempC: 1, smokeOpacityPct: 1 }) {
         renderTestBurn(); return;
       }
       scheduleRebuild(); renderPhysics();

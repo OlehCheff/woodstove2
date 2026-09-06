@@ -26,11 +26,16 @@ export function buildStove(cfg, cache = new Map()) {
   const h = cfg.dimensions.heightCm, legH = cfg.dimensions.legHeightCm;
   const steelT = Math.min(cfg.materials.steelThicknessMm / 10, w / 6, d / 6, h / 8);
   const brickT = Math.min(cfg.materials.firebrickThicknessCm, 12);
+  const thermal = cfg.thermal || {};
+  const insulationT = Math.min(Math.max(thermal.insulationThicknessCm == null ? 3 : +thermal.insulationThicknessCm, 0), 8);
+  const refractoryT = Math.min(Math.max(thermal.baffleRefractoryThicknessCm == null ? 3 : +thermal.baffleRefractoryThicknessCm, 0), 8);
 
   const steel = mat(cache, `steel|${cfg.colors.steel}|${cfg.colors.steelRoughness}|${cfg.colors.steelMetalness}`,
     () => new THREE.MeshStandardMaterial({ color: cfg.colors.steel, roughness: cfg.colors.steelRoughness, metalness: cfg.colors.steelMetalness }));
   const brickM = mat(cache, `brick|${cfg.colors.brick}`,
     () => new THREE.MeshStandardMaterial({ color: cfg.colors.brick, roughness: 0.95, metalness: 0.04 }));
+  const thermalM = mat(cache, `thermal|${insulationT}|${refractoryT}`,
+    () => new THREE.MeshStandardMaterial({ color: 0x8f8172, roughness: 0.98, metalness: 0.02 }));
   const darkM = mat(cache, 'dark', () => new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.45, metalness: 0.6 }));
   const ductM = mat(cache, 'duct', () => new THREE.MeshStandardMaterial({ color: 0x616872, roughness: 0.4, metalness: 0.58 }));
   const controlM = mat(cache, 'control', () => new THREE.MeshStandardMaterial({ color: 0xffb347, roughness: 0.35, metalness: 0.35 }));
@@ -202,13 +207,28 @@ export function buildStove(cfg, cache = new Map()) {
   }
   chamber.add(flame); shell.add(chamber);
 
-  // шамот
+  // Ізоляція між сталлю та шамотом + refractory roof над бафлем.
   const firebrick = new THREE.Group(); firebrick.name = 'firebrickLining';
   const cw = Math.max(10, w - steelT * 2), ch2 = Math.max(10, h - steelT * 2), cd = Math.max(10, d - steelT * 2);
-  const bBottom = plate(cw, brickT, cd, brickM); bBottom.position.set(0, steelT + brickT / 2, 0); firebrick.add(bBottom);
-  const bL = plate(brickT, ch2 - brickT, cd, brickM); bL.position.set(-cw / 2 + brickT / 2, h / 2, 0); firebrick.add(bL);
-  const bR = plate(brickT, ch2 - brickT, cd, brickM); bR.position.set(cw / 2 - brickT / 2, h / 2, 0); firebrick.add(bR);
-  const bB = plate(cw, ch2 - brickT, brickT, brickM); bB.position.set(0, h / 2, -cd / 2 + brickT / 2); firebrick.add(bB);
+  const linerInnerD = Math.max(10, cd - insulationT * 2);
+  const linerInnerW = Math.max(10, cw - insulationT * 2);
+  const brickHeight = Math.max(10, ch2 - insulationT - brickT);
+  const bBottom = plate(linerInnerW, brickT, linerInnerD, brickM); bBottom.position.set(0, steelT + insulationT + brickT / 2, 0); firebrick.add(bBottom);
+  const bL = plate(brickT, brickHeight, linerInnerD, brickM); bL.position.set(-cw / 2 + insulationT + brickT / 2, steelT + insulationT + brickHeight / 2, 0); firebrick.add(bL);
+  const bR = plate(brickT, brickHeight, linerInnerD, brickM); bR.position.set(cw / 2 - insulationT - brickT / 2, steelT + insulationT + brickHeight / 2, 0); firebrick.add(bR);
+  const bB = plate(linerInnerW, brickHeight, brickT, brickM); bB.position.set(0, steelT + insulationT + brickHeight / 2, -cd / 2 + insulationT + brickT / 2); firebrick.add(bB);
+  if (insulationT > 0) {
+    const iBottom = plate(cw, insulationT, cd, thermalM); iBottom.position.set(0, steelT + insulationT / 2, 0); firebrick.add(iBottom);
+    const iL = plate(insulationT, ch2 - insulationT, cd, thermalM); iL.position.set(-cw / 2 + insulationT / 2, steelT + (ch2 - insulationT) / 2, 0); firebrick.add(iL);
+    const iR = plate(insulationT, ch2 - insulationT, cd, thermalM); iR.position.set(cw / 2 - insulationT / 2, steelT + (ch2 - insulationT) / 2, 0); firebrick.add(iR);
+    const iB = plate(cw, ch2 - insulationT, insulationT, thermalM); iB.position.set(0, steelT + (ch2 - insulationT) / 2, -cd / 2 + insulationT / 2); firebrick.add(iB);
+  }
+  if (refractoryT > 0) {
+    const roof = plate(innerW, refractoryT, baffleDepth, thermalM);
+    roof.position.set(0, baffleY + steelT / 2 + refractoryT / 2, -baffleGap / 2);
+    roof.rotation.x = THREE.MathUtils.degToRad(cfg.baffle.angleDeg);
+    roof.name = 'refractoryRoof'; firebrick.add(roof);
+  }
   shell.add(firebrick);
 
   // дверцята: рама з 4 планок + скло + ручка, pivot зліва

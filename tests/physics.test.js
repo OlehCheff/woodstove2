@@ -20,7 +20,21 @@ ok(r.metrics.draftPa > 0 && r.metrics.fireboxLiters > 20, 'draft+firebox', JSON.
 ok(r.metrics.secondaryOpeningAreaCm2 > 0 && r.metrics.airWashOpeningAreaCm2 > 0, 'airflow areas', JSON.stringify(r.metrics));
 ok(r.metrics.secondaryPreheatC > 100 && r.metrics.airWashPreheatC > 80, 'airflow preheat', JSON.stringify(r.metrics));
 ok(r.metrics.recommendedLoadKg > 0 && r.metrics.maxLoadKg > r.metrics.recommendedLoadKg, 'load from firebox volume', JSON.stringify(r.metrics));
+ok(r.metrics.combustionTempC > r.metrics.modeledFlueTempC && r.metrics.flueLossPct > 0, 'thermal zones and flue loss', JSON.stringify(r.metrics));
+ok(r.metrics.usefulEnergyKwh > 0 && r.metrics.usefulEnergyKwh < r.metrics.inputEnergyKwh, 'energy balance', JSON.stringify(r.metrics));
 ok(base.secondaryAir.preheatLengthCm > 0 && base.airWash.slotWidthPct >= 40, 'airflow config normalized', JSON.stringify({ secondary: base.secondaryAir, airWash: base.airWash }));
+
+// 1b. insulated firebox retains more heat than an uninsulated shell
+const bareThermal = normalizeConfig(clone(defaultConfig));
+bareThermal.thermal.insulationThicknessCm = 0;
+bareThermal.thermal.baffleRefractoryThicknessCm = 0;
+const insulatedThermal = normalizeConfig(clone(defaultConfig));
+insulatedThermal.thermal.insulationThicknessCm = 8;
+insulatedThermal.thermal.baffleRefractoryThicknessCm = 8;
+const bareResult = PhysicsModel.evaluate(bareThermal);
+const insulatedResult = PhysicsModel.evaluate(insulatedThermal);
+ok(insulatedResult.metrics.thermalRetentionPct > bareResult.metrics.thermalRetentionPct, 'insulation retention', JSON.stringify({ bare: bareResult.metrics.thermalRetentionPct, insulated: insulatedResult.metrics.thermalRetentionPct }));
+ok(insulatedResult.metrics.fireboxLiters < bareResult.metrics.fireboxLiters, 'insulation reduces firebox volume', JSON.stringify({ bare: bareResult.metrics.fireboxLiters, insulated: insulatedResult.metrics.fireboxLiters }));
 
 // 2. overnight: мала потужність, довге горіння + SMOKE_RISK можливий
 let night = normalizeConfig(clone(defaultConfig));
