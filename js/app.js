@@ -72,6 +72,7 @@ function applyVisibility() {
   if (!refs.firebrick) return;
   refs.firebrick.visible = config.visibility.firebrick;
   refs.baffle.visible = config.visibility.baffle;
+  if (refs.refractoryRoof) refs.refractoryRoof.visible = config.visibility.baffle;
   refs.airSystems.visible = config.visibility.airChannels;
   refs.chimney.visible = refs.collar.visible = config.visibility.chimney;
   if (refs.flow) refs.flow.visible = config.flow.visible;

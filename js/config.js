@@ -16,7 +16,7 @@ export const MODEL_PRESETS = {
     patch: {
       dimensions: { widthCm: 58, depthCm: 46, heightCm: 78, legHeightCm: 12 },
       materials: { steelThicknessMm: 4, firebrickThicknessCm: 3 },
-      chimney: { diameterCm: 13, heightCm: 120 },
+      chimney: { diameterCm: 13, heightCm: 100 },
       door: { widthCm: 34, heightCm: 32 },
       baffle: { heightCm: 48, frontGapCm: 5 },
       operation: { mode: 'low' },
