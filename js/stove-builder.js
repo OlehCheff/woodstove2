@@ -136,7 +136,8 @@ export function buildStove(cfg, cache = new Map()) {
   primaryHandle.rotation.x = Math.PI / 2; primaryHandle.position.set(shutter.position.x, 16, d / 2 + steelT * 2.4);
   primaryHandle.name = 'primaryHandle'; airSystems.add(primaryHandle);
 
-  const secY = Math.min(h - steelT * 3, baffleY + 7);
+  // Secondary подається у гарячу зону допалювання: під бафлем, над полум'ям.
+  const secY = Math.max(24, baffleY - 8);
   const secW = Math.max(12, Math.min(innerW - 2, cfg.secondaryAir.holeCount * cfg.secondaryAir.holeSpacingCm + 10));
   const secondary = new THREE.Group(); secondary.name = 'secondaryAirPreheat';
   const riserHeight = Math.max(12, Math.min(cfg.secondaryAir.preheatLengthCm, secY - 8));
@@ -182,23 +183,36 @@ export function buildStove(cfg, cache = new Map()) {
   airSystems.add(airWash);
   shell.add(airSystems);
 
-  // Схема потоків: окремий шар, який можна ввімкнути без зміни геометрії печі.
+  // Реальні конструктивні газові канали (частина корпусу, потрапляють у STL):
+  // димова полиця, бокові направляючі верхнього ходу, задня перепускна стінка
+  // і люк чистки на задній панелі.
+  const gasChannels = new THREE.Group(); gasChannels.name = 'gasChannels';
+  const hoodY = Math.min(h - steelT * 2, Math.max(baffleY + steelT * 6, h * 0.82));
+  const hoodDepth = Math.max(8, (d / 2 - steelT) - (chimZ + collarR) - 1.5);
+  const smokeHood = plate(innerW, steelT, hoodDepth, darkM);
+  smokeHood.position.set(0, hoodY, d / 2 - hoodDepth / 2 - steelT);
+  smokeHood.name = 'smokeHood'; gasChannels.add(smokeHood);
+  for (const gx of [-innerW / 2 + steelT, innerW / 2 - steelT]) {
+    const guide = plate(steelT, Math.max(6, hoodY - baffleY - steelT), hoodDepth, darkM);
+    guide.position.set(gx, baffleY + (hoodY - baffleY) / 2, d / 2 - hoodDepth / 2 - steelT);
+    gasChannels.add(guide);
+  }
+  const rearHgt = Math.max(6, (hoodY - baffleY) * 0.55);
+  const rearBaffleWall = plate(innerW, rearHgt, steelT, darkM);
+  rearBaffleWall.position.set(0, hoodY - rearHgt / 2, chimZ + collarR + steelT);
+  gasChannels.add(rearBaffleWall);
+  const cleanY = Math.max(28, baffleY - 8);
+  const cleanPort = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.4, 1.6, 20), holeM);
+  cleanPort.rotation.x = Math.PI / 2; cleanPort.position.set(0, cleanY, -d / 2 - 0.3);
+  gasChannels.add(cleanPort);
+  const cleanPortCap = new THREE.Mesh(new THREE.CylinderGeometry(4.1, 4.1, 0.9, 20), darkM);
+  cleanPortCap.rotation.x = Math.PI / 2; cleanPortCap.position.set(0, cleanY, -d / 2 - 1.5);
+  gasChannels.add(cleanPortCap);
+  shell.add(gasChannels);
+
+  // Схема потоків: стрілки напрямку. Реальні канали тепер окрема конструкція (gasChannels).
   const flow = new THREE.Group(); flow.name = 'flowVisualization';
   const flowArrows = [];
-  const gasPath = new THREE.Group(); gasPath.name = 'realGasPath';
-  const gasPathM = new THREE.MeshBasicMaterial({ color: 0xf97316, transparent: true, opacity: 0.16, depthWrite: false, wireframe: true });
-  const pathWidth = Math.max(10, innerW * 0.78);
-  const pathDepth = Math.max(10, innerD - baffleGap);
-  const pathHeight = Math.max(8, h - baffleY - steelT * 3);
-  for (const x of [-pathWidth / 2, pathWidth / 2]) {
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.8, pathHeight, pathDepth), gasPathM);
-    wall.position.set(x, baffleY + pathHeight / 2 + steelT, -baffleGap / 2); gasPath.add(wall);
-  }
-  const pathTop = new THREE.Mesh(new THREE.BoxGeometry(pathWidth, 0.8, pathDepth), gasPathM);
-  pathTop.position.set(0, h - steelT * 2, -baffleGap / 2); gasPath.add(pathTop);
-  const rearRise = new THREE.Mesh(new THREE.BoxGeometry(pathWidth * 0.7, pathHeight, 0.8), gasPathM);
-  rearRise.position.set(0, baffleY + pathHeight / 2 + steelT, chimZ); gasPath.add(rearRise);
-  flow.add(gasPath);
   const addFlow = (origin, direction, length, color) => {
     const arrow = new THREE.ArrowHelper(direction.normalize(), origin, length, color, Math.min(3, length * 0.2), Math.min(1.2, length * 0.08));
     arrow.line.material.transparent = true; arrow.cone.material.transparent = true;
@@ -262,6 +276,56 @@ export function buildStove(cfg, cache = new Map()) {
   }
   shell.add(firebrick);
 
+  // Колосник: сталеві прути над зольною зоною, повітря проходить між ними.
+  const grateY = steelT + insulationT + brickT + 1.4;
+  const grate = new THREE.Group(); grate.name = 'grate';
+  const grateSpan = Math.max(14, innerW - 8);
+  const grateDepth = Math.max(10, innerD * 0.68);
+  const slatCount = Math.max(5, Math.floor(grateSpan / 3.4));
+  const slatW = Math.max(1.4, (grateSpan / slatCount) * 0.55);
+  for (let i = 0; i < slatCount; i++) {
+    const slatX = -grateSpan / 2 + (grateSpan / slatCount) * (i + 0.5);
+    const slat = plate(slatW, 1.6, grateDepth, darkM);
+    slat.position.set(slatX, grateY, d * 0.03);
+    grate.add(slat);
+  }
+  shell.add(grate);
+
+  // Зольник: висувний ящик у нижній передній частині + ручка.
+  const ashDrawer = new THREE.Group(); ashDrawer.name = 'ashDrawer';
+  const drawerW = Math.min(innerW - 6, doorWc * 0.66);
+  const drawerY = steelT + insulationT + 2.8;
+  const drawerFront = plate(drawerW, 5.5, 1.6, darkM);
+  drawerFront.position.set(0, drawerY, d / 2 + 0.8);
+  ashDrawer.add(drawerFront);
+  const drawerBox = plate(drawerW - 2, 4.5, innerD * 0.4, darkM);
+  drawerBox.position.set(0, drawerY - 0.6, d / 2 - innerD * 0.22);
+  ashDrawer.add(drawerBox);
+  const ashHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 6, 12), controlM);
+  ashHandle.rotation.x = Math.PI / 2; ashHandle.position.set(0, drawerY, d / 2 + 2.4);
+  ashDrawer.add(ashHandle);
+  shell.add(ashDrawer);
+
+  // Задній та бічні теплові екрани зі стоячим зазором.
+  const heatShield = new THREE.Group(); heatShield.name = 'heatShield';
+  const shieldOff = 3.2;
+  const shieldH = h * 0.78;
+  const backShield = plate(w - 4, shieldH, 0.4, darkM);
+  backShield.position.set(0, shieldH / 2 + 2, -d / 2 - shieldOff);
+  heatShield.add(backShield);
+  for (const sx of [-1, 1]) {
+    const sideShield = plate(0.4, shieldH, d - 4, darkM);
+    sideShield.position.set(sx * (w / 2 + shieldOff), shieldH / 2 + 2, 0);
+    heatShield.add(sideShield);
+  }
+  for (const [px, pz] of [[-w / 4, -d / 2 - shieldOff], [w / 4, -d / 2 - shieldOff], [-w / 2 - shieldOff, -d / 4], [-w / 2 - shieldOff, d / 4], [w / 2 + shieldOff, -d / 4], [w / 2 + shieldOff, d / 4]]) {
+    const standoff = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, shieldOff, 10), darkM);
+    standoff.rotation.x = Math.abs(px) > w / 3 ? Math.PI / 2 : 0;
+    standoff.position.set(px, 4, pz);
+    heatShield.add(standoff);
+  }
+  group.add(heatShield);
+
   // дверцята: рама з 4 планок + скло + ручка, pivot зліва
   const frameT = cfg.door.frameThicknessCm;
   const hingeSign = cfg.door.hingeSide === 'right' ? 1 : -1;
@@ -298,8 +362,8 @@ export function buildStove(cfg, cache = new Map()) {
   }
 
   group.add(shell);
-  const refs = { shell, chimney, collar, doorPivot, frontPanel, firebrick, refractoryRoof, baffle, airSystems, chamber, flame, core, outer, sparks, shutter, flow, flowArrows };
-  for (const n of [chimney, collar, doorPivot, frontPanel, firebrick, baffle, airSystems, chamber, flow]) {
+  const refs = { shell, chimney, collar, doorPivot, frontPanel, firebrick, refractoryRoof, baffle, airSystems, gasChannels, chamber, flame, core, outer, sparks, shutter, flow, flowArrows, grate, ashDrawer, heatShield };
+  for (const n of [chimney, collar, doorPivot, frontPanel, firebrick, baffle, airSystems, gasChannels, chamber, flow]) {
     if (n) n.userData.basePosition = n.position.clone();
   }
   return { group, refs };

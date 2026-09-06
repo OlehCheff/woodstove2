@@ -72,7 +72,7 @@ export const defaultConfig = {
     channelWidthCm: 4, channelDepthCm: 4, preheatLengthCm: 45,
   },
   flow: { visible: false, animated: true },
-  visibility: { firebrick: true, baffle: true, airChannels: true, chimney: true },
+  visibility: { firebrick: true, baffle: true, airChannels: true, chimney: true, section: false, grid: true },
   explode: { enabled: false, distanceCm: 18 },
   operation: { mode: 'medium', secondaryAirPct: 55, flameIntensity: 0.62 },
   thermal: {
@@ -82,7 +82,7 @@ export const defaultConfig = {
     heatExchangePasses: 2,
   },
   testBurn: {
-    loadMode: 'auto', woodMoisturePct: 15, loadKg: 8, measuredBurnHours: 7.5,
+    loadMode: 'auto', woodSpecies: 'birch', woodMoisturePct: 15, loadKg: 8, measuredBurnHours: 7.5,
     measuredUsefulHeatKwh: 0, flueTempC: 260, stoveTopTempC: 420, glassTempC: 180, smokeOpacityPct: 5,
   },
   viewMode: '3d',
@@ -157,7 +157,7 @@ export function normalizeConfig(cfg) {
   cfg.flow.visible = Boolean(cfg.flow.visible);
   cfg.flow.animated = cfg.flow.animated !== false;
 
-  for (const k of ['firebrick', 'baffle', 'airChannels', 'chimney']) cfg.visibility[k] = Boolean(cfg.visibility[k]);
+  for (const k of ['firebrick', 'baffle', 'airChannels', 'chimney', 'section', 'grid']) cfg.visibility[k] = Boolean(cfg.visibility[k]);
   cfg.explode.enabled = Boolean(cfg.explode.enabled);
   cfg.explode.distanceCm = clamp(+cfg.explode.distanceCm || 18, 5, 40);
 
@@ -185,6 +185,7 @@ export function normalizeConfig(cfg) {
   cfg.camera.distance = clamp(+cfg.camera.distance || 270, 140, 500);
   cfg.camera.targetY = clamp(+cfg.camera.targetY || 60, 20, 180);
   cfg.testBurn.loadMode = cfg.testBurn.loadMode === 'manual' ? 'manual' : 'auto';
+  cfg.testBurn.woodSpecies = ['birch', 'oak', 'pine', 'spruce', 'alder'].includes(cfg.testBurn.woodSpecies) ? cfg.testBurn.woodSpecies : 'birch';
   cfg.testBurn.woodMoisturePct = clamp(+cfg.testBurn.woodMoisturePct || 15, 8, 35);
   cfg.testBurn.loadKg = clamp(+cfg.testBurn.loadKg || 8, 1, 30);
   cfg.testBurn.measuredBurnHours = clamp(+cfg.testBurn.measuredBurnHours || 7.5, 0.1, 30);

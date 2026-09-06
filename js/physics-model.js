@@ -9,6 +9,13 @@ const MODE_COEFF = {
   'overnight': { effBias: -6, powerFactor: 0.42, burnFactor: 1.75, fillFactor: 0.7 },
 };
 const WOOD_KWH_PER_KG = 4.1;
+const WOOD_SPECIES = {
+  birch: { lhvKwhKg: 4.2, bulkKgM3: 620 },
+  oak: { lhvKwhKg: 4.3, bulkKgM3: 680 },
+  pine: { lhvKwhKg: 4.0, bulkKgM3: 480 },
+  spruce: { lhvKwhKg: 3.9, bulkKgM3: 430 },
+  alder: { lhvKwhKg: 4.0, bulkKgM3: 520 },
+};
 const PI = Math.PI;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const round = (v, d) => Math.round(v * 10 ** d) / 10 ** d;
@@ -42,6 +49,12 @@ export const PhysicsModel = {
     const baffleRefractoryCm = thermal.baffleRefractoryThicknessCm == null ? 3 : +thermal.baffleRefractoryThicknessCm;
     const targetCombustionTempC = +thermal.targetCombustionTempC || 850;
     const heatExchangePasses = Math.max(1, Math.round(+thermal.heatExchangePasses || 2));
+    const speciesKey = config?.testBurn?.woodSpecies;
+    const species = WOOD_SPECIES[speciesKey] || WOOD_SPECIES.birch;
+    const moisturePct = clamp(+config?.testBurn?.woodMoisturePct || 15, 8, 35);
+    const woodEnergyKwhKg = species.lhvKwhKg * (1 - moisturePct * 0.007);
+    const moistureTempPenaltyC = Math.max(0, moisturePct - 12) * 4;
+    const moistureEffPenalty = Math.max(0, moisturePct - 12) * 0.15;
 
     const secondary = config?.secondaryAir || {};
     const airWash = config?.airWash || {};
@@ -88,17 +101,20 @@ export const PhysicsModel = {
     const thermalRetention = clamp(0.58 + insulationCm * 0.055 + baffleRefractoryCm * 0.035, 0.58, 0.94);
     const gasPathCm = Math.max(20, baffleHeight * 0.55 + Math.max(8, innerD - baffleGap) * 0.65 + heatExchangePasses * innerD * 0.8) * (1 / Math.max(Math.cos(baffleAngle * Math.PI / 180), 0.75));
     const gasResidenceSeconds = clamp((gasPathCm / 100) / Math.max(stackVelocityMs, 0.2), 0.15, 8);
-    const combustionTempC = clamp(480 + flame * 260 + secondaryPreheatC * 0.55 + thermalRetention * 160 + gasResidenceSeconds * 12, 450, 1100);
+    const combustionTempC = clamp(480 + flame * 260 + secondaryPreheatC * 0.55 + thermalRetention * 160 + gasResidenceSeconds * 12 - moistureTempPenaltyC, 450, 1100);
     const targetTemperatureFit = clamp(2 - Math.abs(combustionTempC - targetCombustionTempC) / 180, -2, 2);
     const secondaryQuality = clamp((secondaryCoverage - 0.75) * 4 + (secondaryPreheatC - 160) / 120, -3, 4);
     const combustionEfficiencyPct = clamp(
       68 + (combustionTempC - 600) * 0.04 + secondaryQuality * 1.2 + thermalRetention * 5 + gasResidenceSeconds
-        + airMix * 5 + staging + draftBonus * 0.3 + targetTemperatureFit + mc.effBias,
+        + airMix * 5 + staging + draftBonus * 0.3 + targetTemperatureFit - moistureEffPenalty + mc.effBias,
       48, 92
     );
     const modeledFlueTempC = clamp(combustionTempC - heatExchangePasses * 110 - insulationCm * 18 - baffleRefractoryCm * 12, 120, 650);
+    const baffleExitTempC = clamp(modeledFlueTempC + (combustionTempC - modeledFlueTempC) * 0.55, 130, 900);
     const flueLossPct = clamp(7 + (modeledFlueTempC - 150) * 0.025 + (1 - thermalRetention) * 8 - heatExchangePasses * 1.5, 8, 28);
     const efficiencyPct = clamp(combustionEfficiencyPct - flueLossPct, 35, 88);
+    const bodyTempC = clamp(110 + (1 - thermalRetention) * 520 + flame * 120 - (steelMm - 5) * 9, 40, 480);
+    const bodyHeatSharePct = clamp((1 - thermalRetention) * 26 + 8, 8, 30);
 
     const draftFactor = clamp(draftPa / 12, 0.7, 1.3);
     const geometryFactor = clamp((w * d * h) / 1e6 / 0.36, 0.75, 1.25);
@@ -115,7 +131,7 @@ export const PhysicsModel = {
     const maxLoadKg = fireboxLiters * 0.12 * 0.9;
     const recommendedLoadKg = maxLoadKg * (mc.fillFactor ?? 0.7);
     const loadKg = recommendedLoadKg;
-    const inputEnergyKwh = loadKg * WOOD_KWH_PER_KG * 0.85;
+    const inputEnergyKwh = loadKg * woodEnergyKwhKg;
     const usefulEnergyKwh = inputEnergyKwh * efficiencyPct / 100;
     const burnTimeHours = clamp(
       (usefulEnergyKwh / Math.max(heatOutputKw, 0.1)) * mc.burnFactor * (1 + steelMm * 0.015),
@@ -145,6 +161,10 @@ export const PhysicsModel = {
       warnings.push({ level: 'warn', code: 'AIRWASH_LOW', message: 'Недостатнє покриття скла повітряною завісою.' });
     if (mode === 'start-up' && burnTimeHours > 6)
       warnings.push({ level: 'info', code: 'STARTUP_LONG', message: 'Start-up з довгим горінням — перевірте подачу повітря.' });
+    if (bodyTempC > 420 && steelMm <= 4)
+      warnings.push({ level: 'danger', code: 'STEEL_OVERHEAT', message: `Корпус ~${round(bodyTempC, 0)}°C при сталі ≤4 мм: збільшіть ізоляцію або товщину сталі.` });
+    if (moisturePct > 22)
+      warnings.push({ level: 'warn', code: 'WET_WOOD', message: `Вологість ${round(moisturePct, 0)}% знижує температуру допалювання та ККД.` });
 
     return {
       version: 4,
@@ -157,6 +177,8 @@ export const PhysicsModel = {
         stackVelocityMs: round(stackVelocityMs, 2), secondaryVelocityMs: round(secondaryVelocityMs, 2), airWashVelocityMs: round(airWashVelocityMs, 2),
         secondaryPreheatC: round(secondaryPreheatC, 0), airWashPreheatC: round(airWashPreheatC, 0), draftFlowM3s: round(draftFlowM3s, 3),
         combustionTempC: round(combustionTempC, 0), modeledFlueTempC: round(modeledFlueTempC, 0),
+        baffleExitTempC: round(baffleExitTempC, 0), bodyTempC: round(bodyTempC, 0), bodyHeatSharePct: round(bodyHeatSharePct, 1),
+        woodEnergyKwhKg: round(woodEnergyKwhKg, 2), moisturePenaltyC: round(moistureTempPenaltyC, 0),
         combustionEfficiencyPct: round(combustionEfficiencyPct, 1), flueLossPct: round(flueLossPct, 1),
         thermalRetentionPct: round(thermalRetention * 100, 1), gasPathCm: round(gasPathCm, 1),
         gasResidenceSeconds: round(gasResidenceSeconds, 2), grossHeatOutputKw: round(grossHeatOutputKw, 2),

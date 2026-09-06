@@ -27,6 +27,7 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.localClippingEnabled = true;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 container.appendChild(renderer.domElement);
 
@@ -47,7 +48,7 @@ const floor = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400),
   new THREE.MeshStandardMaterial({ color: config.colors.floor, roughness: 0.92 }));
 floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
 const grid = new THREE.GridHelper(1200, 120, 0x3a4150, 0x232833); grid.position.y = 0.05; scene.add(grid);
-scene.add(new THREE.AxesHelper(80));
+const axes = new THREE.AxesHelper(80); scene.add(axes);
 
 // ---------- стан анімацій ----------
 let stove = null, refs = {};
@@ -63,7 +64,7 @@ function rebuildStove() {
   doorTarget = config.door.isOpen ? doorOpenAngle() : 0;
   doorCur = doorTarget; refs.doorPivot.rotation.y = doorCur;
   floor.material.color.set(config.colors.floor);
-  applyVisibility(); applyExplode(1); syncCamera(false);
+  applyVisibility(); applySection(); applyGrid(); applyExplode(1); syncCamera(false);
 }
 let rebuildTimer = 0;
 const scheduleRebuild = () => { clearTimeout(rebuildTimer); rebuildTimer = setTimeout(rebuildStove, 120); };
@@ -74,8 +75,17 @@ function applyVisibility() {
   refs.baffle.visible = config.visibility.baffle;
   if (refs.refractoryRoof) refs.refractoryRoof.visible = config.visibility.baffle;
   refs.airSystems.visible = config.visibility.airChannels;
+  if (refs.gasChannels) refs.gasChannels.visible = config.visibility.airChannels;
   refs.chimney.visible = refs.collar.visible = config.visibility.chimney;
   if (refs.flow) refs.flow.visible = config.flow.visible;
+}
+const sectionPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
+function applySection() {
+  renderer.clippingPlanes = config.visibility.section ? [sectionPlane] : [];
+}
+function applyGrid() {
+  const show = config.visibility.grid !== false;
+  grid.visible = show; axes.visible = show;
 }
 function applyExplode(snap = 0) {
   if (snap) explodeCur = explodeTarget;
@@ -191,6 +201,7 @@ function renderPhysics() {
   }
   renderValidation();
   renderTestBurn();
+  renderTestLog();
 }
 
 function validationText(item) {
@@ -217,36 +228,84 @@ function renderValidation() {
   });
 }
 
-function renderTestBurn() {
-  const target = document.getElementById('testBurnResult');
-  if (!target || !config.testBurn) return;
+function computeTestBurn() {
   const predicted = PhysicsModel.evaluate(config);
   const test = config.testBurn;
   const loadKg = test.loadMode === 'auto' ? predicted.metrics.recommendedLoadKg : test.loadKg;
+  const fuelEnergyKwh = loadKg * predicted.metrics.woodEnergyKwhKg;
+  const fuelInputPowerKw = fuelEnergyKwh / Math.max(test.measuredBurnHours, 0.1);
+  const measuredHeatKwh = +test.measuredUsefulHeatKwh || 0;
+  const hasMeasurement = measuredHeatKwh > 0;
+  const measuredPower = hasMeasurement ? measuredHeatKwh / Math.max(test.measuredBurnHours, 0.1) : 0;
+  const measuredEfficiency = hasMeasurement ? Math.max(0, Math.min(100, measuredHeatKwh / Math.max(fuelEnergyKwh, 0.1) * 100)) : 0;
+  const errorPct = hasMeasurement
+    ? ((measuredPower - predicted.metrics.heatOutputKw) / Math.max(predicted.metrics.heatOutputKw, 0.1)) * 100
+    : 0;
+  return { predicted, test, loadKg, fuelEnergyKwh, fuelInputPowerKw, measuredHeatKwh, hasMeasurement, measuredPower, measuredEfficiency, errorPct };
+}
+
+function renderTestBurn() {
+  const target = document.getElementById('testBurnResult');
+  if (!target || !config.testBurn) return;
+  const r = computeTestBurn();
+  const { predicted, test, loadKg } = r;
   const loadInput = document.getElementById('loadKg');
   const loadOutput = document.getElementById('loadKg-v');
   if (loadInput) { loadInput.value = loadKg; loadInput.disabled = test.loadMode === 'auto'; }
   if (loadOutput) loadOutput.textContent = `${loadKg} kg`;
   const recommendation = document.getElementById('loadRecommendation');
   if (recommendation) recommendation.textContent = `${t('recommendedLoad')}: ${predicted.metrics.recommendedLoadKg} kg · ${t('maxLoad')}: ${predicted.metrics.maxLoadKg} kg`;
-  const fuelEnergyKwh = loadKg * 4.1 * (1 - test.woodMoisturePct / 100);
-  const fuelInputPowerKw = fuelEnergyKwh / Math.max(test.measuredBurnHours, 0.1);
-  const measuredHeatKwh = +test.measuredUsefulHeatKwh || 0;
   const tempSummary = `${test.flueTempC}°C / ${test.stoveTopTempC}°C / ${test.glassTempC}°C · smoke ${test.smokeOpacityPct}%`;
-  if (measuredHeatKwh <= 0) {
+  if (!r.hasMeasurement) {
     target.innerHTML = `<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} kW · ${predicted.metrics.efficiencyPct}%</div>
-      <div><b>${t('fuelInput')}:</b> ${fuelInputPowerKw.toFixed(2)} kW · ${fuelEnergyKwh.toFixed(1)} kWh</div>
+      <div><b>${t('fuelInput')}:</b> ${r.fuelInputPowerKw.toFixed(2)} kW · ${r.fuelEnergyKwh.toFixed(1)} kWh</div>
       <div class="sub">${t('needUsefulHeat')} · ${tempSummary}</div>`;
     return;
   }
-  const measuredPower = measuredHeatKwh / Math.max(test.measuredBurnHours, 0.1);
-  const measuredEfficiency = Math.max(0, Math.min(100, measuredHeatKwh / Math.max(fuelEnergyKwh, 0.1) * 100));
-  const errorPct = ((measuredPower - predicted.metrics.heatOutputKw) / Math.max(predicted.metrics.heatOutputKw, 0.1)) * 100;
-  const statusClass = Math.abs(errorPct) <= 15 ? '' : 'bad';
+  const statusClass = Math.abs(r.errorPct) <= 15 ? '' : 'bad';
   target.innerHTML = `<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} kW · ${predicted.metrics.efficiencyPct}%</div>
-    <div><b>${t('measured')}:</b> ${measuredPower.toFixed(2)} kW · ${measuredEfficiency.toFixed(1)}%</div>
+    <div><b>${t('measured')}:</b> ${r.measuredPower.toFixed(2)} kW · ${r.measuredEfficiency.toFixed(1)}%</div>
     <div>${tempSummary}</div>
-    <div class="${statusClass}"><b>${t('error')}:</b> ${errorPct >= 0 ? '+' : ''}${errorPct.toFixed(1)}%</div>`;
+    <div class="${statusClass}"><b>${t('error')}:</b> ${r.errorPct >= 0 ? '+' : ''}${r.errorPct.toFixed(1)}%</div>`;
+}
+
+const TEST_LOG_KEY = 'woodstove2TestLogV1';
+function getTestLog() {
+  try { return JSON.parse(localStorage.getItem(TEST_LOG_KEY)) || []; } catch { return []; }
+}
+function renderTestLog() {
+  const ul = document.getElementById('testLog');
+  if (!ul) return;
+  const log = getTestLog();
+  ul.innerHTML = log.slice(-8).reverse().map((e) => {
+    const dev = e.deviationPct >= 0 ? '+' : '';
+    return `<li><b>${new Date(e.ts).toLocaleDateString()}</b> · ${e.mode} · ${e.species} · ${e.moisturePct}%<br>
+      ${t('predicted')}: ${e.predictedKw} kW → ${t('measured')}: ${e.measuredKw} kW <span class="${Math.abs(e.deviationPct) <= 15 ? '' : 'bad'}">(${dev}${e.deviationPct}%)</span></li>`;
+  }).join('') || `<li class="sub">${t('noTestsYet')}</li>`;
+}
+function saveTestToLog() {
+  const r = computeTestBurn();
+  if (!r.hasMeasurement) { renderTestBurn(); return; }
+  const log = getTestLog();
+  log.push({
+    ts: Date.now(), mode: r.predicted.mode, species: config.testBurn.woodSpecies,
+    moisturePct: config.testBurn.woodMoisturePct, loadKg: r.loadKg, burnHours: config.testBurn.measuredBurnHours,
+    usefulHeatKwh: r.measuredHeatKwh, predictedKw: r.predicted.metrics.heatOutputKw,
+    predictedEffPct: r.predicted.metrics.efficiencyPct, measuredKw: +r.measuredPower.toFixed(2),
+    measuredEffPct: +r.measuredEfficiency.toFixed(1), deviationPct: +r.errorPct.toFixed(1),
+  });
+  try { localStorage.setItem(TEST_LOG_KEY, JSON.stringify(log.slice(-30))); } catch { /* ignore */ }
+  renderTestLog();
+}
+function exportTestLogCsv() {
+  const log = getTestLog();
+  if (!log.length) return;
+  const header = 'date,mode,species,moisturePct,loadKg,burnHours,usefulHeatKwh,predictedKw,predictedEffPct,measuredKw,measuredEffPct,deviationPct';
+  const rows = log.map((e) => [new Date(e.ts).toISOString(), e.mode, e.species, e.moisturePct, e.loadKg, e.burnHours, e.usefulHeatKwh, e.predictedKw, e.predictedEffPct, e.measuredKw, e.measuredEffPct, e.deviationPct].join(','));
+  const blob = new Blob([header + '\n' + rows.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = `woodstove-test-log-${Date.now()}.csv`; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1500);
 }
 
 function renderOptimization(result) {
@@ -328,6 +387,18 @@ function printReport() {
   } catch(e) { console.error('Print report failed:', e); alert(lang === 'en' ? 'Print failed' : 'Друк не вдався'); }
 }
 
+function buildExportModel() {
+  const model = stove.clone(true);
+  const strip = (root) => {
+    for (const child of root.children.slice()) {
+      if (['flowVisualization', 'innerChamber', 'doorSeal'].includes(child.name)) root.remove(child);
+      else strip(child);
+    }
+  };
+  strip(model);
+  return model;
+}
+
 // ---------- UI прив'язка ----------
 const controlMap = {
   widthCm: 'dimensions.widthCm', depthCm: 'dimensions.depthCm', heightCm: 'dimensions.heightCm', legHeightCm: 'dimensions.legHeightCm',
@@ -399,8 +470,9 @@ function syncUI() {
   document.getElementById('viewMode').value = config.viewMode;
   document.getElementById('doorHingeSide').value = config.door.hingeSide;
   document.getElementById('loadMode').value = config.testBurn.loadMode;
-  for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney' })) {
-    const el = document.getElementById(id); if (el) el.checked = config.visibility[k];
+  document.getElementById('woodSpecies').value = config.testBurn.woodSpecies;
+  for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney', showSection: 'section', showGrid: 'grid' })) {
+    const el = document.getElementById(id); if (el) el.checked = config.visibility[k] !== false;
   }
   document.getElementById('showFlow').checked = config.flow.visible;
   document.getElementById('animateFlow').checked = config.flow.animated;
@@ -456,9 +528,16 @@ function bindUI() {
     config.testBurn.loadMode = e.target.value === 'manual' ? 'manual' : 'auto';
     saveConfig(config); syncUI(); renderTestBurn();
   });
-  for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney' })) {
+  document.getElementById('woodSpecies').addEventListener('change', (e) => {
+    config.testBurn.woodSpecies = e.target.value;
+    saveConfig(config); renderPhysics();
+  });
+  for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney', showSection: 'section', showGrid: 'grid' })) {
     document.getElementById(id).addEventListener('change', (e) => {
-      config.visibility[k] = e.target.checked; saveConfig(config); applyVisibility();
+      config.visibility[k] = e.target.checked; saveConfig(config);
+      if (k === 'section') applySection();
+      else if (k === 'grid') applyGrid();
+      else applyVisibility();
     });
   }
   document.getElementById('showFlow').addEventListener('change', (e) => {
@@ -517,14 +596,18 @@ function bindUI() {
     localStorage.removeItem(COMPARE_KEY); renderCompare();
   });
   document.getElementById('saveTestBurn').addEventListener('click', () => {
-    saveConfig(config); renderTestBurn();
+    saveConfig(config); saveTestToLog(); renderTestBurn();
+  });
+  document.getElementById('exportTestCsv').addEventListener('click', exportTestLogCsv);
+  document.getElementById('clearTestLog').addEventListener('click', () => {
+    localStorage.removeItem(TEST_LOG_KEY); renderTestLog();
   });
   document.getElementById('langToggle').addEventListener('click', () => {
     lang = lang === 'en' ? 'uk' : 'en'; setLang(lang); applyI18n();
     if (config.viewMode !== '3d') renderOverlaySVG();
   });
-  document.getElementById('exportGltf').addEventListener('click', () => exportGLTF(stove));
-  document.getElementById('exportStl').addEventListener('click', () => exportSTL(stove));
+  document.getElementById('exportGltf').addEventListener('click', () => exportGLTF(buildExportModel()));
+  document.getElementById('exportStl').addEventListener('click', () => exportSTL(buildExportModel()));
   document.getElementById('showTour').addEventListener('click', () => { document.getElementById('tour').style.display = 'flex'; });
   document.getElementById('closeTour').addEventListener('click', () => { document.getElementById('tour').style.display = 'none'; });
   document.getElementById('tour').addEventListener('click', (e) => { if (e.target.id === 'tour') e.target.style.display = 'none'; });

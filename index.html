@@ -46,6 +46,8 @@
     <div class="row check"><input type="checkbox" id="showAirChannels"><label for="showAirChannels" data-i18n="showAirChannels">Повітряні канали</label></div>
     <div class="row check"><input type="checkbox" id="showChimney"><label for="showChimney" data-i18n="showChimney">Димохід</label></div>
     <div class="row check"><input type="checkbox" id="showFlow"><label for="showFlow" data-i18n="flowVisible">Показувати потоки</label></div>
+    <div class="row check"><input type="checkbox" id="showSection"><label for="showSection" data-i18n="sectionView">Переріз (розріз)</label></div>
+    <div class="row check"><input type="checkbox" id="showGrid" checked><label for="showGrid" data-i18n="showGrid">Сітка / осі</label></div>
     <div class="row check"><input type="checkbox" id="animateFlow"><label for="animateFlow" data-i18n="flowAnimated">Анімувати потоки</label></div>
     <div class="row"><label>Explode <output id="explodeDistanceCm-v"></output></label>
       <input type="range" id="explodeDistanceCm" min="5" max="40" step="1"></div>
@@ -152,6 +154,7 @@
   </div></details>
 
   <details><summary data-i18n="secTest">Test Burn / тестове горіння</summary><div class="body" id="testBurn">
+    <div class="row"><label data-i18n="woodSpecies">Порода дров</label><select id="woodSpecies"><option value="birch" data-i18n="spBirch">Береза</option><option value="oak" data-i18n="spOak">Дуб</option><option value="pine" data-i18n="spPine">Сосна</option><option value="spruce" data-i18n="spSpruce">Ялина</option><option value="alder" data-i18n="spAlder">Вільха</option></select></div>
     <div class="row"><label><span data-i18n="moisture">Вологість дров</span> <output id="woodMoisturePct-v"></output></label><input type="range" id="woodMoisturePct" min="8" max="35" step="1"></div>
     <div class="row"><label data-i18n="load">Маса закладки</label><select id="loadMode"><option value="auto" data-i18n="loadAuto">Авто від топки</option><option value="manual" data-i18n="loadManual">Ручне значення</option></select></div>
     <div class="row"><label><span data-i18n="load">Маса закладки</span> <output id="loadKg-v"></output></label><input type="range" id="loadKg" min="1" max="30" step="0.5"></div>
@@ -164,6 +167,9 @@
     <div class="row"><label><span data-i18n="smokeOpacity">Непрозорість диму</span> <output id="smokeOpacityPct-v"></output></label><input type="range" id="smokeOpacityPct" min="0" max="100" step="1"><div class="hint" data-i18n="smokeHint">Оціночна непрозорість видимого диму після прогріву: 0% — майже невидимий, 100% — густий дим. Це не лабораторний PM/CO вимір.</div></div>
     <div class="btns"><button id="saveTestBurn" class="green" data-i18n="saveTest">Зберегти тест</button></div>
     <div id="testBurnResult" class="test-result"></div>
+    <ul id="testLog" class="test-log"></ul>
+    <div class="btns"><button id="exportTestCsv" class="ghost" data-i18n="exportCsv">Журнал CSV ⤓</button>
+      <button id="clearTestLog" class="ghost" data-i18n="clearLog">Очистити журнал</button></div>
   </div></details>
 
   <details><summary data-i18n="secCam">Камера</summary><div class="body">
