@@ -49,6 +49,13 @@ export function designInternals(cfg) {
   cfg.thermal.targetCombustionTempC = 850;
   cfg.thermal.heatExchangePasses = 2;
 
+  // Шамот обмежуємо, щоб фізично лишалася топка (інакше 30 см + 8 см шамоту = 0 об'єму).
+  const steelCm = (+cfg.materials.steelThicknessMm || 5) / 10;
+  const minDim = Math.min(w, d);
+  const maxBrick = Math.max(2, Math.floor(((minDim - steelCm * 2 - 8.5) / 2 - 3) * 2) / 2);
+  cfg.materials.firebrickThicknessCm = Math.min(+cfg.materials.firebrickThicknessCm || 4, maxBrick);
+  cfg.thermal.insulationThicknessCm = Math.min(3, Math.max(1, (minDim - steelCm * 2 - 8.5) / 2 - cfg.materials.firebrickThicknessCm));
+
   normalizeConfig(cfg);
 
   // Бафль підбираємо оптимізатором (висота/кут/зазор/приток) під поточний режим.

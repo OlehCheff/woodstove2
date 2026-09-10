@@ -170,5 +170,10 @@ for (const name of Object.keys(MODEL_PRESETS)) {
   const dd = designInternals(c);
   ok(validateConfig(dd).valid, `autodesign ${name} valid`, JSON.stringify(validateConfig(dd).errors));
 }
+// толстий шамот на мінімальній печі не має робити конфіг невалідним
+const fatBrick = normalizeConfig(clone(defaultConfig));
+fatBrick.dimensions = { widthCm: 30, depthCm: 30, heightCm: 40, legHeightCm: 0 };
+fatBrick.materials.firebrickThicknessCm = 8;
+ok(validateConfig(designInternals(fatBrick)).valid, 'autodesign caps thick firebrick on small stove', JSON.stringify(validateConfig(designInternals(fatBrick)).errors));
 
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);process.exit(fails === 0 ? 0 : 1);

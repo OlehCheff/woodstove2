@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { defaultConfig, loadConfig, saveConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, encodeConfig, decodeConfig, deepMerge, getByPath, setByPath, OPERATION_PRESETS, MODEL_PRESETS } from './config.js';
-import { PhysicsModel, optimizeConfig } from './physics-model.js';
+import { PhysicsModel } from './physics-model.js';
 import { buildStove, disposeGroup } from './stove-builder.js';
 import { exportGLTF, exportSTL } from './exporters.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from './bom.js';
@@ -228,6 +228,7 @@ function renderPhysics() {
   renderTestLog();
   renderBomSummary(r);
   renderCalibrationSummary();
+  renderAutoSummary(r);
   applyThermalZones(r.metrics);
 }
 
@@ -370,13 +371,6 @@ function exportTestLogCsv() {  const log = getTestLog();
   setTimeout(() => URL.revokeObjectURL(a.href), 1500);
 }
 
-function renderOptimization(result) {
-  const target = document.getElementById('optimizationResult');
-  if (!target || !result) return;
-  const b = result.config.baffle;
-  target.innerHTML = `<strong>${t('optimizationDone')}</strong><br>${t('optimizeHint')}<br>H ${b.heightCm} cm · ${b.angleDeg}° · gap ${b.frontGapCm} cm · ${result.result.metrics.efficiencyPct}%`;
-}
-
 function syncModelOptions() {
   const select = document.getElementById('modelPreset');
   if (!select) return;
@@ -438,8 +432,14 @@ function exportDxf() {
   downloadBlob(new Blob([dxf], { type: 'application/dxf' }), `woodstove-cut-${Date.now()}.dxf`);
 }
 
-function renderBomSummary(physicsResult = null) {
-  const target = document.getElementById('bomSummary');
+function renderAutoSummary(r = null) {
+  const target = document.getElementById('autoSummary');
+  if (!target) return;
+  const m = (r || PhysicsModel.evaluate(config)).metrics;
+  target.innerHTML = `<b>${t('autoTitle')}</b> · ${t('kEff')} <b>${m.efficiencyPct}%</b> · ${t('autoBaffle')} <b>${config.baffle.heightCm} ${t('unitCm')}</b> · ${t('autoChimney')} <b>Ø${config.chimney.diameterCm} ${t('unitCm')} × ${config.chimney.heightCm} ${t('unitCm')}</b> · ${t('autoInsulation')} <b>${config.thermal.insulationThicknessCm} ${t('unitCm')}</b> · ${t('autoSecondary')} <b>${config.secondaryAir.holeCount}×Ø${config.secondaryAir.holeDiameterCm}</b>`;
+}
+
+function renderBomSummary(physicsResult = null) {  const target = document.getElementById('bomSummary');
   if (!target) return;
   const bom = buildBOM(config, physicsResult);
   target.innerHTML = `${t('bomSteel')}: <b>${bom.totals.steelMassKg} kg</b> · ${t('bomArea')}: <b>${bom.totals.steelAreaM2} m²</b> · ${t('bomBrick')}: <b>${bom.totals.brickMassKg} kg</b> · ${t('bomInsulation')}: <b>${bom.totals.insulationMassKg} kg</b> · ${t('bomTotal')}: <b>${bom.totals.totalMassKg} kg</b><br>
@@ -483,7 +483,7 @@ function buildExportModel() {
   const model = stove.clone(true);
   const strip = (root) => {
     for (const child of root.children.slice()) {
-      if (['flowVisualization', 'innerChamber', 'doorSeal'].includes(child.name)) root.remove(child);
+      if (['flowVisualization', 'innerChamber', 'doorSeal', 'thermalZones', 'smoke'].includes(child.name)) root.remove(child);
       else strip(child);
     }
   };
