@@ -440,7 +440,7 @@ function renderBomSummary(physicsResult = null) {
   const target = document.getElementById('bomSummary');
   if (!target) return;
   const bom = buildBOM(config, physicsResult);
-  target.innerHTML = `${t('bomSteel')}: <b>${bom.totals.steelMassKg} kg</b> · ${t('bomArea')}: <b>${bom.totals.steelAreaM2} m²</b> · ${t('bomBrick')}: <b>${bom.totals.brickMassKg} kg</b> · ${t('bomTotal')}: <b>${bom.totals.totalMassKg} kg</b><br>
+  target.innerHTML = `${t('bomSteel')}: <b>${bom.totals.steelMassKg} kg</b> · ${t('bomArea')}: <b>${bom.totals.steelAreaM2} m²</b> · ${t('bomBrick')}: <b>${bom.totals.brickMassKg} kg</b> · ${t('bomInsulation')}: <b>${bom.totals.insulationMassKg} kg</b> · ${t('bomTotal')}: <b>${bom.totals.totalMassKg} kg</b><br>
     ${t('bomCut')}: <b>${bom.totals.cutAreaM2} m²</b> · ${t('bomWeld')}: <b>${bom.totals.weldMeters} m</b> · ${t('bomPurchased')}: <b>${bom.totals.purchasedCount}</b> · <span class="est">${t('bomEstimate')}</span>`;
 }
 

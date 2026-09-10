@@ -37,9 +37,10 @@ export function buildBOM(cfg, physicsResult = null) {
 
   const parts = [];
   const densityOf = (mat) => {
-    if (mat === 'шамот') return 0.0021;      // шамот ~2.1 г/см³
-    if (mat.includes('скло')) return 0.0025; // скло ~2.5 г/см³
-    return 0.00785;                          // сталь 7.85 г/см³
+    if (mat === 'шамот') return 0.0021;                 // шамот ~2.1 г/см³
+    if (mat.includes('скло')) return 0.0025;            // скло ~2.5 г/см³
+    if (mat.includes('vermiculite') || mat.includes('CFB')) return 0.0005; // вермикуліт/CFB ~0.5 г/см³
+    return 0.00785;                                     // сталь 7.85 г/см³
   };
   // kind: sheet | bar | tube | purchased. weldCm — довжина зварного шва на одну деталь.
   const add = (name, qty, wCm, hCm, tCm, mat, note = '', kind = 'sheet', weldCm = 0) => {
@@ -86,19 +87,24 @@ export function buildBOM(cfg, physicsResult = null) {
   add('Задня перепускна стінка', 1, innerW, Math.max(6, (hoodY - cfg.baffle.heightCm) * 0.55), steelCm, `сталь ${steelMm} мм`);
   add('Внутрішня димова труба (flue bell)', 1, Math.PI * chimR * 1.06 * 2, flueBellH, 0.3, 'сталь 3 мм', 'Ø' + round(chimR * 2.12, 1) + ' см, розгортка', 'tube', Math.PI * chimR * 2);
   add('Люк чистки + кришка', 1, 8.2, 8.2, 0.9, 'сталь', 'Ø68/82 мм', 'purchased');
-  // Повітряні системи
+  // Повітряні системи — короби з листа 3 мм, тому маса = РОЗГОРТКА × 0.3 см,
+  // а не суцільний блок (глибина каналу не є товщиною стінки).
+  const wallT = 0.3;
   add('Панель primary + задвижка', 1, Math.min(w - steelCm * 3, cfg.primaryAir.holeCount * cfg.primaryAir.holeSpacingCm + 8), 11.5, steelCm, `сталь ${steelMm} мм`, `${cfg.primaryAir.holeCount}×Ø${cfg.primaryAir.holeDiameterCm} см`);
-  add('Secondary стояки (Л/П)', 2, cfg.secondaryAir.channelWidthCm, Math.max(12, Math.min(cfg.secondaryAir.preheatLengthCm, 999)), cfg.secondaryAir.channelDepthCm, 'сталь 3 мм');
-  add('Secondary manifold', 1, Math.max(12, Math.min(innerW - 2, cfg.secondaryAir.holeCount * cfg.secondaryAir.holeSpacingCm + 10)), cfg.secondaryAir.manifoldHeightCm, cfg.secondaryAir.channelDepthCm, 'сталь 3 мм', `${cfg.secondaryAir.holeCount}×Ø${cfg.secondaryAir.holeDiameterCm} см`);
+  const secRiserDev = 2 * (cfg.secondaryAir.channelWidthCm + cfg.secondaryAir.channelDepthCm);
+  add('Secondary стояки (Л/П)', 2, secRiserDev, Math.max(12, cfg.secondaryAir.preheatLengthCm), wallT, 'сталь 3 мм', 'розгортка короба', 'tube');
+  const secManW = Math.max(12, Math.min(innerW - 2, cfg.secondaryAir.holeCount * cfg.secondaryAir.holeSpacingCm + 10));
+  add('Secondary manifold', 1, 2 * (cfg.secondaryAir.manifoldHeightCm + cfg.secondaryAir.channelDepthCm), secManW, wallT, 'сталь 3 мм', `${cfg.secondaryAir.holeCount}×Ø${cfg.secondaryAir.holeDiameterCm} см, розгортка`, 'tube');
   const washW = Math.max(12, Math.min(w - steelCm * 3, doorW + 6));
-  add('Air-wash канали (Л/П)', 2, cfg.airWash.channelWidthCm, Math.max(12, Math.min(cfg.airWash.preheatLengthCm, 999)), cfg.airWash.channelDepthCm, 'сталь 3 мм');
-  add('Air-wash корпус + щілина', 1, washW, 4.3, cfg.airWash.channelDepthCm, 'сталь 3 мм', `щілина ${cfg.airWash.gapCm} см`);
+  add('Air-wash канали (Л/П)', 2, 2 * (cfg.airWash.channelWidthCm + cfg.airWash.channelDepthCm), Math.max(12, cfg.airWash.preheatLengthCm), wallT, 'сталь 3 мм', 'розгортка короба', 'tube');
+  add('Air-wash корпус + щілина', 1, 2 * (3.2 + cfg.airWash.channelDepthCm), washW, wallT, 'сталь 3 мм', `щілина ${cfg.airWash.gapCm} см, розгортка`, 'tube');
   add('Верхнє піддувало', 1, Math.max(12, washW * 0.62), 1.1, 0.9, 'сталь');
   // Колосник + зольник
   const grateSpan = Math.max(14, innerW - 8);
   const slatCount = Math.max(5, Math.floor(grateSpan / 3.4));
   add('Колосник (прути)', slatCount, 1.6, Math.max(10, innerD * 0.68), 1.6, 'сталь', 'переріз 16×16 мм', 'bar');
-  add('Зольник (ящик + фасад)', 1, Math.min(innerW - 6, doorW * 0.66), 5.5 + 4.5, 1.6, 'сталь', 'з ручкою');
+  const drawerW = Math.min(innerW - 6, doorW * 0.66);
+  add('Зольник (ящик + фасад)', 1, 2 * (drawerW + 5), innerD * 0.4 + 5.5, wallT, 'сталь', 'розгортка + фасад', 'tube');
   // Шамот + ізоляція
   const cw = Math.max(10, w - steelCm * 2);
   const cd = Math.max(10, d - steelCm * 2);
@@ -114,12 +120,13 @@ export function buildBOM(cfg, physicsResult = null) {
   if (legH > 0) add('Ніжки 50×50', 4, 5, legH, 5, 'сталь/профіль', 'профільна труба', 'bar');
   // Теплові екрани
   const shieldH = h * 0.78;
-  add('Тепловий екран — задній', 1, w - 4, shieldH, 0.4, 'сталь 4 мм', 'зазор 3.2 см');
-  add('Тепловий екран — бічні (Л/П)', 2, d - 4, shieldH, 0.4, 'сталь 4 мм');
+  add('Тепловий екран — задній', 1, w - 4, shieldH, 0.3, 'сталь 3 мм', 'зазор 3.2 см');
+  add('Тепловий екран — бічні (Л/П)', 2, d - 4, shieldH, 0.3, 'сталь 3 мм');
 
   const steelMass = parts.filter(p => p.mat.includes('сталь')).reduce((s, p) => s + p.massKg * p.qty, 0);
   const brickMass = parts.filter(p => p.mat === 'шамот').reduce((s, p) => s + p.massKg * p.qty, 0);
   const glassMass = parts.filter(p => p.mat.includes('скло')).reduce((s, p) => s + p.massKg * p.qty, 0);
+  const insMass = parts.filter(p => p.mat.includes('vermiculite') || p.mat.includes('CFB')).reduce((s, p) => s + p.massKg * p.qty, 0);
   const cutParts = parts.filter(p => p.kind === 'sheet' || p.kind === 'bar' || p.kind === 'tube');
   const cutAreaCm2 = cutParts.reduce((s, p) => s + p.areaCm2 * p.qty, 0);
   const weldCm = parts.reduce((s, p) => s + p.weldCm * p.qty, 0);
@@ -131,8 +138,9 @@ export function buildBOM(cfg, physicsResult = null) {
     totals: {
       steelMassKg: round(steelMass, 1),
       brickMassKg: round(brickMass, 1),
+      insulationMassKg: round(insMass, 1),
       glassMassKg: round(glassMass, 2),
-      totalMassKg: round(steelMass + brickMass + glassMass, 1),
+      totalMassKg: round(steelMass + brickMass + glassMass + insMass, 1),
       steelAreaM2: round(cutAreaCm2 / 10000, 2),
       cutAreaM2: round((cutAreaCm2 * 1.12) / 10000, 2), // +12% на розкладку металу (nesting)
       weldMeters: round(weldCm / 100, 1),

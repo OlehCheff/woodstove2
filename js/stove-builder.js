@@ -98,6 +98,15 @@ export function buildStove(cfg, cache = new Map()) {
   const midZ = chimZ;
   mkTop(Math.max(1, w / 2 - collarR), midDepth, -(collarR + (w / 2 - collarR) / 2), midZ); // ліва
   mkTop(Math.max(1, w / 2 - collarR), midDepth, +(collarR + (w / 2 - collarR) / 2), midZ); // права
+  // Круглий фланець + кутові заглушки: ховають квадратний отвір під круглу трубу.
+  const topFlange = new THREE.Mesh(new THREE.CylinderGeometry(collarR * 1.02, collarR * 1.02, steelT * 1.6, 28), darkM);
+  topFlange.position.set(0, topY, chimZ); topFlange.name = 'topFlange'; shell.add(topFlange);
+  const cornerSize = collarR * 0.34;
+  for (const [cx, cz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const fill = plate(cornerSize, steelT, cornerSize, darkM);
+    fill.position.set(cx * (collarR - cornerSize * 0.5), topY, chimZ + cz * (collarR - cornerSize * 0.5));
+    shell.add(fill);
+  }
 
   // Бафль перекриває всю топку до реального переднього проходу для газів.
   // Front gap працює вздовж Z, а не зменшує ширину пластини.
@@ -136,6 +145,9 @@ export function buildStove(cfg, cache = new Map()) {
   const primaryHandle = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 3.2, 16), primaryControlM);
   primaryHandle.rotation.x = Math.PI / 2; primaryHandle.position.set(shutter.position.x, 16, d / 2 + steelT * 2.4);
   primaryHandle.name = 'primaryHandle'; airSystems.add(primaryHandle);
+  const primaryBracket = plate(3, 4.4, steelT * 0.8, ductM);
+  primaryBracket.position.set(shutter.position.x, 16, d / 2 + steelT * 1.3);
+  primaryBracket.name = 'primaryBracket'; airSystems.add(primaryBracket);
 
   // Secondary подається у гарячу зону допалювання: під бафлем, над полум'ям.
   const secY = Math.max(24, baffleY - 8);
@@ -430,6 +442,7 @@ export function buildStove(cfg, cache = new Map()) {
     puff.userData.x0 = ((i % 3) - 1) * chimR * 0.4;
     puff.userData.phase = i * 0.7;
     puff.userData.y0 = smokeY0; puff.userData.y1 = smokeY1;
+    puff.position.set(puff.userData.x0, smokeY0, chimZ);
     smoke.add(puff); smokeParticles.push(puff);
   }
   smoke.visible = false; shell.add(smoke);
