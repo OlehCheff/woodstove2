@@ -115,9 +115,9 @@ export function setByPath(obj, path, value) {
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 export function normalizeConfig(cfg) {
-  cfg.dimensions.widthCm = clamp(+cfg.dimensions.widthCm || 70, 40, 140);
-  cfg.dimensions.depthCm = clamp(+cfg.dimensions.depthCm || 55, 35, 120);
-  cfg.dimensions.heightCm = clamp(+cfg.dimensions.heightCm || 95, 50, 180);
+  cfg.dimensions.widthCm = clamp(+cfg.dimensions.widthCm || 70, 30, 140);
+  cfg.dimensions.depthCm = clamp(+cfg.dimensions.depthCm || 55, 30, 120);
+  cfg.dimensions.heightCm = clamp(+cfg.dimensions.heightCm || 95, 40, 180);
   cfg.dimensions.legHeightCm = clamp(+cfg.dimensions.legHeightCm || 0, 0, 40);
 
   // міграція зі старого формату (см → мм)

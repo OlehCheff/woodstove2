@@ -3,6 +3,7 @@ import { PhysicsModel, optimizeConfig } from '../js/physics-model.js';
 import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, MODEL_PRESETS } from '../js/config.js';
 import { calibrateFromLog, evaluateCalibration } from '../js/calibration.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from '../js/bom.js';
+import { designInternals } from '../js/autodesign.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 let fails = 0;
@@ -155,5 +156,19 @@ ok(validateConfig(tallBaffle).errors.some(e => e.code === 'BAFFLE_REFRACTORY_HIG
 const wideSec = normalizeConfig(clone(defaultConfig));
 wideSec.secondaryAir.channelWidthCm = 12;
 ok(validateConfig(wideSec).warnings.some(w => w.code === 'SECONDARY_CHANNEL_WIDE') || validateConfig(wideSec).valid, 'secondary channel wide warning or valid', JSON.stringify(validateConfig(wideSec).warnings.map(w => w.code)));
+
+// 14. Автопроєктування внутрішньої геометрії
+const tiny = normalizeConfig(clone(defaultConfig));
+tiny.dimensions = { widthCm: 30, depthCm: 30, heightCm: 40, legHeightCm: 0 };
+const designed = designInternals(tiny);
+ok(validateConfig(designed).valid, 'autodesign min dims valid', JSON.stringify(validateConfig(designed).errors));
+ok(designed.door.widthCm <= 30 && designed.door.heightCm <= 40, 'autodesign door fits body', JSON.stringify({ w: designed.door.widthCm, h: designed.door.heightCm }));
+const dm = PhysicsModel.evaluate(designed).metrics;
+ok(Number.isFinite(dm.efficiencyPct) && Number.isFinite(dm.heatOutputKw), 'autodesign finite', JSON.stringify({ eff: dm.efficiencyPct, kw: dm.heatOutputKw }));
+for (const name of Object.keys(MODEL_PRESETS)) {
+  const c = applyModelPreset(normalizeConfig(clone(defaultConfig)), name);
+  const dd = designInternals(c);
+  ok(validateConfig(dd).valid, `autodesign ${name} valid`, JSON.stringify(validateConfig(dd).errors));
+}
 
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);process.exit(fails === 0 ? 0 : 1);

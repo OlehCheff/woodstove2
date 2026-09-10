@@ -7,6 +7,7 @@ import { buildStove, disposeGroup } from './stove-builder.js';
 import { exportGLTF, exportSTL } from './exporters.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from './bom.js';
 import { calibrateFromLog, evaluateCalibration, emptyCalibration } from './calibration.js';
+import { designInternals } from './autodesign.js';
 import { STR, WARN_TXT, VALIDATION_TXT, TOUR, getLang, setLang } from './i18n.js';
 
 let lang = getLang();
@@ -15,6 +16,7 @@ const t = (k) => (STR[lang] && STR[lang][k]) || STR.uk[k] || k;
 let config = loadConfig();
 const sharedValue = location.hash.startsWith('#config=') ? decodeConfig(location.hash.slice(8)) : null;
 if (sharedValue) config = normalizeConfig(deepMerge(structuredClone(defaultConfig), sharedValue));
+config = designInternals(config);
 const cache = new Map(); // кеш матеріалів
 const COMPARE_KEY = 'woodstove2CompareV1';
 
@@ -493,17 +495,7 @@ function buildExportModel() {
 const controlMap = {
   widthCm: 'dimensions.widthCm', depthCm: 'dimensions.depthCm', heightCm: 'dimensions.heightCm', legHeightCm: 'dimensions.legHeightCm',
   steelThicknessMm: 'materials.steelThicknessMm', firebrickThicknessCm: 'materials.firebrickThicknessCm',
-  baffleHeightCm: 'baffle.heightCm', baffleAngleDeg: 'baffle.angleDeg', baffleFrontGapCm: 'baffle.frontGapCm', baffleAirflowPct: 'baffle.airflowPct',
-  insulationThicknessCm: 'thermal.insulationThicknessCm', baffleRefractoryThicknessCm: 'thermal.baffleRefractoryThicknessCm',
-  targetCombustionTempC: 'thermal.targetCombustionTempC', heatExchangePasses: 'thermal.heatExchangePasses',
-  primaryHoleCount: 'primaryAir.holeCount', primaryHoleDiameterCm: 'primaryAir.holeDiameterCm', primaryHoleSpacingCm: 'primaryAir.holeSpacingCm', primaryAirOpenPct: 'primaryAir.openPct',
-  secondaryHoleCount: 'secondaryAir.holeCount', secondaryHoleDiameterCm: 'secondaryAir.holeDiameterCm', secondaryHoleSpacingCm: 'secondaryAir.holeSpacingCm',
-  airWashGapCm: 'airWash.gapCm', airWashIntakePct: 'airWash.intakePct',
-  secondaryChannelWidthCm: 'secondaryAir.channelWidthCm', secondaryChannelDepthCm: 'secondaryAir.channelDepthCm',
-  secondaryPreheatLengthCm: 'secondaryAir.preheatLengthCm', secondaryManifoldHeightCm: 'secondaryAir.manifoldHeightCm',
-  airWashSlotWidthPct: 'airWash.slotWidthPct', airWashChannelWidthCm: 'airWash.channelWidthCm', airWashPreheatLengthCm: 'airWash.preheatLengthCm',
-  chimneyDiameterCm: 'chimney.diameterCm', chimneyHeightCm: 'chimney.heightCm',
-  doorWidthCm: 'door.widthCm', doorHeightCm: 'door.heightCm', glassInsetCm: 'door.glassInsetCm', doorFrameThicknessCm: 'door.frameThicknessCm', doorOpenAngleDeg: 'door.openAngleDeg',
+  doorWidthCm: 'door.widthCm', doorHeightCm: 'door.heightCm',
   explodeDistanceCm: 'explode.distanceCm',
   cameraFov: 'camera.fov', cameraDistance: 'camera.distance', cameraTargetYCm: 'camera.targetY',
   steelColor: 'colors.steel', brickColor: 'colors.brick', glassColor: 'colors.glass', floorColor: 'colors.floor',
@@ -512,6 +504,8 @@ const controlMap = {
   woodMoisturePct: 'testBurn.woodMoisturePct', loadKg: 'testBurn.loadKg', measuredBurnHours: 'testBurn.measuredBurnHours', measuredUsefulHeatKwh: 'testBurn.measuredUsefulHeatKwh',
   flueTempC: 'testBurn.flueTempC', stoveTopTempC: 'testBurn.stoveTopTempC', glassTempC: 'testBurn.glassTempC', smokeOpacityPct: 'testBurn.smokeOpacityPct',
 };
+// Зміна цих полів запускає перепроєктування внутрішньої геометрії.
+const DESIGN_IDS = { widthCm: 1, depthCm: 1, heightCm: 1, legHeightCm: 1, steelThicknessMm: 1, firebrickThicknessCm: 1, doorWidthCm: 1, doorHeightCm: 1 };
 function fmt(id, v) {
   if (String(id).includes('Pct') || id === 'baffleAirflowPct' || id === 'airWashIntakePct') return `${v}%`;
   if (id === 'loadKg') return `${v} kg`;
@@ -593,13 +587,15 @@ function bindUI() {
       if (id in { woodMoisturePct: 1, loadKg: 1, measuredBurnHours: 1, measuredUsefulHeatKwh: 1, flueTempC: 1, stoveTopTempC: 1, glassTempC: 1, smokeOpacityPct: 1 }) {
         renderTestBurn(); return;
       }
+      if (DESIGN_IDS[id]) designInternals(config);
       scheduleRebuild(); renderPhysics();
       if (config.viewMode !== '3d') renderOverlaySVG();
     });
   }
   document.getElementById('operationMode').addEventListener('change', (e) => {
-    applyModePreset(config, e.target.value); saveConfig(config);
-    cache.clear(); syncUI(); rebuildStove(); renderPhysics();
+    applyModePreset(config, e.target.value);
+    designInternals(config);
+    saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics();
   });
   document.getElementById('viewMode').addEventListener('change', (e) => {
     config.viewMode = e.target.value; normalizeConfig(config); saveConfig(config); applyViewMode();
@@ -612,12 +608,8 @@ function bindUI() {
     const presetName = document.getElementById('modelPreset').value;
     config = applyModelPreset(config, presetName);
     applyModePreset(config, config.operation.mode);
+    designInternals(config);
     saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
-  });
-  document.getElementById('autoOptimize').addEventListener('click', () => {
-    const result = optimizeConfig(config);
-    config = normalizeConfig(result.config);
-    saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode(); renderOptimization(result);
   });
   document.getElementById('loadMode').addEventListener('change', (e) => {
     config.testBurn.loadMode = e.target.value === 'manual' ? 'manual' : 'auto';
@@ -654,7 +646,7 @@ function bindUI() {
   });
   document.getElementById('resetConfig').addEventListener('click', () => {
     localStorage.removeItem('woodstove2ConfigV1');
-    config = normalizeConfig(structuredClone(defaultConfig));
+    config = designInternals(normalizeConfig(structuredClone(defaultConfig)));
     cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
     syncDoorBtn();
   });
@@ -669,7 +661,7 @@ function bindUI() {
     const f = e.target.files?.[0]; if (!f) return;
     try {
       const parsed = JSON.parse(await f.text());
-      config = normalizeConfig(deepMerge(structuredClone(defaultConfig), parsed));
+      config = designInternals(normalizeConfig(deepMerge(structuredClone(defaultConfig), parsed)));
       saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
     } catch { alert(lang === 'en' ? 'Invalid JSON' : 'Невалідний JSON'); }
     e.target.value = '';

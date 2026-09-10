@@ -14,7 +14,7 @@ export function setLang(l) {
 export const STR = {
   uk: {
     title: 'Woodstove 2 — Sprint 10',
-    subtitle: '1 од. = 1 см · three@160 · модулі · дебаунс 120мс',
+    subtitle: '1 од. = 1 см · внутрішня геометрія підбирається автоматично під макс. ККД · мінімум 30 см',
     tourBtn: 'Тур', tourTitle: 'Тур по Woodstove 2', tourClose: 'Зрозуміло',
     secMode: 'Режим роботи / вид', lblMode: 'Режим', lblView: 'Вид',
     showFirebrick: 'Шамот', showBaffle: 'Бафль', showAirChannels: 'Повітряні канали', showChimney: 'Димохід', sectionView: 'Переріз (розріз)', showGrid: 'Сітка / осі', thermalZones: 'Температурні зони',
@@ -76,7 +76,7 @@ export const STR = {
   },
   en: {
     title: 'Woodstove 2 — Sprint 10',
-    subtitle: '1 unit = 1 cm · three@160 · modules · 120ms debounce',
+    subtitle: '1 unit = 1 cm · internals auto-designed for max efficiency · minimum 30 cm',
     tourBtn: 'Tour', tourTitle: 'Woodstove 2 tour', tourClose: 'Got it',
     secMode: 'Operation mode / view', lblMode: 'Mode', lblView: 'View',
     showFirebrick: 'Firebrick', showBaffle: 'Baffle', showAirChannels: 'Air channels', showChimney: 'Chimney', sectionView: 'Cross-section', showGrid: 'Grid / axes', thermalZones: 'Thermal zones',

@@ -58,8 +58,6 @@
     <div class="row"><label data-i18n="presetLabel">Готова модель</label>
       <select id="modelPreset"></select></div>
     <div class="btns"><button id="applyPreset" class="green" data-i18n="applyPreset">Застосувати</button></div>
-    <div class="btns"><button id="autoOptimize" class="accent" data-i18n="autoOptimize">Підібрати оптимум</button></div>
-    <div id="optimizationResult" class="optimization-result"></div>
     <div id="bomSummary" class="bom-summary"></div>
     <div class="btns"><button id="exportBom" class="ghost" data-i18n="exportBom">BOM CSV ⤓</button>
       <button id="exportDrawing" class="ghost" data-i18n="exportDrawing">Креслення SVG ⤓</button>
@@ -69,9 +67,9 @@
   </div></details>
 
   <details><summary data-i18n="secDims">Габарити</summary><div class="body">
-    <div class="row"><label><span data-i18n="w">Ширина</span> <output id="widthCm-v"></output></label><input type="range" id="widthCm" min="40" max="140" step="1"></div>
-    <div class="row"><label><span data-i18n="d">Глибина</span> <output id="depthCm-v"></output></label><input type="range" id="depthCm" min="35" max="120" step="1"></div>
-    <div class="row"><label><span data-i18n="hBody">Висота корпусу</span> <output id="heightCm-v"></output></label><input type="range" id="heightCm" min="50" max="180" step="1"></div>
+    <div class="row"><label><span data-i18n="w">Ширина</span> <output id="widthCm-v"></output></label><input type="range" id="widthCm" min="30" max="140" step="1"></div>
+    <div class="row"><label><span data-i18n="d">Глибина</span> <output id="depthCm-v"></output></label><input type="range" id="depthCm" min="30" max="120" step="1"></div>
+    <div class="row"><label><span data-i18n="hBody">Висота корпусу</span> <output id="heightCm-v"></output></label><input type="range" id="heightCm" min="40" max="180" step="1"></div>
     <div class="row"><label><span data-i18n="legs">Ніжки</span> <output id="legHeightCm-v"></output></label><input type="range" id="legHeightCm" min="0" max="40" step="1"></div>
   </div></details>
 
@@ -88,45 +86,9 @@
     <div class="row"><label><span data-i18n="steelMetal">Metalness сталі</span> <output id="steelMetalness-v"></output></label><input type="range" id="steelMetalness" min="0" max="1" step="0.02"></div>
   </div></details>
 
-  <details><summary data-i18n="secAir">Expert: бафль / повітря</summary><div class="body">
-    <div class="row"><label><span data-i18n="baffleH">Висота бафля</span> <output id="baffleHeightCm-v"></output></label><input type="range" id="baffleHeightCm" min="20" max="120" step="1"></div>
-    <div class="row"><label><span data-i18n="baffleA">Кут бафля</span> <output id="baffleAngleDeg-v"></output></label><input type="range" id="baffleAngleDeg" min="-20" max="30" step="1"></div>
-    <div class="row"><label><span data-i18n="baffleGap">Передній зазор</span> <output id="baffleFrontGapCm-v"></output></label><input type="range" id="baffleFrontGapCm" min="2" max="15" step="0.5"></div>
-    <div class="row"><label><span data-i18n="baffleFlow">Приток бафля</span> <output id="baffleAirflowPct-v"></output></label><input type="range" id="baffleAirflowPct" min="0" max="100" step="1"></div>
-    <div class="row"><label><span data-i18n="primCount">Отворів primary</span> <output id="primaryHoleCount-v"></output></label><input type="range" id="primaryHoleCount" min="3" max="14" step="1"></div>
-    <div class="row"><label><span data-i18n="primDia">Ø отвору</span> <output id="primaryHoleDiameterCm-v"></output></label><input type="range" id="primaryHoleDiameterCm" min="0.6" max="2.5" step="0.1"></div>
-    <div class="row"><label><span data-i18n="primStep">Крок</span> <output id="primaryHoleSpacingCm-v"></output></label><input type="range" id="primaryHoleSpacingCm" min="2" max="8" step="0.5"></div>
-    <div class="row"><label><span data-i18n="primGate">Задвижка primary</span> <output id="primaryAirOpenPct-v"></output></label><input type="range" id="primaryAirOpenPct" min="0" max="100" step="1"></div>
-    <div class="row"><label><span data-i18n="secCount">Перфорацій secondary</span> <output id="secondaryHoleCount-v"></output></label><input type="range" id="secondaryHoleCount" min="4" max="24" step="1"></div>
-    <div class="row"><label><span data-i18n="secDia">Ø перфорації</span> <output id="secondaryHoleDiameterCm-v"></output></label><input type="range" id="secondaryHoleDiameterCm" min="0.4" max="1.2" step="0.1"></div>
-    <div class="row"><label><span data-i18n="secStep">Крок secondary</span> <output id="secondaryHoleSpacingCm-v"></output></label><input type="range" id="secondaryHoleSpacingCm" min="1.5" max="4" step="0.1"></div>
-    <div class="row"><label><span data-i18n="secChannelWidth">Ширина secondary каналу</span> <output id="secondaryChannelWidthCm-v"></output></label><input type="range" id="secondaryChannelWidthCm" min="2" max="12" step="0.5"></div>
-    <div class="row"><label><span data-i18n="secChannelDepth">Глибина secondary каналу</span> <output id="secondaryChannelDepthCm-v"></output></label><input type="range" id="secondaryChannelDepthCm" min="2" max="10" step="0.5"></div>
-    <div class="row"><label><span data-i18n="secPreheatLength">Довжина підігріву secondary</span> <output id="secondaryPreheatLengthCm-v"></output></label><input type="range" id="secondaryPreheatLengthCm" min="15" max="140" step="1"></div>
-    <div class="row"><label><span data-i18n="secManifoldHeight">Висота secondary manifold</span> <output id="secondaryManifoldHeightCm-v"></output></label><input type="range" id="secondaryManifoldHeightCm" min="2" max="10" step="0.5"></div>
-    <div class="row"><label><span data-i18n="washGap">Air-wash щілина</span> <output id="airWashGapCm-v"></output></label><input type="range" id="airWashGapCm" min="0.5" max="3" step="0.1"></div>
-    <div class="row"><label><span data-i18n="washFlow">Приток air-wash</span> <output id="airWashIntakePct-v"></output></label><input type="range" id="airWashIntakePct" min="0" max="100" step="1"></div>
-    <div class="row"><label><span data-i18n="airwashSlotWidth">Ширина air-wash slot</span> <output id="airWashSlotWidthPct-v"></output></label><input type="range" id="airWashSlotWidthPct" min="40" max="100" step="1"></div>
-    <div class="row"><label><span data-i18n="airwashChannelWidth">Ширина air-wash каналу</span> <output id="airWashChannelWidthCm-v"></output></label><input type="range" id="airWashChannelWidthCm" min="2" max="10" step="0.5"></div>
-    <div class="row"><label><span data-i18n="airwashPreheatLength">Довжина підігріву air-wash</span> <output id="airWashPreheatLengthCm-v"></output></label><input type="range" id="airWashPreheatLengthCm" min="15" max="120" step="1"></div>
-  </div></details>
-
-  <details><summary data-i18n="secThermal">Expert: теплова архітектура</summary><div class="body">
-    <div class="row"><label><span data-i18n="insulationT">Товщина ізоляції топки</span> <output id="insulationThicknessCm-v"></output></label><input type="range" id="insulationThicknessCm" min="0" max="8" step="0.5"></div>
-    <div class="row"><label><span data-i18n="refractoryT">Refractory шар бафля</span> <output id="baffleRefractoryThicknessCm-v"></output></label><input type="range" id="baffleRefractoryThicknessCm" min="0" max="8" step="0.5"></div>
-    <div class="row"><label><span data-i18n="targetTemp">Цільова температура горіння</span> <output id="targetCombustionTempC-v"></output></label><input type="range" id="targetCombustionTempC" min="600" max="1100" step="10"></div>
-    <div class="row"><label><span data-i18n="heatPasses">Проходів теплообміну</span> <output id="heatExchangePasses-v"></output></label><input type="range" id="heatExchangePasses" min="1" max="4" step="1"></div>
-    <div class="hint" data-i18n="thermalHint">Гаряча ізольована зона допалювання, після якої гази проходять теплообмінні канали. Це інженерна оцінка, не сертифікація.</div>
-  </div></details>
-
   <details><summary data-i18n="secChimney">Димохід / дверцята</summary><div class="body">
-    <div class="row"><label><span data-i18n="chimDia">Ø димоходу</span> <output id="chimneyDiameterCm-v"></output></label><input type="range" id="chimneyDiameterCm" min="10" max="25" step="0.5"></div>
-    <div class="row"><label><span data-i18n="chimH">Висота труби</span> <output id="chimneyHeightCm-v"></output></label><input type="range" id="chimneyHeightCm" min="100" max="150" step="1"></div>
     <div class="row"><label><span data-i18n="doorW">Ширина дверцят</span> <output id="doorWidthCm-v"></output></label><input type="range" id="doorWidthCm" min="20" max="70" step="1"></div>
     <div class="row"><label><span data-i18n="doorH">Висота дверцят</span> <output id="doorHeightCm-v"></output></label><input type="range" id="doorHeightCm" min="20" max="70" step="1"></div>
-    <div class="row"><label><span data-i18n="glassInset">Відступ скла</span> <output id="glassInsetCm-v"></output></label><input type="range" id="glassInsetCm" min="0.5" max="6" step="0.5"></div>
-    <div class="row"><label><span data-i18n="frame">Рамка</span> <output id="doorFrameThicknessCm-v"></output></label><input type="range" id="doorFrameThicknessCm" min="1" max="6" step="0.5"></div>
-    <div class="row"><label><span data-i18n="openAngle">Кут відкриття</span> <output id="doorOpenAngleDeg-v"></output></label><input type="range" id="doorOpenAngleDeg" min="30" max="120" step="1"></div>
     <div class="row"><label data-i18n="doorHinge">Петля дверцят</label><select id="doorHingeSide"><option value="left" data-i18n="hingeLeft">Ліва сторона</option><option value="right" data-i18n="hingeRight">Права сторона</option></select></div>
   </div></details>
 
