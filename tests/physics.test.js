@@ -1,6 +1,7 @@
 // Швидкі тести PhysicsModel v2 — запуск: node tests/physics.test.js
 import { PhysicsModel, optimizeConfig } from '../js/physics-model.js';
 import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, MODEL_PRESETS } from '../js/config.js';
+import { calibrateFromLog, evaluateCalibration } from '../js/calibration.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 let fails = 0;
@@ -105,5 +106,25 @@ ok(optimized?.result?.metrics?.efficiencyPct >= 52, 'optimizer returns candidate
 ok(validateConfig(optimized.config).valid, 'optimized geometry valid', JSON.stringify(validateConfig(optimized.config).errors));
 ok(JSON.stringify(base.baffle) === beforeOptimization, 'optimizer keeps source immutable');
 
-console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);
-process.exit(fails === 0 ? 0 : 1);
+// 11. Калібрування на реальному журналі Test Burn зменшує відхилення
+const realLog = [
+  { mode: 'medium', predictedKw: 4.10, measuredKw: 4.11 },
+  { mode: 'low', predictedKw: 2.89, measuredKw: 3.10 },
+  { mode: 'high', predictedKw: 5.65, measuredKw: 5.37 },
+];
+const cal = calibrateFromLog(realLog);
+ok(cal && cal.samples === 3, 'calibration fit from log', JSON.stringify(cal));
+const stats = evaluateCalibration(realLog, cal);
+ok(stats && stats.afterMaxAbsPct < stats.beforeMaxAbsPct, 'calibration reduces max deviation', JSON.stringify(stats));
+ok(stats.afterMeanAbsPct < stats.beforeMeanAbsPct, 'calibration reduces mean deviation', JSON.stringify(stats));
+
+// 11b. Застосування калібрування у PhysicsModel змінює потужність, але лишається finite
+const calCfg = normalizeConfig(clone(defaultConfig));
+calCfg.operation.mode = 'low';
+calCfg.calibration = cal;
+const lowNoCal = normalizeConfig(clone(defaultConfig)); lowNoCal.operation.mode = 'low';
+const kwCal = PhysicsModel.evaluate(calCfg).metrics.heatOutputKw;
+const kwNoCal = PhysicsModel.evaluate(lowNoCal).metrics.heatOutputKw;
+ok(Number.isFinite(kwCal) && Math.abs(kwCal - kwNoCal) > 0.01, 'calibration changes output', JSON.stringify({ kwCal, kwNoCal }));
+
+console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);process.exit(fails === 0 ? 0 : 1);

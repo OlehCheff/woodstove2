@@ -88,6 +88,7 @@ export const defaultConfig = {
   viewMode: '3d',
   door: { widthCm: 42, heightCm: 38, frameThicknessCm: 3, glassInsetCm: 2, openAngleDeg: 70, hingeSide: 'left', isOpen: false },
   camera: { fov: 50, distance: 270, targetY: 60 },
+  calibration: { enabled: false, damping: 0.75, globalScale: 1, modeScale: {}, samples: 0, updated: null },
   colors: {
     steel: '#3a3d43', steelRoughness: 0.34, steelMetalness: 0.78,
     brick: '#b37a4c', glass: '#8ca7be', floor: '#1c1e22',
@@ -181,8 +182,7 @@ export function normalizeConfig(cfg) {
   cfg.door.hingeSide = cfg.door.hingeSide === 'right' ? 'right' : 'left';
   cfg.door.isOpen = Boolean(cfg.door.isOpen);
 
-  cfg.camera.fov = clamp(+cfg.camera.fov || 50, 35, 85);
-  cfg.camera.distance = clamp(+cfg.camera.distance || 270, 140, 500);
+  cfg.camera.fov = clamp(+cfg.camera.fov || 50, 35, 85);  cfg.camera.distance = clamp(+cfg.camera.distance || 270, 140, 500);
   cfg.camera.targetY = clamp(+cfg.camera.targetY || 60, 20, 180);
   cfg.testBurn.loadMode = cfg.testBurn.loadMode === 'manual' ? 'manual' : 'auto';
   cfg.testBurn.woodSpecies = ['birch', 'oak', 'pine', 'spruce', 'alder'].includes(cfg.testBurn.woodSpecies) ? cfg.testBurn.woodSpecies : 'birch';
@@ -194,6 +194,13 @@ export function normalizeConfig(cfg) {
   cfg.testBurn.stoveTopTempC = clamp(+cfg.testBurn.stoveTopTempC || 420, 20, 1000);
   cfg.testBurn.glassTempC = clamp(+cfg.testBurn.glassTempC || 180, 20, 600);
   cfg.testBurn.smokeOpacityPct = clamp(+cfg.testBurn.smokeOpacityPct || 5, 0, 100);
+
+  cfg.calibration ??= {};
+  cfg.calibration.enabled = Boolean(cfg.calibration.enabled);
+  cfg.calibration.damping = clamp(cfg.calibration.damping == null ? 0.75 : +cfg.calibration.damping, 0, 1);
+  cfg.calibration.globalScale = clamp(+cfg.calibration.globalScale || 1, 0.5, 2);
+  cfg.calibration.modeScale = cfg.calibration.modeScale && typeof cfg.calibration.modeScale === 'object' ? cfg.calibration.modeScale : {};
+  cfg.calibration.samples = Math.max(0, Math.round(+cfg.calibration.samples || 0));
   return cfg;
 }
 

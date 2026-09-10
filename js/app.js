@@ -6,6 +6,7 @@ import { PhysicsModel, optimizeConfig } from './physics-model.js';
 import { buildStove, disposeGroup } from './stove-builder.js';
 import { exportGLTF, exportSTL } from './exporters.js';
 import { buildBOM, bomToCsv, buildDrawingSVG } from './bom.js';
+import { calibrateFromLog, evaluateCalibration, emptyCalibration } from './calibration.js';
 import { STR, WARN_TXT, VALIDATION_TXT, TOUR, getLang, setLang } from './i18n.js';
 
 let lang = getLang();
@@ -211,6 +212,7 @@ function renderPhysics() {
   renderTestBurn();
   renderTestLog();
   renderBomSummary(r);
+  renderCalibrationSummary();
 }
 
 function validationText(item) {
@@ -292,8 +294,7 @@ function renderTestLog() {
       ${t('predicted')}: ${e.predictedKw} kW → ${t('measured')}: ${e.measuredKw} kW <span class="${Math.abs(e.deviationPct) <= 15 ? '' : 'bad'}">(${dev}${e.deviationPct}%)</span></li>`;
   }).join('') || `<li class="sub">${t('noTestsYet')}</li>`;
 }
-function saveTestToLog() {
-  const r = computeTestBurn();
+function saveTestToLog() {  const r = computeTestBurn();
   if (!r.hasMeasurement) { renderTestBurn(); return; }
   const log = getTestLog();
   log.push({
@@ -306,8 +307,44 @@ function saveTestToLog() {
   try { localStorage.setItem(TEST_LOG_KEY, JSON.stringify(log.slice(-30))); } catch { /* ignore */ }
   renderTestLog();
 }
-function exportTestLogCsv() {
+function renderCalibrationSummary() {
+  const target = document.getElementById('calibrationResult');
+  if (!target) return;
+  const cal = config.calibration || {};
   const log = getTestLog();
+  const stats = evaluateCalibration(log, cal);
+  if (!cal.enabled || !stats) {
+    target.innerHTML = cal.samples > 0
+      ? `<span class="sub">${t('calibrationSaved')} (${cal.samples})</span>`
+      : `<span class="sub">${t('calibrationNeedsLog')}</span>`;
+    return;
+  }
+  const modeRows = Object.entries(cal.modeScale || {})
+    .filter(([, v]) => Math.abs(v - 1) > 0.001)
+    .map(([m, v]) => `${m} ×${v}`).join(' · ');
+  target.innerHTML = `<b>${t('calibrationApplied')}</b> · ${stats.samples} ${t('calibrationSamples')}<br>
+    ${t('calibrationGlobal')}: ×${cal.globalScale}${modeRows ? ' · ' + modeRows : ''}<br>
+    ${t('calibrationDev')}: ${stats.beforeMaxAbsPct}% → <b>${stats.afterMaxAbsPct}%</b> ${t('calibrationMax')} · ${stats.beforeMeanAbsPct}% → <b>${stats.afterMeanAbsPct}%</b> ${t('calibrationMean')}`;
+}
+
+function calibrateModel() {
+  const log = getTestLog();
+  const cal = calibrateFromLog(log);
+  if (!cal) { renderCalibrationSummary(); return false; }
+  const normalized = normalizeConfig({ ...config, calibration: cal });
+  config.calibration = normalized.calibration;
+  saveConfig(config);
+  renderPhysics();
+  return true;
+}
+
+function resetCalibration() {
+  config.calibration = emptyCalibration();
+  saveConfig(config);
+  renderPhysics();
+}
+
+function exportTestLogCsv() {  const log = getTestLog();
   if (!log.length) return;
   const header = 'date,mode,species,moisturePct,loadKg,burnHours,usefulHeatKwh,predictedKw,predictedEffPct,measuredKw,measuredEffPct,deviationPct';
   const rows = log.map((e) => [new Date(e.ts).toISOString(), e.mode, e.species, e.moisturePct, e.loadKg, e.burnHours, e.usefulHeatKwh, e.predictedKw, e.predictedEffPct, e.measuredKw, e.measuredEffPct, e.deviationPct].join(','));
@@ -636,6 +673,8 @@ function bindUI() {
     saveConfig(config); saveTestToLog(); renderTestBurn();
   });
   document.getElementById('exportTestCsv').addEventListener('click', exportTestLogCsv);
+  document.getElementById('calibrateModel').addEventListener('click', calibrateModel);
+  document.getElementById('resetCalibration').addEventListener('click', resetCalibration);
   document.getElementById('clearTestLog').addEventListener('click', () => {
     localStorage.removeItem(TEST_LOG_KEY); renderTestLog();
   });

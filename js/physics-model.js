@@ -54,6 +54,11 @@ export const PhysicsModel = {
     const woodEnergyKwhKg = species.lhvKwhKg * (1 - moisturePct * 0.007);
     const moistureTempPenaltyC = Math.max(0, moisturePct - 12) * 4;
     const moistureEffPenalty = Math.max(0, moisturePct - 12) * 0.15;
+    // Калібрування за реальними тестами (якщо увімкнено): глобальний масштаб + поправка режиму.
+    const calibration = config?.calibration || {};
+    const calibrationFactor = (calibration.enabled && calibration.globalScale)
+      ? calibration.globalScale * ((calibration.modeScale && calibration.modeScale[mode]) || 1)
+      : 1;
 
     const secondary = config?.secondaryAir || {};
     const airWash = config?.airWash || {};
@@ -122,7 +127,7 @@ export const PhysicsModel = {
       1.5, 24.0
     );
     const heatOutputKw = clamp(
-      grossHeatOutputKw * efficiencyPct / 100,
+      grossHeatOutputKw * efficiencyPct / 100 * calibrationFactor,
       1.0, 20.0
     );
     // Орієнтир: ~120 кг/м³ насипної маси сухих полін, не щільність деревини.
@@ -183,6 +188,7 @@ export const PhysicsModel = {
         gasResidenceSeconds: round(gasResidenceSeconds, 2), grossHeatOutputKw: round(grossHeatOutputKw, 2),
         inputEnergyKwh: round(inputEnergyKwh, 1), usefulEnergyKwh: round(usefulEnergyKwh, 1),
         recommendedLoadKg: round(recommendedLoadKg, 1), maxLoadKg: round(maxLoadKg, 1), loadingVolumePct: round((mc.fillFactor ?? 0.7) * 100, 0),
+        calibrationFactor: round(calibrationFactor, 3),
       },
       breakdown: {
         airMix: round(airMix, 3), staging: round(staging, 2), loadKg: round(loadKg, 1),
