@@ -178,6 +178,11 @@ export const VALIDATION_TXT = {
     BAFFLE_GAP_LARGE: (v) => `Зазор бафля ${v.gap} см завеликий.`,
     CHIMNEY_SMALL: (v) => `Діаметр димоходу ${v.diameter} см може бути замалим.`,
     LINING_THICK: (v) => `Шамот ${v.thickness} см суттєво зменшує топку.`,
+    LINER_OVERFILL: (v) => `Ізоляція + шамот не залишають топки: внутрішні ${v.innerW}×${v.innerD} см (потрібно ≥8 см).`,
+    BAFFLE_REFRACTORY_HIGH: (v) => `Бафль ${v.height} см + refractory ${v.refractory} см не влазять під кришку.`,
+    SECONDARY_CHANNEL_WIDE: (v) => `Secondary канал ${v.width} см заширокий для топки ${v.innerW} см.`,
+    AIRWASH_CHANNEL_WIDE: (v) => `Air-wash канал ${v.width} см + дверцята ${v.door} см не влазять у фасад.`,
+    GAS_HOOD_TIGHT: (v) => `Димова полиця завузька (${v.depth} см) — гази не встигають пройти канал.`,
   },
   en: {
     DOOR_TOO_WIDE: (v) => `Door ${v.doorW} cm > available ${v.usableW.toFixed(1)} cm.`,
@@ -187,6 +192,11 @@ export const VALIDATION_TXT = {
     BAFFLE_GAP_LARGE: (v) => `Baffle gap ${v.gap} cm is too large.`,
     CHIMNEY_SMALL: (v) => `Chimney diameter ${v.diameter} cm may be too small.`,
     LINING_THICK: (v) => `Firebrick ${v.thickness} cm significantly reduces the firebox.`,
+    LINER_OVERFILL: (v) => `Insulation + firebrick leave no firebox: inner ${v.innerW}×${v.innerD} cm (need ≥8 cm).`,
+    BAFFLE_REFRACTORY_HIGH: (v) => `Baffle ${v.height} cm + refractory ${v.refractory} cm do not fit under the top.`,
+    SECONDARY_CHANNEL_WIDE: (v) => `Secondary channel ${v.width} cm is too wide for firebox ${v.innerW} cm.`,
+    AIRWASH_CHANNEL_WIDE: (v) => `Air-wash channel ${v.width} cm + door ${v.door} cm do not fit the front.`,
+    GAS_HOOD_TIGHT: (v) => `Smoke hood is too tight (${v.depth} cm) — gases cannot pass the channel.`,
   },
 };
 

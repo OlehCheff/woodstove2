@@ -418,8 +418,24 @@ export function buildStove(cfg, cache = new Map()) {
   zoneChimney.name = 'zoneChimney'; thermalZones.add(zoneChimney);
   thermalZones.visible = false; shell.add(thermalZones);
 
+  // Дим у димоході: частинки, анімуються в app.js.
+  const smoke = new THREE.Group(); smoke.name = 'smoke';
+  const smokeParticles = [];
+  const smokeMat = mat(cache, 'smoke', () => new THREE.MeshBasicMaterial({ color: 0x9aa3b2, transparent: true, opacity: 0.22, depthWrite: false }));
+  const smokeY0 = h - steelT / 2;
+  const smokeY1 = h - steelT / 2 + cfg.chimney.heightCm;
+  for (let i = 0; i < 12; i++) {
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(1.5 + (i % 3) * 0.5, 8, 8), smokeMat);
+    puff.userData.t = i / 12;
+    puff.userData.x0 = ((i % 3) - 1) * chimR * 0.4;
+    puff.userData.phase = i * 0.7;
+    puff.userData.y0 = smokeY0; puff.userData.y1 = smokeY1;
+    smoke.add(puff); smokeParticles.push(puff);
+  }
+  smoke.visible = false; shell.add(smoke);
+
   group.add(shell);
-  const refs = { shell, chimney, collar, doorPivot, frontPanel, firebrick, refractoryRoof, baffle, airSystems, gasChannels, chamber, flame, core, outer, sparks, shutter, flow, flowArrows, grate, ashDrawer, heatShield, thermalZones, zoneFirebox, zoneAfterburn, zoneChimney };
+  const refs = { shell, chimney, collar, doorPivot, frontPanel, firebrick, refractoryRoof, baffle, airSystems, gasChannels, chamber, flame, core, outer, sparks, shutter, flow, flowArrows, grate, ashDrawer, heatShield, thermalZones, zoneFirebox, zoneAfterburn, zoneChimney, smoke, smokeParticles };
   for (const n of [chimney, collar, doorPivot, frontPanel, firebrick, baffle, airSystems, gasChannels, chamber, flow]) {
     if (n) n.userData.basePosition = n.position.clone();
   }

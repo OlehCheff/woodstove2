@@ -251,6 +251,28 @@ export function validateConfig(cfg) {
   if (cfg.materials.firebrickThicknessCm > Math.min(cfg.dimensions.widthCm, cfg.dimensions.depthCm) / 8) {
     warnings.push({ code: 'LINING_THICK', values: { thickness: cfg.materials.firebrickThicknessCm } });
   }
+
+  // Колізій-перевірки шарів на крайніх значеннях.
+  const thermal = cfg.thermal || {};
+  const insT = thermal.insulationThicknessCm == null ? 3 : +thermal.insulationThicknessCm;
+  const refrT = thermal.baffleRefractoryThicknessCm == null ? 3 : +thermal.baffleRefractoryThicknessCm;
+  const linerCm = cfg.materials.firebrickThicknessCm + insT;
+  const innerW = cfg.dimensions.widthCm - steelCm * 2 - linerCm * 2;
+  const innerD = cfg.dimensions.depthCm - steelCm * 2 - linerCm * 2;
+  if (innerW < 8 || innerD < 8) {
+    errors.push({ code: 'LINER_OVERFILL', values: { innerW: +innerW.toFixed(1), innerD: +innerD.toFixed(1) } });
+  }
+  if (cfg.baffle.heightCm + refrT >= cfg.dimensions.heightCm - steelCm * 2) {
+    errors.push({ code: 'BAFFLE_REFRACTORY_HIGH', values: { height: cfg.baffle.heightCm, refractory: refrT } });
+  }
+  if (cfg.secondaryAir.channelWidthCm * 2 + 6 > innerW) {
+    warnings.push({ code: 'SECONDARY_CHANNEL_WIDE', values: { width: cfg.secondaryAir.channelWidthCm, innerW: +innerW.toFixed(1) } });
+  }
+  if (cfg.airWash.channelWidthCm * 2 + cfg.door.widthCm > Math.max(innerW, 10) + 4) {
+    warnings.push({ code: 'AIRWASH_CHANNEL_WIDE', values: { width: cfg.airWash.channelWidthCm, door: cfg.door.widthCm } });
+  }
+  const hoodDepth = (cfg.dimensions.depthCm / 2 - steelCm) - (cfg.chimney.diameterCm / 2 * 1.08) - 1.5 - (-cfg.dimensions.depthCm * 0.2);
+  if (hoodDepth < 5) warnings.push({ code: 'GAS_HOOD_TIGHT', values: { depth: +hoodDepth.toFixed(1) } });
   return { valid: errors.length === 0, errors, warnings };
 }
 

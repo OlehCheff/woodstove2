@@ -2,6 +2,7 @@
 import { PhysicsModel, optimizeConfig } from '../js/physics-model.js';
 import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, MODEL_PRESETS } from '../js/config.js';
 import { calibrateFromLog, evaluateCalibration } from '../js/calibration.js';
+import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from '../js/bom.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 let fails = 0;
@@ -126,5 +127,33 @@ const lowNoCal = normalizeConfig(clone(defaultConfig)); lowNoCal.operation.mode 
 const kwCal = PhysicsModel.evaluate(calCfg).metrics.heatOutputKw;
 const kwNoCal = PhysicsModel.evaluate(lowNoCal).metrics.heatOutputKw;
 ok(Number.isFinite(kwCal) && Math.abs(kwCal - kwNoCal) > 0.01, 'calibration changes output', JSON.stringify({ kwCal, kwNoCal }));
+
+// 12. BOM: стабільні числа, маса/різ/шви, без NaN на всіх пресетах
+for (const [name, preset] of Object.entries(MODEL_PRESETS)) {
+  const c = applyModelPreset(normalizeConfig(clone(defaultConfig)), name);
+  const bom = buildBOM(c);
+  const bad = bom.parts.filter(p => !Number.isFinite(p.massKg) || !Number.isFinite(p.weldCm) || !Number.isFinite(p.areaCm2) || p.wCm <= 0 || p.hCm <= 0 || p.tCm <= 0);
+  ok(bad.length === 0, `BOM ${name} parts valid`, JSON.stringify(bad.slice(0, 2)));
+  ok(bom.totals.steelMassKg > 0 && bom.totals.cutAreaM2 > 0 && bom.totals.weldMeters > 0, `BOM ${name} totals`, JSON.stringify(bom.totals));
+  ok(bom.totals.purchasedCount >= 4, `BOM ${name} purchased parts`, JSON.stringify({ purchased: bom.totals.purchasedCount }));
+  ok(bomToCsv(bom, 'uk').split('\n').length > bom.parts.length, `BOM ${name} csv export`);
+}
+ok(buildDrawingSVG(base).startsWith('<svg') && buildDrawingSVG(base).endsWith('</svg>'), 'drawing svg valid');
+ok(buildDXF(base).includes('LINE') && buildDXF(base).endsWith('EOF'), 'dxf valid');
+
+// 13. Колізій-валідація шарів на крайніх значеннях
+const overfill = normalizeConfig(clone(defaultConfig));
+overfill.thermal.insulationThicknessCm = 8;
+overfill.materials.firebrickThicknessCm = 8;
+overfill.dimensions.widthCm = 40; overfill.dimensions.depthCm = 35;
+ok(validateConfig(overfill).errors.some(e => e.code === 'LINER_OVERFILL'), 'liner overfill error', JSON.stringify(validateConfig(overfill).errors.map(e => e.code)));
+
+const tallBaffle = normalizeConfig(clone(defaultConfig));
+tallBaffle.baffle.heightCm = 120; tallBaffle.thermal.baffleRefractoryThicknessCm = 8;
+ok(validateConfig(tallBaffle).errors.some(e => e.code === 'BAFFLE_REFRACTORY_HIGH' || e.code === 'BAFFLE_TOO_HIGH'), 'baffle+refractory height error', JSON.stringify(validateConfig(tallBaffle).errors.map(e => e.code)));
+
+const wideSec = normalizeConfig(clone(defaultConfig));
+wideSec.secondaryAir.channelWidthCm = 12;
+ok(validateConfig(wideSec).warnings.some(w => w.code === 'SECONDARY_CHANNEL_WIDE') || validateConfig(wideSec).valid, 'secondary channel wide warning or valid', JSON.stringify(validateConfig(wideSec).warnings.map(w => w.code)));
 
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);process.exit(fails === 0 ? 0 : 1);

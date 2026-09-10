@@ -743,6 +743,23 @@ function animate() {
       arrow.cone.material.opacity = Math.min(1, pulse + 0.2);
     });
   }
+  if (refs.smokeParticles) {
+    const smokePct = (config.testBurn?.smokeOpacityPct ?? 5) / 100;
+    const showSmoke = smokePct > 0.02;
+    refs.smoke.visible = showSmoke;
+    if (showSmoke) {
+      const speed = 0.004 + config.operation.flameIntensity * 0.01;
+      refs.smokeParticles.forEach((p) => {
+        p.userData.t += speed;
+        if (p.userData.t > 1) p.userData.t -= 1;
+        const k = p.userData.t;
+        p.position.y = p.userData.y0 + k * (p.userData.y1 - p.userData.y0);
+        p.position.x = p.userData.x0 + Math.sin(t * 2 + p.userData.phase) * 1.2 * k;
+        p.scale.setScalar(0.6 + k * 1.4);
+      });
+      if (refs.smokeParticles[0]) refs.smokeParticles[0].material.opacity = 0.06 + smokePct * 0.35;
+    }
+  }
   controls.update();
   renderer.render(scene, camera);
   if (config.viewMode !== '3d' && (t * 10 | 0) % 10 === 0) renderOverlaySVG();
