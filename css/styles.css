@@ -58,6 +58,7 @@ button:active{transform:translateY(1px)}
 .optimization-result strong{color:#fbbf24}
 .bom-summary{margin-top:8px;font-size:11.5px;line-height:1.5;color:var(--muted);background:#12161d;border:1px solid var(--line);border-radius:9px;padding:8px}
 .bom-summary b{color:#86efac}
+.bom-summary .est{color:#f59e0b;font-style:italic}
 .calibration-result{margin-top:8px;font-size:11.5px;line-height:1.5;color:var(--muted);background:#12161d;border:1px solid var(--line);border-radius:9px;padding:8px}
 .calibration-result b{color:#fbbf24}
 #tour{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55)}

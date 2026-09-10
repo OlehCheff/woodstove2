@@ -36,31 +36,43 @@ export function buildBOM(cfg, physicsResult = null) {
   const flueBellH = Math.max(6, (h - steelCm) - flueBellBottom);
 
   const parts = [];
-  const add = (name, qty, wCm, hCm, tCm, mat, note = '') => {
+  const densityOf = (mat) => {
+    if (mat === 'шамот') return 0.0021;      // шамот ~2.1 г/см³
+    if (mat.includes('скло')) return 0.0025; // скло ~2.5 г/см³
+    return 0.00785;                          // сталь 7.85 г/см³
+  };
+  // kind: sheet | bar | tube | purchased. weldCm — довжина зварного шва на одну деталь.
+  const add = (name, qty, wCm, hCm, tCm, mat, note = '', kind = 'sheet', weldCm = 0) => {
     const areaCm2 = round(wCm * hCm, 1);
-    const massKg = round(areaCm2 * tCm * 0.00785, 2); // сталь 7.85 г/см³
-    parts.push({ name, qty, wCm: round(wCm, 1), hCm: round(hCm, 1), tCm: round(tCm, 1), areaCm2, massKg, mat, note });
+    const massKg = round(areaCm2 * tCm * densityOf(mat), 2);
+    parts.push({
+      name, qty, wCm: round(wCm, 1), hCm: round(hCm, 1), tCm: round(tCm, 1),
+      areaCm2, massKg, mat, note, kind, weldCm: round(weldCm, 1), estimate: true,
+    });
   };
 
-  // Корпус — сталь
-  add('Днище', 1, w, d, steelCm, `сталь ${steelMm} мм`);
-  add('Бічна панель (Л/П)', 2, d, h, steelCm, `сталь ${steelMm} мм`);
-  add('Задня панель', 1, w, h, steelCm, `сталь ${steelMm} мм`);
-  add('Передня панель — бічна (Л/П)', 2, sideW, h, steelCm, `сталь ${steelMm} мм`);
-  add('Передня панель — під дверима', 1, openingW, openingBottom, steelCm, `сталь ${steelMm} мм`);
-  add('Передня панель — над дверима', 1, openingW, h - openingTop, steelCm, `сталь ${steelMm} мм`);
+  // Корпус — сталь (шви: контур днища + вертикальні стики + верх)
+  add('Днище', 1, w, d, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (w + d));
+  add('Бічна панель (Л/П)', 2, d, h, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (d + h));
+  add('Задня панель', 1, w, h, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (w + h));
+  add('Передня панель — бічна (Л/П)', 2, sideW, h, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (sideW + h));
+  add('Передня панель — під дверима', 1, openingW, openingBottom, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (openingW + openingBottom));
+  add('Передня панель — над дверима', 1, openingW, h - openingTop, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (openingW + (h - openingTop)));
   // Верх з вирізом під комір
   const frontStrip = (d / 2 - chimZ) - collarR - steelCm;
   const rearStrip = Math.max(1, (chimZ + d / 2) - collarR);
   const midW = Math.max(1, w / 2 - collarR);
-  add('Верх — передня смуга', 1, w, frontStrip, steelCm, `сталь ${steelMm} мм`);
-  add('Верх — задня смуга', 1, w, rearStrip, steelCm, `сталь ${steelMm} мм`);
-  add('Верх — бічні смуги (Л/П)', 2, midW, collarR * 2, steelCm, `сталь ${steelMm} мм`);
-  // Дверцята
-  add('Дверцята — рама (4 шт)', 1, doorW * 2 + doorH * 2, frameT, frameT, 'сталь / dark', `периметр ${round(doorW * 2 + doorH * 2, 0)} см`);
-  add('Скло дверцят', 1, doorW - cfg.door.glassInsetCm * 2, doorH - cfg.door.glassInsetCm * 2, 0.7, 'скло 7 мм');
-  add('Петлі дверцят', 2, 2.4, 6, 2.4, 'сталь', 'Ø12 мм');
-  add('Ручка дверцят', 1, 12, 2.2, 2.2, 'сталь Ø22', 'Ø22 мм');
+  add('Верх — передня смуга', 1, w, frontStrip, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (w + frontStrip));
+  add('Верх — задня смуга', 1, w, rearStrip, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (w + rearStrip));
+  add('Верх — бічні смуги (Л/П)', 2, midW, collarR * 2, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (midW + collarR * 2));
+  // Дверцята — рама з 4 окремих планок
+  const frameSide = Math.max(2, doorH - frameT * 2);
+  add('Дверцята — планки рами гориз. (верх/низ)', 2, doorW, frameT, frameT, 'сталь', '', 'bar');
+  add('Дверцята — планки рами верт. (Л/П)', 2, frameSide, frameT, frameT, 'сталь', '', 'bar');
+  add('Скло дверцят', 1, doorW - cfg.door.glassInsetCm * 2, doorH - cfg.door.glassInsetCm * 2, 0.7, 'скло 7 мм', 'термостійке', 'purchased');
+  add('Петля дверцят (кріплення + втулка)', 2, 2.4, 6, 2.4, 'сталь', 'Ø12 мм, покупна/токарка', 'purchased');
+  add('Пружинна ручка-спіраль', 1, 14, 2.2, 2.2, 'сталь Ø8', 'кручена, Ø8 мм', 'purchased');
+  add('Засувка дверцят (клямка)', 1, 8, 3, 0.6, 'сталь', 'з зачепом', 'purchased');
   // Бафль + refractory
   add('Бафль (пластина)', 1, innerW, baffleDepth, steelCm, `сталь ${steelMm} мм`, 'кут ' + cfg.baffle.angleDeg + '°');
   if (refrT > 0) add('Refractory плита над бафлем', 1, innerW, baffleDepth, refrT, 'vermiculite/CFB');
@@ -72,8 +84,8 @@ export function buildBOM(cfg, physicsResult = null) {
   add('Димова полиця', 1, innerW, hoodDepth, steelCm, `сталь ${steelMm} мм`);
   add('Бічні напрямні верхнього ходу (Л/П)', 2, hoodDepth, hoodY - cfg.baffle.heightCm - steelCm, steelCm, `сталь ${steelMm} мм`);
   add('Задня перепускна стінка', 1, innerW, Math.max(6, (hoodY - cfg.baffle.heightCm) * 0.55), steelCm, `сталь ${steelMm} мм`);
-  add('Внутрішня димова труба (flue bell)', 1, Math.PI * chimR * 1.06 * 2, flueBellH, 0.3, 'сталь 3 мм', 'Ø' + round(chimR * 2.12, 1) + ' см, розгортка');
-  add('Люк чистки + кришка', 1, 8.2, 8.2, 0.9, 'сталь', 'Ø68/82 мм');
+  add('Внутрішня димова труба (flue bell)', 1, Math.PI * chimR * 1.06 * 2, flueBellH, 0.3, 'сталь 3 мм', 'Ø' + round(chimR * 2.12, 1) + ' см, розгортка', 'tube', Math.PI * chimR * 2);
+  add('Люк чистки + кришка', 1, 8.2, 8.2, 0.9, 'сталь', 'Ø68/82 мм', 'purchased');
   // Повітряні системи
   add('Панель primary + задвижка', 1, Math.min(w - steelCm * 3, cfg.primaryAir.holeCount * cfg.primaryAir.holeSpacingCm + 8), 11.5, steelCm, `сталь ${steelMm} мм`, `${cfg.primaryAir.holeCount}×Ø${cfg.primaryAir.holeDiameterCm} см`);
   add('Secondary стояки (Л/П)', 2, cfg.secondaryAir.channelWidthCm, Math.max(12, Math.min(cfg.secondaryAir.preheatLengthCm, 999)), cfg.secondaryAir.channelDepthCm, 'сталь 3 мм');
@@ -85,7 +97,7 @@ export function buildBOM(cfg, physicsResult = null) {
   // Колосник + зольник
   const grateSpan = Math.max(14, innerW - 8);
   const slatCount = Math.max(5, Math.floor(grateSpan / 3.4));
-  add('Колосник (прути)', slatCount, 1.6, Math.max(10, innerD * 0.68), 1.6, 'сталь', 'переріз 16×16 мм');
+  add('Колосник (прути)', slatCount, 1.6, Math.max(10, innerD * 0.68), 1.6, 'сталь', 'переріз 16×16 мм', 'bar');
   add('Зольник (ящик + фасад)', 1, Math.min(innerW - 6, doorW * 0.66), 5.5 + 4.5, 1.6, 'сталь', 'з ручкою');
   // Шамот + ізоляція
   const cw = Math.max(10, w - steelCm * 2);
@@ -96,27 +108,35 @@ export function buildBOM(cfg, physicsResult = null) {
   add('Шамот — стіни (Л/П/З)', 3, brickT, brickH, brickT, 'шамот', 'Л + П + задня');
   if (insT > 0) add('Ізоляція топки (4 сторони)', 4, cw, linerTopY - steelCm, insT, 'vermiculite/CFB');
   // Димохід
-  add('Димохід Ø' + cfg.chimney.diameterCm + ' см', 1, Math.PI * chimR * 2, cfg.chimney.heightCm, 0.3, 'сталь 3 мм', 'розгортка');
-  add('Комір димоходу', 1, Math.PI * collarR * 2, steelCm * 2.2, 0.4, 'сталь');
+  add('Димохід Ø' + cfg.chimney.diameterCm + ' см', 1, Math.PI * chimR * 2, cfg.chimney.heightCm, 0.3, 'сталь 3 мм', 'розгортка', 'tube', Math.PI * chimR * 2);
+  add('Комір димоходу', 1, Math.PI * collarR * 2, steelCm * 2.2, 0.4, 'сталь', '', 'tube');
   // Ніжки
-  if (legH > 0) add('Ніжки 50×50', 4, 5, legH, 5, 'сталь/профіль');
+  if (legH > 0) add('Ніжки 50×50', 4, 5, legH, 5, 'сталь/профіль', 'профільна труба', 'bar');
   // Теплові екрани
   const shieldH = h * 0.78;
   add('Тепловий екран — задній', 1, w - 4, shieldH, 0.4, 'сталь 4 мм', 'зазор 3.2 см');
   add('Тепловий екран — бічні (Л/П)', 2, d - 4, shieldH, 0.4, 'сталь 4 мм');
 
   const steelMass = parts.filter(p => p.mat.includes('сталь')).reduce((s, p) => s + p.massKg * p.qty, 0);
-  const brickMass = parts.filter(p => p.mat === 'шамот').reduce((s, p) => s + p.areaCm2 * p.tCm * 0.0021 * p.qty, 0); // шамот ~2.1 г/см³
-  const steelArea = parts.filter(p => p.mat.includes('сталь')).reduce((s, p) => s + p.areaCm2 * p.qty, 0);
+  const brickMass = parts.filter(p => p.mat === 'шамот').reduce((s, p) => s + p.massKg * p.qty, 0);
+  const glassMass = parts.filter(p => p.mat.includes('скло')).reduce((s, p) => s + p.massKg * p.qty, 0);
+  const cutParts = parts.filter(p => p.kind === 'sheet' || p.kind === 'bar' || p.kind === 'tube');
+  const cutAreaCm2 = cutParts.reduce((s, p) => s + p.areaCm2 * p.qty, 0);
+  const weldCm = parts.reduce((s, p) => s + p.weldCm * p.qty, 0);
   const physics = physicsResult || PhysicsModel.evaluate(cfg);
 
   return {
+    estimate: true,
     parts,
     totals: {
       steelMassKg: round(steelMass, 1),
       brickMassKg: round(brickMass, 1),
-      totalMassKg: round(steelMass + brickMass, 1),
-      steelAreaM2: round(steelArea / 10000, 2),
+      glassMassKg: round(glassMass, 2),
+      totalMassKg: round(steelMass + brickMass + glassMass, 1),
+      steelAreaM2: round(cutAreaCm2 / 10000, 2),
+      cutAreaM2: round((cutAreaCm2 * 1.12) / 10000, 2), // +12% на розкладку металу (nesting)
+      weldMeters: round(weldCm / 100, 1),
+      purchasedCount: parts.filter(p => p.kind === 'purchased').reduce((s, p) => s + p.qty, 0),
       partCount: parts.reduce((s, p) => s + p.qty, 0),
     },
     metrics: {
@@ -129,14 +149,47 @@ export function buildBOM(cfg, physicsResult = null) {
 
 export function bomToCsv(bom, lang = 'uk') {
   const head = lang === 'en'
-    ? 'Part,Qty,Width cm,Height cm,Thickness cm,Area cm2,Mass kg,Material,Note'
-    : 'Деталь,К-ть,Ширина см,Висота см,Товщина см,Площа см2,Маса кг,Матеріал,Примітка';
-  const rows = bom.parts.map((p) => [p.name, p.qty, p.wCm, p.hCm, p.tCm, p.areaCm2, p.massKg, p.mat, p.note].join(','));
-  const totalsRow = '';
+    ? 'Part,Qty,Width cm,Height cm,Thickness cm,Type,Cut area cm2,Mass kg,Material,Weld cm,Note'
+    : 'Деталь,К-ть,Ширина см,Висота см,Товщина см,Тип,Площа різу см2,Маса кг,Матеріал,Шов см,Примітка';
+  const kindTxt = { sheet: 'лист', bar: 'планка', tube: 'розгортка', purchased: 'покупна' };
+  const rows = bom.parts.map((p) => [
+    p.name, p.qty, p.wCm, p.hCm, p.tCm, kindTxt[p.kind] || p.kind,
+    (p.kind === 'purchased' ? '' : p.areaCm2), p.massKg, p.mat, p.weldCm, p.note,
+  ].join(','));
   const totals = lang === 'en'
-    ? `TOTAL STEEL,${bom.totals.steelMassKg} kg,area ${bom.totals.steelAreaM2} m2,brick ${bom.totals.brickMassKg} kg,total ${bom.totals.totalMassKg} kg`
-    : `РАЗОМ СТАЛЬ,${bom.totals.steelMassKg} кг,площа ${bom.totals.steelAreaM2} м2,шамот ${bom.totals.brickMassKg} кг,загалом ${bom.totals.totalMassKg} кг`;
-  return [head, ...rows, totalsRow, totals].join('\n');
+    ? `TOTAL,,steel ${bom.totals.steelMassKg} kg,brick ${bom.totals.brickMassKg} kg,glass ${bom.totals.glassMassKg} kg,cut ${bom.totals.cutAreaM2} m2,weld ${bom.totals.weldMeters} m,purchased ${bom.totals.purchasedCount} pcs,total ${bom.totals.totalMassKg} kg (estimate)`
+    : `РАЗОМ,,сталь ${bom.totals.steelMassKg} кг,шамот ${bom.totals.brickMassKg} кг,скло ${bom.totals.glassMassKg} кг,різ ${bom.totals.cutAreaM2} м2,шов ${bom.totals.weldMeters} м,покупних ${bom.totals.purchasedCount} шт,загалом ${bom.totals.totalMassKg} кг (оцінка)`;
+  return [head, ...rows, '', totals].join('\n');
+}
+
+// DXF R12 (LINE + TEXT) — розкладка плоских деталей для плазми/лазера.
+// Одиниці — мм (1 см = 10 мм). Одна деталь = прямокутник + маркування.
+export function buildDXF(cfg) {
+  const bom = buildBOM(cfg);
+  const flat = bom.parts.filter(p => p.kind === 'sheet' || p.kind === 'bar' || p.kind === 'tube');
+  const sheetW = 2000; // мм корисна ширина листа
+  const gap = 20;      // мм між деталями
+  let x = 20, y = 20, rowH = 0, n = 0;
+  const out = [];
+  const line = (x1, y1, x2, y2) => {
+    out.push('0', 'LINE', '8', 'CUT', '10', x1.toFixed(2), '20', y1.toFixed(2), '11', x2.toFixed(2), '21', y2.toFixed(2));
+  };
+  const text = (tx, ty, h, s) => {
+    out.push('0', 'TEXT', '8', 'MARK', '10', tx.toFixed(2), '20', ty.toFixed(2), '40', h.toFixed(2), '1', s);
+  };
+  for (const p of flat) {
+    const pw = p.wCm * 10, ph = p.hCm * 10;
+    for (let i = 0; i < p.qty; i++) {
+      if (x + pw > sheetW) { x = 20; y += rowH + gap; rowH = 0; }
+      line(x, y, x + pw, y); line(x + pw, y, x + pw, y + ph);
+      line(x + pw, y + ph, x, y + ph); line(x, y + ph, x, y);
+      n++;
+      text(x + 8, y + 8, Math.min(30, ph * 0.1), `${p.wCm}x${p.hCm} t${p.tCm} #${n}`);
+      x += pw + gap;
+      rowH = Math.max(rowH, ph);
+    }
+  }
+  return ['0', 'SECTION', '2', 'ENTITIES', ...out, '0', 'ENDSEC', '0', 'EOF'].join('\n');
 }
 
 // Технічне креслення у SVG: front/side/top з внутрішніми деталями.

@@ -5,7 +5,7 @@ import { defaultConfig, loadConfig, saveConfig, normalizeConfig, applyModePreset
 import { PhysicsModel, optimizeConfig } from './physics-model.js';
 import { buildStove, disposeGroup } from './stove-builder.js';
 import { exportGLTF, exportSTL } from './exporters.js';
-import { buildBOM, bomToCsv, buildDrawingSVG } from './bom.js';
+import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from './bom.js';
 import { calibrateFromLog, evaluateCalibration, emptyCalibration } from './calibration.js';
 import { STR, WARN_TXT, VALIDATION_TXT, TOUR, getLang, setLang } from './i18n.js';
 
@@ -417,11 +417,17 @@ function exportDrawingSvg() {
   downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), `woodstove-drawing-${Date.now()}.svg`);
 }
 
+function exportDxf() {
+  const dxf = buildDXF(config);
+  downloadBlob(new Blob([dxf], { type: 'application/dxf' }), `woodstove-cut-${Date.now()}.dxf`);
+}
+
 function renderBomSummary(physicsResult = null) {
   const target = document.getElementById('bomSummary');
   if (!target) return;
   const bom = buildBOM(config, physicsResult);
-  target.innerHTML = `${t('bomSteel')}: <b>${bom.totals.steelMassKg} kg</b> · ${t('bomArea')}: <b>${bom.totals.steelAreaM2} m²</b> · ${t('bomBrick')}: <b>${bom.totals.brickMassKg} kg</b> · ${t('bomTotal')}: <b>${bom.totals.totalMassKg} kg</b>`;
+  target.innerHTML = `${t('bomSteel')}: <b>${bom.totals.steelMassKg} kg</b> · ${t('bomArea')}: <b>${bom.totals.steelAreaM2} m²</b> · ${t('bomBrick')}: <b>${bom.totals.brickMassKg} kg</b> · ${t('bomTotal')}: <b>${bom.totals.totalMassKg} kg</b><br>
+    ${t('bomCut')}: <b>${bom.totals.cutAreaM2} m²</b> · ${t('bomWeld')}: <b>${bom.totals.weldMeters} m</b> · ${t('bomPurchased')}: <b>${bom.totals.purchasedCount}</b> · <span class="est">${t('bomEstimate')}</span>`;
 }
 
 function shareConfig() {
@@ -686,6 +692,7 @@ function bindUI() {
   document.getElementById('exportStl').addEventListener('click', () => exportSTL(buildExportModel()));
   document.getElementById('exportBom').addEventListener('click', exportBomCsv);
   document.getElementById('exportDrawing').addEventListener('click', exportDrawingSvg);
+  document.getElementById('exportDxf').addEventListener('click', exportDxf);
   document.getElementById('showTour').addEventListener('click', () => { document.getElementById('tour').style.display = 'flex'; });
   document.getElementById('closeTour').addEventListener('click', () => { document.getElementById('tour').style.display = 'none'; });
   document.getElementById('tour').addEventListener('click', (e) => { if (e.target.id === 'tour') e.target.style.display = 'none'; });
