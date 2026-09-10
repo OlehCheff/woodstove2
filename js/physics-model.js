@@ -1,4 +1,4 @@
-// PhysicsModel v3 — оціночна airflow/thermal модель, не CFD і не сертифікація.
+// PhysicsModel v4 — оціночна airflow/thermal модель, не CFD і не сертифікація.
 import { OPERATION_PRESETS } from './config.js';
 
 const MODE_COEFF = {
@@ -8,7 +8,6 @@ const MODE_COEFF = {
   'high':      { effBias: -2, powerFactor: 1.18, burnFactor: 0.74, fillFactor: 0.85 },
   'overnight': { effBias: -6, powerFactor: 0.42, burnFactor: 1.75, fillFactor: 0.7 },
 };
-const WOOD_KWH_PER_KG = 4.1;
 const WOOD_SPECIES = {
   birch: { lhvKwhKg: 4.2, bulkKgM3: 620 },
   oak: { lhvKwhKg: 4.3, bulkKgM3: 680 },
@@ -62,7 +61,7 @@ export const PhysicsModel = {
     const linerCm = brickCm + insulationCm;
     const innerW = Math.max(10, w - steelCm * 2 - linerCm * 2);
     const innerD = Math.max(10, d - steelCm * 2 - linerCm * 2);
-    const innerH = Math.max(10, h * 0.62 - linerCm);
+    const innerH = Math.max(10, baffleHeight - steelCm - linerCm);
     const fireboxLiters = (innerW * innerD * innerH) / 1000;
 
     // Фізичні площі проходів, а не тільки UI-відсотки.
@@ -178,7 +177,7 @@ export const PhysicsModel = {
         secondaryPreheatC: round(secondaryPreheatC, 0), airWashPreheatC: round(airWashPreheatC, 0), draftFlowM3s: round(draftFlowM3s, 3),
         combustionTempC: round(combustionTempC, 0), modeledFlueTempC: round(modeledFlueTempC, 0),
         baffleExitTempC: round(baffleExitTempC, 0), bodyTempC: round(bodyTempC, 0), bodyHeatSharePct: round(bodyHeatSharePct, 1),
-        woodEnergyKwhKg: round(woodEnergyKwhKg, 2), moisturePenaltyC: round(moistureTempPenaltyC, 0),
+        woodEnergyKwhKg: round(woodEnergyKwhKg, 2), moisturePenaltyC: round(moistureTempPenaltyC, 0), moisturePct,
         combustionEfficiencyPct: round(combustionEfficiencyPct, 1), flueLossPct: round(flueLossPct, 1),
         thermalRetentionPct: round(thermalRetention * 100, 1), gasPathCm: round(gasPathCm, 1),
         gasResidenceSeconds: round(gasResidenceSeconds, 2), grossHeatOutputKw: round(grossHeatOutputKw, 2),
@@ -198,8 +197,8 @@ export const PhysicsModel = {
 export function optimizeConfig(config) {
   let best = null;
   const h = config.dimensions.heightCm;
-  const heightStart = Math.max(24, Math.round(h * 0.42));
-  const heightEnd = Math.min(h - 12, Math.round(h * 0.74));
+  const heightStart = Math.max(24, Math.round(h * 0.55));
+  const heightEnd = Math.min(h - 12, Math.round(h * 0.78));
   const heights = [];
   for (let value = heightStart; value <= heightEnd; value += 6) heights.push(value);
   const angles = [-2, 2, 6, 10];

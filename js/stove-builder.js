@@ -257,16 +257,20 @@ export function buildStove(cfg, cache = new Map()) {
   const cw = Math.max(10, w - steelT * 2), ch2 = Math.max(10, h - steelT * 2), cd = Math.max(10, d - steelT * 2);
   const linerInnerD = Math.max(10, cd - insulationT * 2);
   const linerInnerW = Math.max(10, cw - insulationT * 2);
-  const brickHeight = Math.max(10, ch2 - insulationT - brickT);
+  // Футерування піднімається лише до бафля — вище починається зона допалювання.
+  const linerTopY = Math.max(steelT + insulationT + brickT + 8, Math.min(ch2 - insulationT, baffleY - steelT));
+  const brickHeight = Math.max(10, linerTopY - steelT - insulationT - brickT);
+  const insHeight = Math.max(12, linerTopY - steelT);
+  const brickBottomY = steelT + insulationT + brickT + brickHeight / 2;
   const bBottom = plate(linerInnerW, brickT, linerInnerD, brickM); bBottom.position.set(0, steelT + insulationT + brickT / 2, 0); firebrick.add(bBottom);
-  const bL = plate(brickT, brickHeight, linerInnerD, brickM); bL.position.set(-cw / 2 + insulationT + brickT / 2, steelT + insulationT + brickHeight / 2, 0); firebrick.add(bL);
-  const bR = plate(brickT, brickHeight, linerInnerD, brickM); bR.position.set(cw / 2 - insulationT - brickT / 2, steelT + insulationT + brickHeight / 2, 0); firebrick.add(bR);
-  const bB = plate(linerInnerW, brickHeight, brickT, brickM); bB.position.set(0, steelT + insulationT + brickHeight / 2, -cd / 2 + insulationT + brickT / 2); firebrick.add(bB);
+  const bL = plate(brickT, brickHeight, linerInnerD, brickM); bL.position.set(-cw / 2 + insulationT + brickT / 2, brickBottomY, 0); firebrick.add(bL);
+  const bR = plate(brickT, brickHeight, linerInnerD, brickM); bR.position.set(cw / 2 - insulationT - brickT / 2, brickBottomY, 0); firebrick.add(bR);
+  const bB = plate(linerInnerW, brickHeight, brickT, brickM); bB.position.set(0, brickBottomY, -cd / 2 + insulationT + brickT / 2); firebrick.add(bB);
   if (insulationT > 0) {
     const iBottom = plate(cw, insulationT, cd, thermalM); iBottom.position.set(0, steelT + insulationT / 2, 0); firebrick.add(iBottom);
-    const iL = plate(insulationT, ch2 - insulationT, cd, thermalM); iL.position.set(-cw / 2 + insulationT / 2, steelT + (ch2 - insulationT) / 2, 0); firebrick.add(iL);
-    const iR = plate(insulationT, ch2 - insulationT, cd, thermalM); iR.position.set(cw / 2 - insulationT / 2, steelT + (ch2 - insulationT) / 2, 0); firebrick.add(iR);
-    const iB = plate(cw, ch2 - insulationT, insulationT, thermalM); iB.position.set(0, steelT + (ch2 - insulationT) / 2, -cd / 2 + insulationT / 2); firebrick.add(iB);
+    const iL = plate(insulationT, insHeight, cd, thermalM); iL.position.set(-cw / 2 + insulationT / 2, steelT + insHeight / 2, 0); firebrick.add(iL);
+    const iR = plate(insulationT, insHeight, cd, thermalM); iR.position.set(cw / 2 - insulationT / 2, steelT + insHeight / 2, 0); firebrick.add(iR);
+    const iB = plate(cw, insHeight, insulationT, thermalM); iB.position.set(0, steelT + insHeight / 2, -cd / 2 + insulationT / 2); firebrick.add(iB);
   }
   let refractoryRoof = null;
   if (refractoryT > 0) {
@@ -310,22 +314,25 @@ export function buildStove(cfg, cache = new Map()) {
   // Задній та бічні теплові екрани зі стоячим зазором.
   const heatShield = new THREE.Group(); heatShield.name = 'heatShield';
   const shieldOff = 3.2;
-  const shieldH = h * 0.78;
+  const shieldH = Math.min(h - 4, h * 0.78);
+  const shieldY = 2 + shieldH / 2;
   const backShield = plate(w - 4, shieldH, 0.4, darkM);
-  backShield.position.set(0, shieldH / 2 + 2, -d / 2 - shieldOff);
+  backShield.position.set(0, shieldY, -d / 2 - shieldOff);
   heatShield.add(backShield);
   for (const sx of [-1, 1]) {
     const sideShield = plate(0.4, shieldH, d - 4, darkM);
-    sideShield.position.set(sx * (w / 2 + shieldOff), shieldH / 2 + 2, 0);
+    sideShield.position.set(sx * (w / 2 + shieldOff), shieldY, 0);
     heatShield.add(sideShield);
   }
-  for (const [px, pz] of [[-w / 4, -d / 2 - shieldOff], [w / 4, -d / 2 - shieldOff], [-w / 2 - shieldOff, -d / 4], [-w / 2 - shieldOff, d / 4], [w / 2 + shieldOff, -d / 4], [w / 2 + shieldOff, d / 4]]) {
+  for (const [px, pz] of [[-w / 4, -d / 2], [w / 4, -d / 2], [-w / 2, -d / 4], [-w / 2, d / 4], [w / 2, -d / 4], [w / 2, d / 4]]) {
+    const isSide = Math.abs(px) > w / 3;
     const standoff = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, shieldOff, 10), darkM);
-    standoff.rotation.x = Math.abs(px) > w / 3 ? Math.PI / 2 : 0;
-    standoff.position.set(px, 4, pz);
+    if (isSide) standoff.rotation.z = Math.PI / 2;
+    else standoff.rotation.x = Math.PI / 2;
+    standoff.position.set(px + (isSide ? Math.sign(px) * shieldOff / 2 : 0), 6, pz + (isSide ? 0 : -shieldOff / 2));
     heatShield.add(standoff);
   }
-  group.add(heatShield);
+  shell.add(heatShield);
 
   // дверцята: рама з 4 планок + скло + ручка, pivot зліва
   const frameT = cfg.door.frameThicknessCm;

@@ -5,7 +5,7 @@ import { PhysicsModel } from './physics-model.js';
 
 const round = (v, d = 1) => Math.round(v * 10 ** d) / 10 ** d;
 
-export function buildBOM(cfg) {
+export function buildBOM(cfg, physicsResult = null) {
   const w = cfg.dimensions.widthCm;
   const d = cfg.dimensions.depthCm;
   const h = cfg.dimensions.heightCm;
@@ -90,10 +90,11 @@ export function buildBOM(cfg) {
   // Шамот + ізоляція
   const cw = Math.max(10, w - steelCm * 2);
   const cd = Math.max(10, d - steelCm * 2);
-  const brickH = Math.max(10, (h - steelCm * 2) - insT - brickT);
+  const linerTopY = Math.max(steelCm * 4, Math.min(h - steelCm * 2 - insT, cfg.baffle.heightCm - steelCm));
+  const brickH = Math.max(10, linerTopY - steelCm - insT - brickT);
   add('Шамот — дно', 1, cw - insT * 2, cd - insT * 2, brickT, 'шамот');
   add('Шамот — стіни (Л/П/З)', 3, brickT, brickH, brickT, 'шамот', 'Л + П + задня');
-  if (insT > 0) add('Ізоляція топки (4 сторони)', 4, cw, h - steelCm * 2, insT, 'verbatim/CFB');
+  if (insT > 0) add('Ізоляція топки (4 сторони)', 4, cw, linerTopY - steelCm, insT, 'vermiculite/CFB');
   // Димохід
   add('Димохід Ø' + cfg.chimney.diameterCm + ' см', 1, Math.PI * chimR * 2, cfg.chimney.heightCm, 0.3, 'сталь 3 мм', 'розгортка');
   add('Комір димоходу', 1, Math.PI * collarR * 2, steelCm * 2.2, 0.4, 'сталь');
@@ -107,7 +108,7 @@ export function buildBOM(cfg) {
   const steelMass = parts.filter(p => p.mat.includes('сталь')).reduce((s, p) => s + p.massKg * p.qty, 0);
   const brickMass = parts.filter(p => p.mat === 'шамот').reduce((s, p) => s + p.areaCm2 * p.tCm * 0.0021 * p.qty, 0); // шамот ~2.1 г/см³
   const steelArea = parts.filter(p => p.mat.includes('сталь')).reduce((s, p) => s + p.areaCm2 * p.qty, 0);
-  const physics = PhysicsModel.evaluate(cfg);
+  const physics = physicsResult || PhysicsModel.evaluate(cfg);
 
   return {
     parts,
@@ -177,7 +178,6 @@ export function buildDrawingSVG(cfg) {
   // ---- SIDE VIEW ----
   const sx0 = margin + fw + 140;
   const sw = px(D);
-  const doorWc2 = doorW;
   const side = `
     <rect x="${sx0}" y="${fy0}" width="${sw}" height="${fh}" fill="#f8f9fb" stroke="#172033" stroke-width="1.5"/>
     <rect x="${sx0}" y="${fy0 + px(L + baffleY) - px(brickT)}" width="${sw}" height="${px(brickT)}" fill="#f5e3d0" stroke="#c56a2d"/>

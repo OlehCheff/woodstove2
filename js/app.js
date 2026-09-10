@@ -76,7 +76,6 @@ function applyVisibility() {
   refs.baffle.visible = config.visibility.baffle;
   if (refs.refractoryRoof) refs.refractoryRoof.visible = config.visibility.baffle;
   refs.airSystems.visible = config.visibility.airChannels;
-  if (refs.gasChannels) refs.gasChannels.visible = config.visibility.airChannels;
   refs.chimney.visible = refs.collar.visible = config.visibility.chimney;
   if (refs.flow) refs.flow.visible = config.flow.visible;
 }
@@ -205,13 +204,13 @@ function renderPhysics() {
   if (!r.warnings.length) ul.innerHTML = `<li>${t('noIssues')}</li>`;
   for (const wmsg of r.warnings) {
     const li = document.createElement('li'); li.className = wmsg.level;
-    li.textContent = `[${wmsg.code}] ${warnText(wmsg.code, wmsg.message, r.metrics.draftPa)}`;
+    li.textContent = `[${wmsg.code}] ${warnText(wmsg.code, wmsg.message, r.metrics)}`;
     ul.appendChild(li);
   }
   renderValidation();
   renderTestBurn();
   renderTestLog();
-  renderBomSummary();
+  renderBomSummary(r);
 }
 
 function validationText(item) {
@@ -381,10 +380,10 @@ function exportDrawingSvg() {
   downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), `woodstove-drawing-${Date.now()}.svg`);
 }
 
-function renderBomSummary() {
+function renderBomSummary(physicsResult = null) {
   const target = document.getElementById('bomSummary');
   if (!target) return;
-  const bom = buildBOM(config);
+  const bom = buildBOM(config, physicsResult);
   target.innerHTML = `${t('bomSteel')}: <b>${bom.totals.steelMassKg} kg</b> · ${t('bomArea')}: <b>${bom.totals.steelAreaM2} m²</b> · ${t('bomBrick')}: <b>${bom.totals.brickMassKg} kg</b> · ${t('bomTotal')}: <b>${bom.totals.totalMassKg} kg</b>`;
 }
 
@@ -468,10 +467,14 @@ function fmt(id, v) {
   if (/Color/i.test(id)) return `${v}`;
   return `${v} ${t('unitCm')}`;
 }
-function warnText(code, fallback, draftPa) {
+function warnText(code, fallback, m) {
   const dict = WARN_TXT[lang] || WARN_TXT.uk;
   const entry = dict[code];
-  if (typeof entry === 'function') return entry(draftPa);
+  if (typeof entry === 'function') {
+    if (code === 'STEEL_OVERHEAT') return entry(m.bodyTempC);
+    if (code === 'WET_WOOD') return entry(m.moisturePct);
+    return entry(m.draftPa);
+  }
   return entry || fallback;
 }
 function applyI18n() {
