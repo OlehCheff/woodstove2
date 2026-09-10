@@ -67,6 +67,7 @@ function rebuildStove() {
   doorCur = doorTarget; refs.doorPivot.rotation.y = doorCur;
   floor.material.color.set(config.colors.floor);
   applyVisibility(); applySection(); applyGrid(); applyExplode(1); syncCamera(false);
+  applyThermalZones(PhysicsModel.evaluate(config).metrics);
 }
 let rebuildTimer = 0;
 const scheduleRebuild = () => { clearTimeout(rebuildTimer); rebuildTimer = setTimeout(rebuildStove, 120); };
@@ -87,6 +88,18 @@ function applySection() {
 function applyGrid() {
   const show = config.visibility.grid !== false;
   grid.visible = show; axes.visible = show;
+}
+function heatColor(t, lo, hi) {
+  const k = THREE.MathUtils.clamp((t - lo) / Math.max(1, hi - lo), 0, 1);
+  return new THREE.Color().setHSL((1 - k) * 0.62, 0.9, 0.5); // синій → червоний
+}
+function applyThermalZones(metrics = null) {
+  const on = config.visibility.thermal;
+  if (refs.thermalZones) refs.thermalZones.visible = on;
+  if (!on || !metrics) return;
+  if (refs.zoneFirebox) refs.zoneFirebox.material.color.copy(heatColor(metrics.combustionTempC, 420, 1100));
+  if (refs.zoneAfterburn) refs.zoneAfterburn.material.color.copy(heatColor(metrics.baffleExitTempC, 160, 900));
+  if (refs.zoneChimney) refs.zoneChimney.material.color.copy(heatColor(metrics.modeledFlueTempC, 120, 650));
 }
 function applyExplode(snap = 0) {
   if (snap) explodeCur = explodeTarget;
@@ -213,6 +226,7 @@ function renderPhysics() {
   renderTestLog();
   renderBomSummary(r);
   renderCalibrationSummary();
+  applyThermalZones(r.metrics);
 }
 
 function validationText(item) {
@@ -552,7 +566,7 @@ function syncUI() {
   document.getElementById('doorHingeSide').value = config.door.hingeSide;
   document.getElementById('loadMode').value = config.testBurn.loadMode;
   document.getElementById('woodSpecies').value = config.testBurn.woodSpecies;
-  for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney', showSection: 'section', showGrid: 'grid' })) {
+  for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney', showSection: 'section', showGrid: 'grid', showThermal: 'thermal' })) {
     const el = document.getElementById(id); if (el) el.checked = config.visibility[k] !== false;
   }
   document.getElementById('showFlow').checked = config.flow.visible;
@@ -613,11 +627,12 @@ function bindUI() {
     config.testBurn.woodSpecies = e.target.value;
     saveConfig(config); renderPhysics();
   });
-  for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney', showSection: 'section', showGrid: 'grid' })) {
+  for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney', showSection: 'section', showGrid: 'grid', showThermal: 'thermal' })) {
     document.getElementById(id).addEventListener('change', (e) => {
       config.visibility[k] = e.target.checked; saveConfig(config);
       if (k === 'section') applySection();
       else if (k === 'grid') applyGrid();
+      else if (k === 'thermal') applyThermalZones(PhysicsModel.evaluate(config).metrics);
       else applyVisibility();
     });
   }

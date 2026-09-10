@@ -72,7 +72,7 @@ export const defaultConfig = {
     channelWidthCm: 4, channelDepthCm: 4, preheatLengthCm: 45,
   },
   flow: { visible: false, animated: true },
-  visibility: { firebrick: true, baffle: true, airChannels: true, chimney: true, section: false, grid: true },
+  visibility: { firebrick: true, baffle: true, airChannels: true, chimney: true, section: false, grid: true, thermal: false },
   explode: { enabled: false, distanceCm: 18 },
   operation: { mode: 'medium', secondaryAirPct: 55, flameIntensity: 0.62 },
   thermal: {
@@ -158,7 +158,7 @@ export function normalizeConfig(cfg) {
   cfg.flow.visible = Boolean(cfg.flow.visible);
   cfg.flow.animated = cfg.flow.animated !== false;
 
-  for (const k of ['firebrick', 'baffle', 'airChannels', 'chimney', 'section', 'grid']) cfg.visibility[k] = Boolean(cfg.visibility[k]);
+  for (const k of ['firebrick', 'baffle', 'airChannels', 'chimney', 'section', 'grid', 'thermal']) cfg.visibility[k] = Boolean(cfg.visibility[k]);
   cfg.explode.enabled = Boolean(cfg.explode.enabled);
   cfg.explode.distanceCm = clamp(+cfg.explode.distanceCm || 18, 5, 40);
 

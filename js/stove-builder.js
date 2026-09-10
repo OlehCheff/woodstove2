@@ -403,8 +403,23 @@ export function buildStove(cfg, cache = new Map()) {
     }
   }
 
+  // Теплові зони — окремий напівпрозорий шар; колір задає Physics v4 з app.js.
+  const thermalZones = new THREE.Group(); thermalZones.name = 'thermalZones';
+  const zoneMat = () => new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide });
+  const zoneFirebox = new THREE.Mesh(new THREE.BoxGeometry(Math.max(10, innerW * 0.9), Math.max(8, baffleY - steelT * 2), Math.max(10, innerD * 0.85)), zoneMat());
+  zoneFirebox.position.set(0, steelT + (baffleY - steelT) / 2, 0);
+  zoneFirebox.name = 'zoneFirebox'; thermalZones.add(zoneFirebox);
+  const hoodTop = Math.min(h - steelT * 2, Math.max(baffleY + steelT * 6, h * 0.82));
+  const zoneAfterburn = new THREE.Mesh(new THREE.BoxGeometry(Math.max(10, innerW * 0.9), Math.max(6, hoodTop - baffleY), Math.max(10, innerD * 0.8)), zoneMat());
+  zoneAfterburn.position.set(0, baffleY + (hoodTop - baffleY) / 2, -baffleGap * 0.2);
+  zoneAfterburn.name = 'zoneAfterburn'; thermalZones.add(zoneAfterburn);
+  const zoneChimney = new THREE.Mesh(new THREE.CylinderGeometry(chimR * 1.06, chimR * 1.06, cfg.chimney.heightCm, 20, 1, true), zoneMat());
+  zoneChimney.position.set(0, h - steelT / 2 + cfg.chimney.heightCm / 2, chimZ);
+  zoneChimney.name = 'zoneChimney'; thermalZones.add(zoneChimney);
+  thermalZones.visible = false; shell.add(thermalZones);
+
   group.add(shell);
-  const refs = { shell, chimney, collar, doorPivot, frontPanel, firebrick, refractoryRoof, baffle, airSystems, gasChannels, chamber, flame, core, outer, sparks, shutter, flow, flowArrows, grate, ashDrawer, heatShield };
+  const refs = { shell, chimney, collar, doorPivot, frontPanel, firebrick, refractoryRoof, baffle, airSystems, gasChannels, chamber, flame, core, outer, sparks, shutter, flow, flowArrows, grate, ashDrawer, heatShield, thermalZones, zoneFirebox, zoneAfterburn, zoneChimney };
   for (const n of [chimney, collar, doorPivot, frontPanel, firebrick, baffle, airSystems, gasChannels, chamber, flow]) {
     if (n) n.userData.basePosition = n.position.clone();
   }
