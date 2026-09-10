@@ -8,6 +8,7 @@ import { exportGLTF, exportSTL } from './exporters.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from './bom.js';
 import { calibrateFromLog, evaluateCalibration, emptyCalibration } from './calibration.js';
 import { designInternals } from './autodesign.js';
+import { PURPOSES, requiredPowerKw, roomVolume, sizeStoveForPower, evaluateRoom } from './room.js';
 import { STR, WARN_TXT, VALIDATION_TXT, TOUR, getLang, setLang } from './i18n.js';
 
 let lang = getLang();
@@ -229,6 +230,7 @@ function renderPhysics() {
   renderBomSummary(r);
   renderCalibrationSummary();
   renderAutoSummary(r);
+  renderRoomSummary();
   applyThermalZones(r.metrics);
 }
 
@@ -432,8 +434,32 @@ function exportDxf() {
   downloadBlob(new Blob([dxf], { type: 'application/dxf' }), `woodstove-cut-${Date.now()}.dxf`);
 }
 
-function renderAutoSummary(r = null) {
-  const target = document.getElementById('autoSummary');
+function updateRoomRows() {
+  const mode = config.room.inputMode;
+  const v = document.getElementById('volumeRow'); if (v) v.style.display = mode === 'volume' ? '' : 'none';
+  const a = document.getElementById('areaRow'); if (a) a.style.display = mode === 'area' ? '' : 'none';
+  const c = document.getElementById('ceilingRow'); if (c) c.style.display = mode === 'area' ? '' : 'none';
+}
+
+function renderRoomSummary() {
+  const target = document.getElementById('roomResult');
+  if (!target) return;
+  const r = evaluateRoom(config);
+  target.innerHTML = `${t('roomVolume')}: <b>${r.volume} m³</b> · ${t('roomNeed')}: <b>${r.targetKw} kW</b> · ${t('roomActual')}: <b>${r.actualKw} kW</b> <span class="${r.enough ? 'ok' : 'bad'}">${r.enough ? t('roomEnough') : t('roomNotEnough')}</span>`;
+}
+
+function fitRoomToStove() {
+  const volume = roomVolume(config.room);
+  const target = requiredPowerKw(config.room.purpose, volume);
+  const best = sizeStoveForPower(target, config);
+  if (!best) return;
+  config = best.config;
+  applyModePreset(config, (PURPOSES[config.room.purpose] || PURPOSES.room).mode);
+  designInternals(config);
+  saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
+}
+
+function renderAutoSummary(r = null) {  const target = document.getElementById('autoSummary');
   if (!target) return;
   const m = (r || PhysicsModel.evaluate(config)).metrics;
   target.innerHTML = `<b>${t('autoTitle')}</b> · ${t('kEff')} <b>${m.efficiencyPct}%</b> · ${t('autoBaffle')} <b>${config.baffle.heightCm} ${t('unitCm')}</b> · ${t('autoChimney')} <b>Ø${config.chimney.diameterCm} ${t('unitCm')} × ${config.chimney.heightCm} ${t('unitCm')}</b> · ${t('autoInsulation')} <b>${config.thermal.insulationThicknessCm} ${t('unitCm')}</b> · ${t('autoSecondary')} <b>${config.secondaryAir.holeCount}×Ø${config.secondaryAir.holeDiameterCm}</b>`;
@@ -503,6 +529,7 @@ const controlMap = {
   steelRoughness: 'colors.steelRoughness', steelMetalness: 'colors.steelMetalness',
   woodMoisturePct: 'testBurn.woodMoisturePct', loadKg: 'testBurn.loadKg', measuredBurnHours: 'testBurn.measuredBurnHours', measuredUsefulHeatKwh: 'testBurn.measuredUsefulHeatKwh',
   flueTempC: 'testBurn.flueTempC', stoveTopTempC: 'testBurn.stoveTopTempC', glassTempC: 'testBurn.glassTempC', smokeOpacityPct: 'testBurn.smokeOpacityPct',
+  volumeM3: 'room.volumeM3', areaM2: 'room.areaM2', ceilingM: 'room.ceilingM',
 };
 // Зміна цих полів запускає перепроєктування внутрішньої геометрії.
 const DESIGN_IDS = { widthCm: 1, depthCm: 1, heightCm: 1, legHeightCm: 1, steelThicknessMm: 1, firebrickThicknessCm: 1, doorWidthCm: 1, doorHeightCm: 1 };
@@ -511,6 +538,9 @@ function fmt(id, v) {
   if (id === 'loadKg') return `${v} kg`;
   if (id === 'measuredBurnHours') return `${v} ${t('unitH')}`;
   if (id === 'measuredUsefulHeatKwh') return `${v} kWh`;
+  if (id === 'volumeM3') return `${v} m³`;
+  if (id === 'areaM2') return `${v} m²`;
+  if (id === 'ceilingM') return `${v} m`;
   if (id === 'heatExchangePasses') return `${v}`;
   if (/TempC$/.test(id)) return `${v} °C`;
   if (id === 'steelThicknessMm') return `${v} ${t('unitMm')}`;
@@ -560,7 +590,10 @@ function syncUI() {
   document.getElementById('doorHingeSide').value = config.door.hingeSide;
   document.getElementById('loadMode').value = config.testBurn.loadMode;
   document.getElementById('woodSpecies').value = config.testBurn.woodSpecies;
-  for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney', showSection: 'section', showGrid: 'grid', showThermal: 'thermal' })) {
+  document.getElementById('roomPurpose').value = config.room.purpose;
+  document.getElementById('roomInputMode').value = config.room.inputMode;
+  updateRoomRows();
+  for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney', showSection: 'section', showGrid: 'grid', showThermal: 'thermal', showShields: 'shields' })) {
     const el = document.getElementById(id); if (el) el.checked = config.visibility[k] !== false;
   }
   document.getElementById('showFlow').checked = config.flow.visible;
@@ -619,15 +652,24 @@ function bindUI() {
     config.testBurn.woodSpecies = e.target.value;
     saveConfig(config); renderPhysics();
   });
-  for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney', showSection: 'section', showGrid: 'grid', showThermal: 'thermal' })) {
+  for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney', showSection: 'section', showGrid: 'grid', showThermal: 'thermal', showShields: 'shields' })) {
     document.getElementById(id).addEventListener('change', (e) => {
       config.visibility[k] = e.target.checked; saveConfig(config);
       if (k === 'section') applySection();
       else if (k === 'grid') applyGrid();
       else if (k === 'thermal') applyThermalZones(PhysicsModel.evaluate(config).metrics);
+      else if (k === 'shields') rebuildStove();
       else applyVisibility();
     });
   }
+  document.getElementById('roomPurpose').addEventListener('change', (e) => {
+    config.room.purpose = e.target.value; saveConfig(config); renderRoomSummary();
+  });
+  document.getElementById('roomInputMode').addEventListener('change', (e) => {
+    config.room.inputMode = e.target.value === 'area' ? 'area' : 'volume';
+    normalizeConfig(config); saveConfig(config); updateRoomRows(); renderRoomSummary();
+  });
+  document.getElementById('fitRoom').addEventListener('click', fitRoomToStove);
   document.getElementById('showFlow').addEventListener('change', (e) => {
     config.flow.visible = e.target.checked; saveConfig(config); applyVisibility();
   });

@@ -72,7 +72,7 @@ export const defaultConfig = {
     channelWidthCm: 4, channelDepthCm: 4, preheatLengthCm: 45,
   },
   flow: { visible: false, animated: true },
-  visibility: { firebrick: true, baffle: true, airChannels: true, chimney: true, section: false, grid: true, thermal: false },
+  visibility: { firebrick: true, baffle: true, airChannels: true, chimney: true, section: false, grid: true, thermal: false, shields: false },
   explode: { enabled: false, distanceCm: 18 },
   operation: { mode: 'medium', secondaryAirPct: 55, flameIntensity: 0.62 },
   thermal: {
@@ -89,6 +89,7 @@ export const defaultConfig = {
   door: { widthCm: 42, heightCm: 38, frameThicknessCm: 3, glassInsetCm: 2, openAngleDeg: 70, hingeSide: 'left', isOpen: false },
   camera: { fov: 50, distance: 270, targetY: 60 },
   calibration: { enabled: false, damping: 0.75, globalScale: 1, modeScale: {}, samples: 0, updated: null },
+  room: { purpose: 'room', inputMode: 'volume', volumeM3: 60, areaM2: 30, ceilingM: 2.7 },
   colors: {
     steel: '#3a3d43', steelRoughness: 0.34, steelMetalness: 0.78,
     brick: '#b37a4c', glass: '#8ca7be', floor: '#1c1e22',
@@ -158,7 +159,7 @@ export function normalizeConfig(cfg) {
   cfg.flow.visible = Boolean(cfg.flow.visible);
   cfg.flow.animated = cfg.flow.animated !== false;
 
-  for (const k of ['firebrick', 'baffle', 'airChannels', 'chimney', 'section', 'grid', 'thermal']) cfg.visibility[k] = Boolean(cfg.visibility[k]);
+  for (const k of ['firebrick', 'baffle', 'airChannels', 'chimney', 'section', 'grid', 'thermal', 'shields']) cfg.visibility[k] = Boolean(cfg.visibility[k]);
   cfg.explode.enabled = Boolean(cfg.explode.enabled);
   cfg.explode.distanceCm = clamp(+cfg.explode.distanceCm || 18, 5, 40);
 
@@ -201,6 +202,12 @@ export function normalizeConfig(cfg) {
   cfg.calibration.globalScale = clamp(+cfg.calibration.globalScale || 1, 0.5, 2);
   cfg.calibration.modeScale = cfg.calibration.modeScale && typeof cfg.calibration.modeScale === 'object' ? cfg.calibration.modeScale : {};
   cfg.calibration.samples = Math.max(0, Math.round(+cfg.calibration.samples || 0));
+  cfg.room ??= {};
+  cfg.room.purpose = ['sauna', 'room', 'workshop'].includes(cfg.room.purpose) ? cfg.room.purpose : 'room';
+  cfg.room.inputMode = cfg.room.inputMode === 'area' ? 'area' : 'volume';
+  cfg.room.volumeM3 = clamp(+cfg.room.volumeM3 || 60, 3, 1000);
+  cfg.room.areaM2 = clamp(+cfg.room.areaM2 || 30, 2, 500);
+  cfg.room.ceilingM = clamp(+cfg.room.ceilingM || 2.7, 2, 5);
   return cfg;
 }
 

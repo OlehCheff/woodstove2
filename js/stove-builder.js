@@ -333,28 +333,31 @@ export function buildStove(cfg, cache = new Map()) {
   ashDrawer.add(ashHandle);
   shell.add(ashDrawer);
 
-  // Задній та бічні теплові екрани зі стоячим зазором.
-  const heatShield = new THREE.Group(); heatShield.name = 'heatShield';
-  const shieldOff = 3.2;
-  const shieldH = Math.min(h - 4, h * 0.78);
-  const shieldY = 2 + shieldH / 2;
-  const backShield = plate(w - 4, shieldH, 0.4, darkM);
-  backShield.position.set(0, shieldY, -d / 2 - shieldOff);
-  heatShield.add(backShield);
-  for (const sx of [-1, 1]) {
-    const sideShield = plate(0.4, shieldH, d - 4, darkM);
-    sideShield.position.set(sx * (w / 2 + shieldOff), shieldY, 0);
-    heatShield.add(sideShield);
+  // Задній та бічні теплові екрани — опційні (безпека/розподіл тепла, не ККД).
+  let heatShield = null;
+  if (cfg.visibility && cfg.visibility.shields) {
+    heatShield = new THREE.Group(); heatShield.name = 'heatShield';
+    const shieldOff = 3.2;
+    const shieldH = Math.min(h - 4, h * 0.78);
+    const shieldY = 2 + shieldH / 2;
+    const backShield = plate(w - 4, shieldH, 0.3, darkM);
+    backShield.position.set(0, shieldY, -d / 2 - shieldOff);
+    heatShield.add(backShield);
+    for (const sx of [-1, 1]) {
+      const sideShield = plate(0.3, shieldH, d - 4, darkM);
+      sideShield.position.set(sx * (w / 2 + shieldOff), shieldY, 0);
+      heatShield.add(sideShield);
+    }
+    for (const [px, pz] of [[-w / 4, -d / 2], [w / 4, -d / 2], [-w / 2, -d / 4], [-w / 2, d / 4], [w / 2, -d / 4], [w / 2, d / 4]]) {
+      const isSide = Math.abs(px) > w / 3;
+      const standoff = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, shieldOff, 10), darkM);
+      if (isSide) standoff.rotation.z = Math.PI / 2;
+      else standoff.rotation.x = Math.PI / 2;
+      standoff.position.set(px + (isSide ? Math.sign(px) * shieldOff / 2 : 0), 6, pz + (isSide ? 0 : -shieldOff / 2));
+      heatShield.add(standoff);
+    }
+    shell.add(heatShield);
   }
-  for (const [px, pz] of [[-w / 4, -d / 2], [w / 4, -d / 2], [-w / 2, -d / 4], [-w / 2, d / 4], [w / 2, -d / 4], [w / 2, d / 4]]) {
-    const isSide = Math.abs(px) > w / 3;
-    const standoff = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, shieldOff, 10), darkM);
-    if (isSide) standoff.rotation.z = Math.PI / 2;
-    else standoff.rotation.x = Math.PI / 2;
-    standoff.position.set(px + (isSide ? Math.sign(px) * shieldOff / 2 : 0), 6, pz + (isSide ? 0 : -shieldOff / 2));
-    heatShield.add(standoff);
-  }
-  shell.add(heatShield);
 
   // дверцята: рама з 4 планок + скло + ручка, pivot зліва
   const frameT = cfg.door.frameThicknessCm;

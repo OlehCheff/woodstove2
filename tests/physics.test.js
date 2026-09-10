@@ -4,6 +4,7 @@ import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, vali
 import { calibrateFromLog, evaluateCalibration } from '../js/calibration.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from '../js/bom.js';
 import { designInternals } from '../js/autodesign.js';
+import { requiredPowerKw, sizeStoveForPower, evaluateRoom, PURPOSES } from '../js/room.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 let fails = 0;
@@ -175,5 +176,16 @@ const fatBrick = normalizeConfig(clone(defaultConfig));
 fatBrick.dimensions = { widthCm: 30, depthCm: 30, heightCm: 40, legHeightCm: 0 };
 fatBrick.materials.firebrickThicknessCm = 8;
 ok(validateConfig(designInternals(fatBrick)).valid, 'autodesign caps thick firebrick on small stove', JSON.stringify(validateConfig(designInternals(fatBrick)).errors));
+
+// 15. Підбір печі під приміщення
+ok(requiredPowerKw('room', 140) > 0 && requiredPowerKw('sauna', 10) > requiredPowerKw('room', 10), 'room power scaling', JSON.stringify({ room140: requiredPowerKw('room', 140), sauna10: requiredPowerKw('sauna', 10) }));
+const sized = sizeStoveForPower(6, normalizeConfig(clone(defaultConfig)));
+ok(sized && validateConfig(sized.config).valid, 'sizeStoveForPower valid', JSON.stringify(validateConfig(sized?.config || {}).errors));
+ok(Math.abs(sized.kw - 6) < 6, 'sizeStoveForPower near target', JSON.stringify({ target: 6, got: sized.kw }));
+const roomCfg = normalizeConfig(clone(defaultConfig));
+roomCfg.room = { purpose: 'room', inputMode: 'volume', volumeM3: 60, areaM2: 30, ceilingM: 2.7 };
+const rc = evaluateRoom(roomCfg);
+ok(rc.volume === 60 && rc.targetKw > 0 && Number.isFinite(rc.actualKw), 'evaluateRoom', JSON.stringify(rc));
+for (const p of Object.keys(PURPOSES)) ok(PURPOSES[p].kwPerM3 > 0 && PURPOSES[p].mode, `purpose ${p} defined`);
 
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);process.exit(fails === 0 ? 0 : 1);

@@ -119,9 +119,12 @@ export function buildBOM(cfg, physicsResult = null) {
   // Ніжки
   if (legH > 0) add('Ніжки 50×50', 4, 5, legH, 5, 'сталь/профіль', 'профільна труба', 'bar');
   // Теплові екрани
-  const shieldH = h * 0.78;
-  add('Тепловий екран — задній', 1, w - 4, shieldH, 0.3, 'сталь 3 мм', 'зазор 3.2 см');
-  add('Тепловий екран — бічні (Л/П)', 2, d - 4, shieldH, 0.3, 'сталь 3 мм');
+  // Теплові екрани — лише якщо увімкнені (опція).
+  if (cfg.visibility && cfg.visibility.shields) {
+    const shieldH = h * 0.78;
+    add('Тепловий екран — задній', 1, w - 4, shieldH, 0.3, 'сталь 3 мм', 'зазор 3.2 см');
+    add('Тепловий екран — бічні (Л/П)', 2, d - 4, shieldH, 0.3, 'сталь 3 мм');
+  }
 
   const steelMass = parts.filter(p => p.mat.includes('сталь')).reduce((s, p) => s + p.massKg * p.qty, 0);
   const brickMass = parts.filter(p => p.mat === 'шамот').reduce((s, p) => s + p.massKg * p.qty, 0);

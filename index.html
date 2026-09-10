@@ -48,6 +48,7 @@
     <div class="row check"><input type="checkbox" id="showFlow"><label for="showFlow" data-i18n="flowVisible">Показувати потоки</label></div>
     <div class="row check"><input type="checkbox" id="showSection"><label for="showSection" data-i18n="sectionView">Переріз (розріз)</label></div>
     <div class="row check"><input type="checkbox" id="showThermal"><label for="showThermal" data-i18n="thermalZones">Температурні зони</label></div>
+    <div class="row check"><input type="checkbox" id="showShields"><label for="showShields" data-i18n="showShields">Теплові екрани</label></div>
     <div class="row check"><input type="checkbox" id="showGrid" checked><label for="showGrid" data-i18n="showGrid">Сітка / осі</label></div>
     <div class="row check"><input type="checkbox" id="animateFlow"><label for="animateFlow" data-i18n="flowAnimated">Анімувати потоки</label></div>
     <div class="row"><label>Explode <output id="explodeDistanceCm-v"></output></label>
@@ -91,6 +92,26 @@
     <div class="row"><label><span data-i18n="doorW">Ширина дверцят</span> <output id="doorWidthCm-v"></output></label><input type="range" id="doorWidthCm" min="20" max="70" step="1"></div>
     <div class="row"><label><span data-i18n="doorH">Висота дверцят</span> <output id="doorHeightCm-v"></output></label><input type="range" id="doorHeightCm" min="20" max="70" step="1"></div>
     <div class="row"><label data-i18n="doorHinge">Петля дверцят</label><select id="doorHingeSide"><option value="left" data-i18n="hingeLeft">Ліва сторона</option><option value="right" data-i18n="hingeRight">Права сторона</option></select></div>
+  </div></details>
+
+  <details open><summary data-i18n="secPurpose">Призначення печі</summary><div class="body">
+    <div class="row"><label data-i18n="purpose">Призначення</label>
+      <select id="roomPurpose">
+        <option value="sauna" data-i18n="purposeSauna">Сауна / баня</option>
+        <option value="room" data-i18n="purposeRoom">Кімната / будинок</option>
+        <option value="workshop" data-i18n="purposeWorkshop">Гараж / майстерня</option>
+      </select></div>
+    <div class="row"><label data-i18n="inputMode">Спосіб розрахунку</label>
+      <select id="roomInputMode">
+        <option value="volume" data-i18n="modeVolume">Обʼєм (м³)</option>
+        <option value="area" data-i18n="modeArea">Площа × стеля</option>
+      </select></div>
+    <div class="row" id="volumeRow"><label><span data-i18n="volume">Обʼєм приміщення</span> <output id="volumeM3-v"></output></label><input type="range" id="volumeM3" min="3" max="500" step="1"></div>
+    <div class="row" id="areaRow"><label><span data-i18n="area">Площа</span> <output id="areaM2-v"></output></label><input type="range" id="areaM2" min="2" max="300" step="1"></div>
+    <div class="row" id="ceilingRow"><label><span data-i18n="ceiling">Висота стель</span> <output id="ceilingM-v"></output></label><input type="range" id="ceilingM" min="2" max="5" step="0.1"></div>
+    <div id="roomResult" class="room-result"></div>
+    <div class="btns"><button id="fitRoom" class="green" data-i18n="fitRoom">Підібрати під приміщення</button></div>
+    <div class="hint" data-i18n="roomHint">Оцінка для середньої смуги України. Значення — орієнтир, не сертифікація.</div>
   </div></details>
 
   <details open><summary data-i18n="secPhys">Фізика v4</summary><div class="body" id="physics">
