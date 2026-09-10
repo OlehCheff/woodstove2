@@ -38,7 +38,7 @@ export function buildStove(cfg, cache = new Map()) {
     () => new THREE.MeshStandardMaterial({ color: 0x8f8172, roughness: 0.98, metalness: 0.02 }));
   const darkM = mat(cache, 'dark', () => new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.45, metalness: 0.6 }));
   const ductM = mat(cache, 'duct', () => new THREE.MeshStandardMaterial({ color: 0x616872, roughness: 0.4, metalness: 0.58 }));
-  const controlM = mat(cache, 'control', () => new THREE.MeshStandardMaterial({ color: 0xffb347, roughness: 0.35, metalness: 0.35 }));
+  const controlM = mat(cache, `control|${cfg.colors.control}`, () => new THREE.MeshStandardMaterial({ color: cfg.colors.control, roughness: 0.35, metalness: 0.35 }));
   const baffleControlM = mat(cache, 'baffle-control', () => new THREE.MeshStandardMaterial({ color: 0x8b5cf6, roughness: 0.35, metalness: 0.35 }));
   const primaryControlM = mat(cache, 'primary-control', () => new THREE.MeshStandardMaterial({ color: 0x4f8cff, roughness: 0.35, metalness: 0.35 }));
   const holeM = mat(cache, 'hole', () => new THREE.MeshStandardMaterial({ color: 0x0b0c0e, roughness: 0.95 }));
@@ -345,9 +345,33 @@ export function buildStove(cfg, cache = new Map()) {
   fh(frameT, doorHc - frameT * 2, -doorWc / 2 + frameT / 2, 0); fh(frameT, doorHc - frameT * 2, doorWc / 2 - frameT / 2, 0);
   const glass = new THREE.Mesh(new THREE.BoxGeometry(Math.max(1, doorWc - cfg.door.glassInsetCm * 2), Math.max(1, doorHc - cfg.door.glassInsetCm * 2), 0.7), glassM);
   glass.position.z = frameT / 2 + 0.3; leaf.add(glass);
-  const handle = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 12, 16), mat(cache, 'handle', () => new THREE.MeshStandardMaterial({ color: 0xd6d6d6, metalness: 0.85, roughness: 0.25 })));
-  handle.rotation.z = Math.PI / 2; handle.position.set(-hingeSign * doorWc * 0.33, 0, frameT / 2 + 1.8); leaf.add(handle);
+  const handleMat = mat(cache, `handle|${cfg.colors.handle}`, () => new THREE.MeshStandardMaterial({ color: cfg.colors.handle, metalness: 0.85, roughness: 0.25 }));
+  // Пружинна ручка-спіраль: вал + витки + наконечник.
+  const springHandle = new THREE.Group(); springHandle.name = 'springHandle';
+  const shaftLen = Math.max(9, doorWc * 0.34);
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, shaftLen, 14), handleMat);
+  shaft.rotation.z = Math.PI / 2; springHandle.add(shaft);
+  const coilLoops = 5;
+  for (let i = 0; i < coilLoops; i++) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.25, 0.3, 8, 16), handleMat);
+    ring.rotation.y = Math.PI / 2;
+    ring.position.x = shaftLen / 2 - 0.7 - i * (shaftLen * 0.11);
+    springHandle.add(ring);
+  }
+  const knob = new THREE.Mesh(new THREE.SphereGeometry(1.15, 14, 14), handleMat);
+  knob.position.x = shaftLen / 2 + 0.5; springHandle.add(knob);
+  springHandle.position.set(-hingeSign * doorWc * 0.33, 0, frameT / 2 + 2.0);
+  leaf.add(springHandle);
+  // Засувка: вертикальна планка на дверцятах + ролик + зачіп на корпусі.
+  const latchX = -hingeSign * (doorWc / 2 - 1.4);
+  const latchBar = new THREE.Mesh(new THREE.BoxGeometry(0.9, Math.min(7, doorHc * 0.22), 0.9), darkM);
+  latchBar.position.set(latchX, 0, frameT / 2 + 0.5); leaf.add(latchBar);
+  const latchRoller = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 5.2, 12), handleMat);
+  latchRoller.rotation.x = Math.PI / 2; latchRoller.position.set(latchX, 0, frameT + 1.1); leaf.add(latchRoller);
   doorPivot.add(leaf); shell.add(doorPivot);
+  const catchPlate = plate(1.6, Math.min(9, doorHc * 0.3), 1.6, darkM);
+  catchPlate.position.set(-hingeSign * (openingW / 2 - 0.9), openingBottom + openingH / 2, d / 2 + steelT * 0.5 + frameT * 0.6);
+  catchPlate.name = 'doorCatch'; shell.add(catchPlate);
   for (const y of [-doorHc * 0.32, doorHc * 0.32]) {
     const hinge = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 6, 16), darkM);
     hinge.position.set(hingeSign * doorWc / 2, h * 0.48 + y, d / 2 + frameT + 0.4);

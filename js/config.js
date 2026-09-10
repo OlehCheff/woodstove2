@@ -92,7 +92,7 @@ export const defaultConfig = {
   colors: {
     steel: '#3a3d43', steelRoughness: 0.34, steelMetalness: 0.78,
     brick: '#b37a4c', glass: '#8ca7be', floor: '#1c1e22',
-    flameCore: '#ffa04d',
+    flameCore: '#ffa04d', handle: '#d6d6d6', control: '#ffb347',
   },
 };
 
