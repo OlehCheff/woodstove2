@@ -253,8 +253,22 @@ export function validateConfig(cfg) {
   if (cfg.baffle.frontGapCm >= cfg.dimensions.depthCm * 0.45) {
     warnings.push({ code: 'BAFFLE_GAP_LARGE', values: { gap: cfg.baffle.frontGapCm } });
   }
-  if (cfg.chimney.diameterCm < Math.sqrt(cfg.dimensions.widthCm * cfg.dimensions.depthCm) / 8) {
-    warnings.push({ code: 'CHIMNEY_SMALL', values: { diameter: cfg.chimney.diameterCm } });
+  // Двостороння перевірка димоходу: замала труба (ризик CO/димлення) і завелика (креозот).
+  const thermalFlue = cfg.thermal || {};
+  const insFlue = thermalFlue.insulationThicknessCm == null ? 3 : +thermalFlue.insulationThicknessCm;
+  const linerFlue = cfg.materials.firebrickThicknessCm + insFlue;
+  const fbW = Math.max(10, cfg.dimensions.widthCm - steelCm * 2 - linerFlue * 2);
+  const fbD = Math.max(10, cfg.dimensions.depthCm - steelCm * 2 - linerFlue * 2);
+  const fbH = Math.max(10, Math.min(cfg.baffle.heightCm, cfg.dimensions.heightCm) - steelCm - linerFlue);
+  const flueLiters = (fbW * fbD * fbH) / 1000;
+  const flueDiaCm = cfg.chimney.diameterCm + steelCm; // внутрішній Ø (труба + стінка)
+  const flueMinCm = Math.max(10, Math.min(18, 11 + flueLiters * 0.03));
+  const flueMaxCm = Math.max(14, Math.min(25, 17 + flueLiters * 0.05));
+  if (flueDiaCm < flueMinCm) {
+    warnings.push({ code: 'CHIMNEY_NARROW', values: { diameter: cfg.chimney.diameterCm, min: +flueMinCm.toFixed(1) } });
+  }
+  if (flueDiaCm > flueMaxCm) {
+    warnings.push({ code: 'CHIMNEY_LARGE', values: { diameter: cfg.chimney.diameterCm, max: +flueMaxCm.toFixed(1) } });
   }
   if (cfg.materials.firebrickThicknessCm > Math.min(cfg.dimensions.widthCm, cfg.dimensions.depthCm) / 8) {
     warnings.push({ code: 'LINING_THICK', values: { thickness: cfg.materials.firebrickThicknessCm } });
