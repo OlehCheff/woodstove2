@@ -92,7 +92,7 @@ export const defaultConfig = {
   room: { purpose: 'room', inputMode: 'volume', volumeM3: 60, areaM2: 30, ceilingM: 2.7 },
   colors: {
     steel: '#3a3d43', steelRoughness: 0.34, steelMetalness: 0.78,
-    brick: '#b37a4c', glass: '#8ca7be', floor: '#1c1e22',
+    brick: '#cdbf9e', glass: '#8ca7be', floor: '#1c1e22',
     flameCore: '#ffa04d', handle: '#d6d6d6', control: '#ffb347',
   },
 };

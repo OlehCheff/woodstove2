@@ -4,6 +4,7 @@
 import { PhysicsModel } from './physics-model.js';
 
 const round = (v, d = 1) => Math.round(v * 10 ** d) / 10 ** d;
+const clampBom = (v, a, b) => Math.max(a, Math.min(b, v));
 
 const NAME_EN = {
   'Днище': 'Bottom', 'Бічна панель (Л/П)': 'Side panel (L/R)', 'Задня панель': 'Back panel',
@@ -28,6 +29,8 @@ const NAME_EN = {
   'Secondary труба впоперек (SS)': 'Secondary cross tube (SS)',
   'Air-wash щілина + флоп': 'Air-wash slit + flap',
   'Air-wash бокова ручка + тяга': 'Air-wash side lever + rod',
+  'Уголки бафля (Л/П, 2 шт)': 'Baffle angle supports (L/R, 2 pcs)',
+  'Передній дефлектор': 'Front deflector',
 };
 function translateNote(s, lang) {
   if (lang !== 'en' || !s) return s;
@@ -115,8 +118,10 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
   add('Петля дверцят (кріплення + втулка)', 2, 2.4, 6, 2.4, 'сталь', 'Ø12 мм, покупна/токарка', 'purchased');
   add('Пружинна ручка-спіраль', 1, 14, 2.2, 2.2, 'сталь Ø8', 'кручена, Ø8 мм', 'purchased');
   add('Засувка дверцят (клямка)', 1, 8, 3, 0.6, 'сталь', 'з зачепом', 'purchased');
-  // Бафль + refractory
-  add('Бафль (пластина)', 1, innerW, baffleDepth, steelCm, `сталь ${steelMm} мм`, 'кут ' + cfg.baffle.angleDeg + '°');
+  // Бафль + уголки + дефлектор + refractory
+  add('Бафль (пластина)', 1, innerW, baffleDepth, steelCm, `сталь ${steelMm} мм`, 'кут ' + cfg.baffle.angleDeg + '°, знімний');
+  add('Уголки бафля (Л/П, 2 шт)', 2, clampBom(innerD * 0.5, 6, 24), steelCm, steelCm, `сталь ${steelMm} мм`, 'опора дефлекторів', 'bar');
+  add('Передній дефлектор', 1, innerW, clampBom(innerD * 0.22, 5, 14), steelCm, `сталь ${steelMm} мм`);
   if (refrT > 0) add('Refractory плита над бафлем', 1, innerW, baffleDepth, refrT, 'vermiculite/CFB');
   // Регулювання бафля
   add('Засувка бафля', 1, Math.max(12, w * 0.35), 1.2, 2, 'сталь', 'з ручкою Ø32');

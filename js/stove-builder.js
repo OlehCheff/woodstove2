@@ -117,11 +117,30 @@ export function buildStove(cfg, cache = new Map()) {
   const innerD = Math.max(10, d - steelT * 2);
   const baffleGap = Math.min(cfg.baffle.frontGapCm, innerD * 0.45);
   const baffleDepth = Math.max(8, innerD - baffleGap);
-  const baffle = plate(innerW, steelT, baffleDepth, darkM);
   const baffleY = Math.max(steelT * 4, Math.min(h - steelT * 2, cfg.baffle.heightCm));
-  baffle.position.set(0, baffleY, -baffleGap / 2);
+  // Два однакові уголки на боках — на них вставляються дефлектори (як у відео).
+  const angleLen = clamp(innerD * 0.5, 6, 24);
+  const angleLipH = clamp(baffleY * 0.05, 2.5, 5);
+  const angleZ = -baffleGap / 2;
+  const baffleAngles = new THREE.Group(); baffleAngles.name = 'baffleAngles';
+  for (const s of [-1, 1]) {
+    const ax = s * (innerW / 2 - steelT / 2);
+    const shelf = plate(steelT, steelT, angleLen, darkM);
+    shelf.position.set(ax, baffleY - steelT / 2, angleZ); baffleAngles.add(shelf);
+    const lip = plate(steelT, angleLipH, angleLen, darkM);
+    lip.position.set(ax, baffleY + angleLipH / 2 - steelT, angleZ); baffleAngles.add(lip);
+  }
+  shell.add(baffleAngles);
+  // Основний дефлектор лежить на уголках (знімний), кут — углиб.
+  const baffle = plate(innerW, steelT, baffleDepth, darkM);
+  baffle.position.set(0, baffleY, angleZ);
   baffle.rotation.x = THREE.MathUtils.degToRad(cfg.baffle.angleDeg);
-  baffle.name = 'bafflePlate';   shell.add(baffle);
+  baffle.name = 'bafflePlate'; shell.add(baffle);
+  // Передній дефлектор над переднім проходом — другий прохід газів.
+  const frontDefDepth = clamp(innerD * 0.22, 5, 14);
+  const frontDeflector = plate(innerW, steelT, frontDefDepth, darkM);
+  frontDeflector.position.set(0, baffleY + steelT * 2.4, d / 2 - baffleGap - frontDefDepth / 2);
+  frontDeflector.name = 'frontDeflector'; shell.add(frontDeflector);
   // Бафль фіксований; внутрішня регулювальна пластина без видимої ручки на фасаді.
   const regTravel = Math.max(6, w * 0.16);
   const baffleReg = plate(Math.max(10, w * 0.28), 1.0, 1.6, darkM);
@@ -185,26 +204,38 @@ export function buildStove(cfg, cache = new Map()) {
   }
   airSystems.add(secondary);
 
-  // ---- AIR-WASH: суцільна щілина над склом + флоп-заслінка; ручка збоку (блакитна) ----
+  // ---- AIR-WASH: кожух над дверцятами + флоп-заслінка + щілина на всю ширину; бокова ручка ----
   const airWash = new THREE.Group(); airWash.name = 'airWashChannel';
   const slitW = Math.max(10, openingW * (cfg.airWash.slotWidthPct / 100));
-  const slitY = Math.min(h - steelT * 2, openingTop + clamp(cfg.airWash.gapCm, 0.4, 2.5) * 1.4);
-  const slit = plate(slitW, Math.max(0.5, cfg.airWash.gapCm), 0.6, holeM);
-  slit.position.set(0, slitY, d / 2 + 0.05); airWash.add(slit);
-  const flap = plate(slitW, Math.max(3, cfg.airWash.gapCm * 3), steelT * 0.6, airWashM);
+  const slitY = Math.min(h - steelT * 2 - 3, openingTop + 0.6);
+  const shroudH = clamp(cfg.airWash.gapCm * 4, 5, 12);
+  const shroudDepth = clamp(innerD * 0.12, 3, 7);
+  // кожух: верх + перед + боки (формує короб, відкритий знизу)
+  const shroudTop = plate(slitW + 3, steelT, shroudDepth, darkM);
+  shroudTop.position.set(0, slitY + shroudH, d / 2 - shroudDepth / 2); airWash.add(shroudTop);
+  const shroudFront = plate(slitW + 3, shroudH, steelT, darkM);
+  shroudFront.position.set(0, slitY + shroudH / 2, d / 2 - 0.3); airWash.add(shroudFront);
+  for (const s of [-1, 1]) {
+    const side = plate(steelT, shroudH, shroudDepth, darkM);
+    side.position.set(s * (slitW + 3) / 2, slitY + shroudH / 2, d / 2 - shroudDepth / 2); airWash.add(side);
+  }
+  // флоп усередині кожуха (регулює подачу повітря в щілину)
   const flapOpen = clamp(cfg.airWash.intakePct / 100, 0.08, 1);
+  const flap = plate(slitW, shroudH * 0.85, steelT * 0.5, airWashM);
   flap.rotation.x = -(Math.PI / 2) * (1 - flapOpen);
-  flap.position.set(0, slitY - 1.2, d / 2 - 1.0); flap.name = 'airWashFlap'; airWash.add(flap);
-  const ductDLen = Math.max(4, innerD * 0.3);
-  const washDuct = plate(slitW, steelT * 0.6, ductDLen, ductM);
-  washDuct.position.set(0, slitY + 1.6, d / 2 - ductDLen / 2); airWash.add(washDuct);
+  flap.position.set(0, slitY + shroudH * 0.5, d / 2 - shroudDepth + 1.0);
+  flap.name = 'airWashFlap'; airWash.add(flap);
+  // щілина під кожухом (вихід повітря вниз по склу)
+  const slit = plate(slitW, Math.max(0.5, cfg.airWash.gapCm), 0.7, holeM);
+  slit.position.set(0, slitY, d / 2 + 0.05); airWash.add(slit);
+  // бокова ручка air-wash (права стінка біля переду) + тяга до флопа
   const awRod = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 3.2, 10), ductM);
   awRod.rotation.z = Math.PI / 2;
-  awRod.position.set(w / 2 + 1.2, slitY, d / 2 - 3); airWash.add(awRod);
+  awRod.position.set(w / 2 + 1.2, slitY + shroudH / 2, d / 2 - 3); airWash.add(awRod);
   const awLever = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.9, 0.7), airWashM);
-  awLever.position.set(w / 2 + 2.6, slitY - 1.2, d / 2 - 3); awLever.name = 'airWashHandle'; airWash.add(awLever);
+  awLever.position.set(w / 2 + 2.6, slitY + shroudH / 2 - 1.2, d / 2 - 3); awLever.name = 'airWashHandle'; airWash.add(awLever);
   const awKnob = new THREE.Mesh(new THREE.SphereGeometry(clamp(h * 0.02, 0.7, 1.2), 12, 12), airWashM);
-  awKnob.position.set(w / 2 + 2.6, slitY - 2.6, d / 2 - 3); airWash.add(awKnob);
+  awKnob.position.set(w / 2 + 2.6, slitY + shroudH / 2 - 2.6, d / 2 - 3); airWash.add(awKnob);
   airSystems.add(airWash);
   shell.add(airSystems);
 
@@ -312,6 +343,10 @@ export function buildStove(cfg, cache = new Map()) {
   const insHeight = Math.max(12, linerTopY - steelT);
   const brickBottomY = steelT + insulationT + brickT + brickHeight / 2;
   const bBottom = plate(linerInnerW, brickT, linerInnerD, brickM); bBottom.position.set(0, steelT + insulationT + brickT / 2, 0); firebrick.add(bBottom);
+  // Передній бортик на дні (щоб паливо/зола не висипались), як у відео.
+  const bLip = plate(linerInnerW, brickT, brickT, brickM);
+  bLip.position.set(0, steelT + insulationT + brickT + brickT / 2, linerInnerD / 2 - brickT / 2);
+  bLip.name = 'firebrickLip'; firebrick.add(bLip);
   const bL = plate(brickT, brickHeight, linerInnerD, brickM); bL.position.set(-cw / 2 + insulationT + brickT / 2, brickBottomY, 0); firebrick.add(bL);
   const bR = plate(brickT, brickHeight, linerInnerD, brickM); bR.position.set(cw / 2 - insulationT - brickT / 2, brickBottomY, 0); firebrick.add(bR);
   const bB = plate(linerInnerW, brickHeight, brickT, brickM); bB.position.set(0, brickBottomY, -cd / 2 + insulationT + brickT / 2); firebrick.add(bB);
@@ -464,7 +499,7 @@ export function buildStove(cfg, cache = new Map()) {
   smoke.visible = false; shell.add(smoke);
 
   group.add(shell);
-  const refs = { shell, chimney, collar, doorPivot, frontPanel, firebrick, refractoryRoof, baffle, airSystems, gasChannels, chamber, flame, core, outer, sparks, shutter, flow, flowArrows, heatShield, thermalZones, zoneFirebox, zoneAfterburn, zoneChimney, smoke, smokeParticles, flowPaths, aeroParticles };
+  const refs = { shell, chimney, collar, doorPivot, frontPanel, firebrick, refractoryRoof, baffle, baffleAngles, frontDeflector, airSystems, gasChannels, chamber, flame, core, outer, sparks, shutter, flow, flowArrows, heatShield, thermalZones, zoneFirebox, zoneAfterburn, zoneChimney, smoke, smokeParticles, flowPaths, aeroParticles };
   for (const n of [chimney, collar, doorPivot, frontPanel, firebrick, baffle, airSystems, gasChannels, chamber, flow]) {
     if (n) n.userData.basePosition = n.position.clone();
   }
