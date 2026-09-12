@@ -41,7 +41,9 @@ export function buildStove(cfg, cache = new Map()) {
   const ductM = mat(cache, 'duct', () => new THREE.MeshStandardMaterial({ color: 0x616872, roughness: 0.4, metalness: 0.58 }));
   const controlM = mat(cache, `control|${cfg.colors.control}`, () => new THREE.MeshStandardMaterial({ color: cfg.colors.control, roughness: 0.35, metalness: 0.35 }));
   const handleM = mat(cache, `handle|${cfg.colors.handle}`, () => new THREE.MeshStandardMaterial({ color: cfg.colors.handle, metalness: 0.85, roughness: 0.25 }));
-  const baffleControlM = mat(cache, 'baffle-control', () => new THREE.MeshStandardMaterial({ color: 0x8b5cf6, roughness: 0.35, metalness: 0.35 }));
+  const primaryAirM = mat(cache, 'primary-air', () => new THREE.MeshStandardMaterial({ color: 0x4f8cff, roughness: 0.35, metalness: 0.45 }));
+  const airWashM = mat(cache, 'air-wash', () => new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.35, metalness: 0.45 }));
+  const secondaryAirM = mat(cache, 'secondary-air', () => new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.45, metalness: 0.4 }));
   const holeM = mat(cache, 'hole', () => new THREE.MeshStandardMaterial({ color: 0x0b0c0e, roughness: 0.95 }));
   const gasketM = mat(cache, 'gasket', () => new THREE.MeshStandardMaterial({ color: 0x16181c, roughness: 0.9, metalness: 0.1 }));
   const glassM = mat(cache, `glass|${cfg.colors.glass}`,
@@ -120,90 +122,89 @@ export function buildStove(cfg, cache = new Map()) {
   baffle.position.set(0, baffleY, -baffleGap / 2);
   baffle.rotation.x = THREE.MathUtils.degToRad(cfg.baffle.angleDeg);
   baffle.name = 'bafflePlate';   shell.add(baffle);
-  // Регулятор бафля — пластина всередині + керування збоку корпусу (не в прорізі дверцят).
+  // Бафль фіксований; внутрішня регулювальна пластина без видимої ручки на фасаді.
   const regTravel = Math.max(6, w * 0.16);
   const baffleReg = plate(Math.max(10, w * 0.28), 1.0, 1.6, darkM);
-  const baffleControlX = -regTravel / 2 + regTravel * (cfg.baffle.airflowPct / 100);
-  baffleReg.position.set(baffleControlX, baffleY - 2.4, d * 0.16);
+  baffleReg.position.set(-regTravel / 2 + regTravel * (cfg.baffle.airflowPct / 100), baffleY - 2.4, d * 0.16);
   baffleReg.name = 'baffleReg'; shell.add(baffleReg);
-  const stripCenterX = (w / 2 + openingW / 2) / 2;
-  const baffleRod = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 3.0, 10), baffleControlM);
-  baffleRod.rotation.x = Math.PI / 2;
-  baffleRod.position.set(stripCenterX, baffleY, d / 2 + 1.0); shell.add(baffleRod);
-  const baffleKnob = new THREE.Mesh(new THREE.SphereGeometry(1.3, 14, 14), baffleControlM);
-  baffleKnob.position.set(stripCenterX, baffleY, d / 2 + 2.6);
-  baffleKnob.name = 'baffleHandle'; shell.add(baffleKnob);
 
-  // Повітряні канали: primary знизу, secondary через два підігрівальні стояки,
-  // air-wash через бокові канали у верхню суцільну щілину.
   const airSystems = new THREE.Group(); airSystems.name = 'airSystems';
-  // Пропорційне піддувало під дверцята: висота/ширина від габаритів, а не фіксовані.
-  const primaryY = clamp(openingBottom * 0.5, steelT * 3, 22);
-  const panelH = clamp(h * 0.085, 6, 11);
-  const holeSpan = (cfg.primaryAir.holeCount - 1) * cfg.primaryAir.holeSpacingCm;
-  const panelW = Math.min(w - steelT * 3, holeSpan + cfg.primaryAir.holeDiameterCm * 2 + 4);
-  const panel = plate(panelW, panelH, steelT, darkM); panel.position.set(0, primaryY, d / 2 - steelT * 0.5); airSystems.add(panel);
-  const sx = -holeSpan / 2;
-  for (let i = 0; i < cfg.primaryAir.holeCount; i++) {
-    const hole = new THREE.Mesh(new THREE.CylinderGeometry(cfg.primaryAir.holeDiameterCm / 2, cfg.primaryAir.holeDiameterCm / 2, steelT * 1.8, 16), holeM);
-    hole.rotation.x = Math.PI / 2; hole.position.set(sx + i * cfg.primaryAir.holeSpacingCm, primaryY, d / 2 + steelT * 0.2);
+
+  // ---- PRIMARY: два овальні отвори в передній плиті ПІД дверцятами + ковзна заслінка (синя) ----
+  const primaryY = clamp(openingBottom * 0.45, steelT * 3, 20);
+  const ovalW = clamp(openingW * 0.26, 4, 12);
+  const ovalH = clamp(primaryY * 0.5, 1.6, 3.0);
+  const ovalX = openingW * 0.2;
+  for (const ox of [-ovalX, ovalX]) {
+    const hole = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, steelT * 1.8, 16), holeM);
+    hole.scale.set(ovalW / 2, ovalH / 2, 1);
+    hole.rotation.x = Math.PI / 2;
+    hole.position.set(ox, primaryY, d / 2 + steelT * 0.15);
     airSystems.add(hole);
   }
-  const gateW = panelW * 0.6;
-  const shutter = plate(gateW, panelH + 0.6, steelT * 0.7, ductM);
-  shutter.position.set(-panelW * 0.3 + panelW * 0.6 * (cfg.primaryAir.openPct / 100), primaryY, d / 2 + steelT * 0.8);
+  const gateW = ovalX + ovalW * 0.7;
+  const shutter = plate(gateW, ovalH * 2.6, steelT * 0.7, ductM);
+  shutter.position.set(-gateW * 0.5 + gateW * (cfg.primaryAir.openPct / 100), primaryY, d / 2 + steelT * 0.8);
   shutter.name = 'primaryShutter'; airSystems.add(shutter);
-  // Шток + ручка, прикріплені до задвижки (не «висять»).
   const primaryRod = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 3, 10), ductM);
   primaryRod.rotation.x = Math.PI / 2;
-  primaryRod.position.set(shutter.position.x, primaryY, d / 2 + steelT * 1.7);
+  primaryRod.position.set(shutter.position.x, primaryY, d / 2 + steelT * 1.6);
   airSystems.add(primaryRod);
-  const primaryHandle = new THREE.Mesh(new THREE.SphereGeometry(clamp(h * 0.03, 0.9, 1.7), 14, 14), handleM);
-  primaryHandle.position.set(shutter.position.x, primaryY, d / 2 + steelT * 2.7);
+  const primaryHandle = new THREE.Mesh(new THREE.SphereGeometry(clamp(h * 0.028, 0.9, 1.6), 14, 14), primaryAirM);
+  primaryHandle.position.set(shutter.position.x, primaryY, d / 2 + steelT * 2.5);
   primaryHandle.name = 'primaryHandle'; airSystems.add(primaryHandle);
 
-  // Secondary подається у гарячу зону допалювання: під бафлем, над полум'ям.
-  const secY = Math.max(24, baffleY - 8);
-  const secW = Math.max(12, Math.min(innerW - 2, cfg.secondaryAir.holeCount * cfg.secondaryAir.holeSpacingCm + 10));
+  // ---- SECONDARY: два задні підігрівальні стояки + поперечна SS-труба з отворами Ø3 мм під бафлем ----
   const secondary = new THREE.Group(); secondary.name = 'secondaryAirPreheat';
-  const riserHeight = Math.max(12, Math.min(cfg.secondaryAir.preheatLengthCm, secY - 8));
+  const secTubeY = Math.max(18, baffleY - clamp(baffleY * 0.12, 3, 6));
+  const secTubeZ = -innerD * 0.08;
+  const riserH = Math.max(10, Math.min(cfg.secondaryAir.preheatLengthCm, secTubeY - 8));
   const riserZ = -innerD / 2 + cfg.secondaryAir.channelDepthCm / 2;
   const riserX = Math.max(2, innerW / 2 - cfg.secondaryAir.channelWidthCm / 2 - 1);
   for (const x of [-riserX, riserX]) {
-    const riser = plate(cfg.secondaryAir.channelWidthCm, riserHeight, cfg.secondaryAir.channelDepthCm, ductM);
-    riser.position.set(x, 8 + riserHeight / 2, riserZ); secondary.add(riser);
+    const riser = plate(cfg.secondaryAir.channelWidthCm, riserH, cfg.secondaryAir.channelDepthCm, ductM);
+    riser.position.set(x, 8 + riserH / 2, riserZ); secondary.add(riser);
+    const stubH = Math.max(2, secTubeZ === riserZ ? 2 : secTubeY - (8 + riserH));
+    const stub = plate(cfg.secondaryAir.channelWidthCm * 0.8, stubH, cfg.secondaryAir.channelDepthCm * 0.8, ductM);
+    stub.position.set(x, 8 + riserH + stubH / 2, riserZ + (secTubeZ - riserZ) * 0.4);
+    secondary.add(stub);
   }
-  const secBody = plate(secW, cfg.secondaryAir.manifoldHeightCm, cfg.secondaryAir.channelDepthCm, ductM);
-  secBody.position.set(0, secY, riserZ); secondary.add(secBody);
-  const ssx = -((cfg.secondaryAir.holeCount - 1) * cfg.secondaryAir.holeSpacingCm) / 2;
-  for (let i = 0; i < cfg.secondaryAir.holeCount; i++) {
-    const p = new THREE.Mesh(new THREE.CylinderGeometry(cfg.secondaryAir.holeDiameterCm / 2, cfg.secondaryAir.holeDiameterCm / 2, cfg.secondaryAir.manifoldHeightCm + 0.8, 12), holeM);
-    p.position.set(ssx + i * cfg.secondaryAir.holeSpacingCm, secY - cfg.secondaryAir.manifoldHeightCm / 2, riserZ + cfg.secondaryAir.channelDepthCm * 0.1);
+  const tubeLen = clamp(innerW * 0.9, 16, 120);
+  const tubeR = clamp(cfg.secondaryAir.channelWidthCm * 0.14, 0.8, 1.5);
+  const secTube = new THREE.Mesh(new THREE.CylinderGeometry(tubeR, tubeR, tubeLen, 16), secondaryAirM);
+  secTube.rotation.z = Math.PI / 2;
+  secTube.position.set(0, secTubeY, secTubeZ); secTube.name = 'secondaryTube'; secondary.add(secTube);
+  const holeCount = clamp(Math.round(cfg.secondaryAir.holeCount), 8, 40);
+  const holeDia = Math.max(0.3, cfg.secondaryAir.holeDiameterCm);
+  const hStep = tubeLen / holeCount;
+  const hx0 = -((holeCount - 1) * hStep) / 2;
+  for (let i = 0; i < holeCount; i++) {
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(holeDia / 2, holeDia / 2, tubeR * 3, 8), holeM);
+    p.position.set(hx0 + i * hStep, secTubeY - tubeR * 0.6, secTubeZ);
     secondary.add(p);
   }
   airSystems.add(secondary);
 
-  const washW = Math.max(12, Math.min(w - steelT * 3, doorWc + 6));
-  const washY = h * 0.48 + doorHc / 2 + 4.2;
+  // ---- AIR-WASH: суцільна щілина над склом + флоп-заслінка; ручка збоку (блакитна) ----
   const airWash = new THREE.Group(); airWash.name = 'airWashChannel';
-  const washChannelHeight = Math.max(12, Math.min(cfg.airWash.preheatLengthCm, washY - 8));
-  const washX = Math.max(doorWc / 2 + cfg.airWash.channelWidthCm / 2, innerW / 2 - cfg.airWash.channelWidthCm / 2 - 1);
-  const washZ = d / 2 - cfg.airWash.channelDepthCm / 2 - steelT;
-  for (const x of [-washX, washX]) {
-    const side = plate(cfg.airWash.channelWidthCm, washChannelHeight, cfg.airWash.channelDepthCm, ductM);
-    side.position.set(x, 8 + washChannelHeight / 2, washZ); airWash.add(side);
-  }
-  const washBody = plate(washW, 3.2, cfg.airWash.channelDepthCm, ductM);
-  washBody.position.set(0, washY, washZ); airWash.add(washBody);
-  const slotWidth = Math.max(8, washW * cfg.airWash.slotWidthPct / 100);
-  const slot = plate(slotWidth, Math.max(0.4, cfg.airWash.gapCm), 0.8, holeM);
-  slot.position.set(0, washY - 1.8, d / 2 + 0.1); airWash.add(slot);
-  const washReg = plate(Math.max(8, slotWidth - 6), 1.0, 0.9, darkM);
-  const washTravel = Math.max(4, slotWidth * 0.28);
-  washReg.position.set(-washTravel / 2 + washTravel * cfg.airWash.intakePct / 100, washY - 3.2, d / 2 - 0.6);
-  airWash.add(washReg);
-  const upperVent = plate(Math.max(12, washW * 0.62), 1.0, 0.8, darkM);
-  upperVent.position.set(0, washY + 2.2, d / 2 - 0.6); airWash.add(upperVent);
+  const slitW = Math.max(10, openingW * (cfg.airWash.slotWidthPct / 100));
+  const slitY = Math.min(h - steelT * 2, openingTop + clamp(cfg.airWash.gapCm, 0.4, 2.5) * 1.4);
+  const slit = plate(slitW, Math.max(0.5, cfg.airWash.gapCm), 0.6, holeM);
+  slit.position.set(0, slitY, d / 2 + 0.05); airWash.add(slit);
+  const flap = plate(slitW, Math.max(3, cfg.airWash.gapCm * 3), steelT * 0.6, airWashM);
+  const flapOpen = clamp(cfg.airWash.intakePct / 100, 0.08, 1);
+  flap.rotation.x = -(Math.PI / 2) * (1 - flapOpen);
+  flap.position.set(0, slitY - 1.2, d / 2 - 1.0); flap.name = 'airWashFlap'; airWash.add(flap);
+  const ductDLen = Math.max(4, innerD * 0.3);
+  const washDuct = plate(slitW, steelT * 0.6, ductDLen, ductM);
+  washDuct.position.set(0, slitY + 1.6, d / 2 - ductDLen / 2); airWash.add(washDuct);
+  const awRod = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 3.2, 10), ductM);
+  awRod.rotation.z = Math.PI / 2;
+  awRod.position.set(w / 2 + 1.2, slitY, d / 2 - 3); airWash.add(awRod);
+  const awLever = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.9, 0.7), airWashM);
+  awLever.position.set(w / 2 + 2.6, slitY - 1.2, d / 2 - 3); awLever.name = 'airWashHandle'; airWash.add(awLever);
+  const awKnob = new THREE.Mesh(new THREE.SphereGeometry(clamp(h * 0.02, 0.7, 1.2), 12, 12), airWashM);
+  awKnob.position.set(w / 2 + 2.6, slitY - 2.6, d / 2 - 3); airWash.add(awKnob);
   airSystems.add(airWash);
   shell.add(airSystems);
 
@@ -234,25 +235,50 @@ export function buildStove(cfg, cache = new Map()) {
   gasChannels.add(cleanPortCap);
   shell.add(gasChannels);
 
-  // Схема потоків: стрілки напрямку. Реальні канали тепер окрема конструкція (gasChannels).
+  // Схема потоків: стрілки напрямку + шляхи для анімації повітря (аеродинаміка).
   const flow = new THREE.Group(); flow.name = 'flowVisualization';
   const flowArrows = [];
   const addFlow = (origin, direction, length, color) => {
     const arrow = new THREE.ArrowHelper(direction.normalize(), origin, length, color, Math.min(3, length * 0.2), Math.min(1.2, length * 0.08));
     arrow.line.material.transparent = true; arrow.cone.material.transparent = true;
-    arrow.line.material.opacity = 0.78; arrow.cone.material.opacity = 0.9;
+    arrow.line.material.opacity = 0.85; arrow.cone.material.opacity = 0.95;
     arrow.line.userData.ownedMaterial = true; arrow.cone.userData.ownedMaterial = true;
     flow.add(arrow); flowArrows.push(arrow);
   };
-  addFlow(new THREE.Vector3(0, 16, d / 2 + 5), new THREE.Vector3(0, 0, -1), Math.max(8, d * 0.28), 0x4f8cff);
-  addFlow(new THREE.Vector3(-riserX, 10, riserZ), new THREE.Vector3(0, 1, 0), riserHeight * 0.75, 0x22c55e);
-  addFlow(new THREE.Vector3(riserX, 10, riserZ), new THREE.Vector3(0, 1, 0), riserHeight * 0.75, 0x22c55e);
-  addFlow(new THREE.Vector3(0, secY + 1, riserZ + 1), new THREE.Vector3(0, 0, 1), Math.max(8, innerD * 0.3), 0xffb347);
-  addFlow(new THREE.Vector3(0, washY + 1, d / 2 + 3), new THREE.Vector3(0, -1, 0), Math.max(10, doorHc * 0.65), 0x38bdf8);
-  addFlow(new THREE.Vector3(0, baffleY - 10, 0), new THREE.Vector3(0, 1, 0), Math.max(8, baffleY - 10), 0xef4444);
-  addFlow(new THREE.Vector3(0, baffleY + 3, d / 2 - baffleGap * 0.35), new THREE.Vector3(0, 0, -1), Math.max(10, d * 0.46), 0xef7d32);
-  addFlow(new THREE.Vector3(0, baffleY + 5, chimZ), new THREE.Vector3(0, 1, 0), Math.max(10, h - baffleY - 8), 0xef4444);
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  // PRIMARY (синій): отвори під дверцятами → вгору в топку
+  addFlow(V(0, primaryY, d / 2 + 4), V(0, 0, -1), Math.max(6, d * 0.2), 0x4f8cff);
+  addFlow(V(0, primaryY + 1, d * 0.1), V(0, 1, 0), Math.max(6, baffleY * 0.35), 0x4f8cff);
+  // SECONDARY (зелений): стояки вгору → поперечна труба → отвори вниз
+  addFlow(V(-riserX, 9, riserZ), V(0, 1, 0), Math.max(8, riserH * 0.8), 0x22c55e);
+  addFlow(V(riserX, 9, riserZ), V(0, 1, 0), Math.max(8, riserH * 0.8), 0x22c55e);
+  addFlow(V(-tubeLen * 0.4, secTubeY + tubeR, secTubeZ), V(1, 0, 0), tubeLen * 0.8, 0x22c55e);
+  addFlow(V(0, secTubeY - tubeR, secTubeZ), V(0, -1, 0), Math.max(4, (secTubeY - primaryY) * 0.3), 0xf97316);
+  // AIR-WASH (блакитний): щілина → вниз по склу → під дрова
+  addFlow(V(0, slitY - 2, d / 2 + 3), V(0, -1, 0), Math.max(10, doorHc * 0.7), 0x38bdf8);
+  addFlow(V(0, primaryY + 2, d / 2 + 1), V(0, 0, -1), Math.max(8, d * 0.3), 0x38bdf8);
+  // ГАРЯЧІ ГАЗИ: вгору над бафлем → назад → в димохід
+  addFlow(V(0, baffleY - 8, 0), V(0, 1, 0), Math.max(8, baffleY - 8), 0xef4444);
+  addFlow(V(0, baffleY + 4, d / 2 - baffleGap * 0.4), V(0, 0, -1), Math.max(10, d * 0.42), 0xef7d32);
+  addFlow(V(0, baffleY + 5, chimZ), V(0, 1, 0), Math.max(10, h - baffleY - 8), 0xef4444);
   flow.visible = cfg.flow.visible; shell.add(flow);
+
+  // Шляхи для анімації повітря (аеродинаміка). Кожен — полілінія точок.
+  const flowPaths = [
+    { color: 0x4f8cff, pts: [V(0, primaryY, d / 2 + 5), V(0, primaryY, d * 0.1), V(0, (primaryY + baffleY) / 2, d * 0.05)] },
+    { color: 0x38bdf8, pts: [V(0, slitY + 2, d / 2 - 1), V(0, slitY, d / 2 + 0.5), V(0, primaryY + 2, d / 2 + 1), V(0, primaryY + 3, d * 0.15)] },
+    { color: 0x22c55e, pts: [V(-riserX, 9, riserZ), V(-riserX, secTubeY - 1, riserZ), V(0, secTubeY, secTubeZ), V(0, secTubeY - 3, secTubeZ)] },
+    { color: 0x22c55e, pts: [V(riserX, 9, riserZ), V(riserX, secTubeY - 1, riserZ), V(0, secTubeY, secTubeZ), V(0, secTubeY - 3, secTubeZ)] },
+    { color: 0xef7d32, pts: [V(0, baffleY - 6, d / 2 - baffleGap * 0.5), V(0, baffleY + 4, d / 2 - baffleGap * 0.5), V(0, baffleY + 5, chimZ), V(0, h + 8, chimZ)] },
+  ];
+  const aeroParticles = [];
+  const aeroMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false });
+  for (const path of flowPaths) {
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.9, 8, 8), aeroMat.clone());
+    dot.material.color.setHex(path.color);
+    dot.visible = false; dot.userData = { path, t: Math.random() };
+    shell.add(dot); aeroParticles.push(dot);
+  }
 
   // камера + полум'я
   const chamber = new THREE.Group(); chamber.name = 'innerChamber';
@@ -304,37 +330,7 @@ export function buildStove(cfg, cache = new Map()) {
   }
   shell.add(firebrick);
 
-  // Колосник: сталеві прути над зольною зоною, повітря проходить між ними.
-  const grateY = steelT + insulationT + brickT + 1.4;
-  const grate = new THREE.Group(); grate.name = 'grate';
-  const grateSpan = Math.max(14, innerW - 8);
-  const grateDepth = Math.max(10, innerD * 0.68);
-  const slatCount = Math.max(5, Math.floor(grateSpan / 3.4));
-  const slatW = Math.max(1.4, (grateSpan / slatCount) * 0.55);
-  for (let i = 0; i < slatCount; i++) {
-    const slatX = -grateSpan / 2 + (grateSpan / slatCount) * (i + 0.5);
-    const slat = plate(slatW, 1.6, grateDepth, darkM);
-    slat.position.set(slatX, grateY, d * 0.03);
-    grate.add(slat);
-  }
-  shell.add(grate);
-
-  // Зольник: висувний ящик у нижній передній частині + ручка.
-  const ashDrawer = new THREE.Group(); ashDrawer.name = 'ashDrawer';
-  const drawerW = Math.min(innerW - 6, doorWc * 0.66);
-  const drawerY = steelT + insulationT + 2.8;
-  const drawerFront = plate(drawerW, 5.5, 1.6, darkM);
-  drawerFront.position.set(0, drawerY, d / 2 + 0.8);
-  ashDrawer.add(drawerFront);
-  const drawerBox = plate(drawerW - 2, 4.5, innerD * 0.4, darkM);
-  drawerBox.position.set(0, drawerY - 0.6, d / 2 - innerD * 0.22);
-  ashDrawer.add(drawerBox);
-  const ashHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 6, 12), controlM);
-  ashHandle.rotation.x = Math.PI / 2; ashHandle.position.set(0, drawerY, d / 2 + 2.4);
-  ashDrawer.add(ashHandle);
-  shell.add(ashDrawer);
-
-  // Задній та бічні теплові екрани — опційні (безпека/розподіл тепла, не ККД).
+  // Теплові екрани — опційні (безпека/розподіл тепла, не ККД).
   let heatShield = null;
   if (cfg.visibility && cfg.visibility.shields) {
     heatShield = new THREE.Group(); heatShield.name = 'heatShield';
@@ -468,7 +464,7 @@ export function buildStove(cfg, cache = new Map()) {
   smoke.visible = false; shell.add(smoke);
 
   group.add(shell);
-  const refs = { shell, chimney, collar, doorPivot, frontPanel, firebrick, refractoryRoof, baffle, airSystems, gasChannels, chamber, flame, core, outer, sparks, shutter, flow, flowArrows, grate, ashDrawer, heatShield, thermalZones, zoneFirebox, zoneAfterburn, zoneChimney, smoke, smokeParticles };
+  const refs = { shell, chimney, collar, doorPivot, frontPanel, firebrick, refractoryRoof, baffle, airSystems, gasChannels, chamber, flame, core, outer, sparks, shutter, flow, flowArrows, heatShield, thermalZones, zoneFirebox, zoneAfterburn, zoneChimney, smoke, smokeParticles, flowPaths, aeroParticles };
   for (const n of [chimney, collar, doorPivot, frontPanel, firebrick, baffle, airSystems, gasChannels, chamber, flow]) {
     if (n) n.userData.basePosition = n.position.clone();
   }

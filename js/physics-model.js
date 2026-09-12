@@ -88,7 +88,7 @@ export const PhysicsModel = {
     const secondaryVelocityMs = clamp((draftPa * 0.12) / Math.max(secondaryOpeningAreaCm2, 0.4), 0.05, 8);
     const airWashVelocityMs = clamp((draftPa * 0.04) / Math.max(airWashOpeningAreaCm2 / 10, 0.6), 0.05, 5);
 
-    const secondaryDemandCm2 = clamp(fireboxLiters * 0.02, 2, 12);
+    const secondaryDemandCm2 = clamp(fireboxLiters * 0.006, 0.4, 2.0);
     const secondaryCoverage = clamp(secondaryOpeningAreaCm2 / secondaryDemandCm2, 0, 1.5);
     const airWashCoverage = clamp(airWashOpeningAreaCm2 / Math.max(doorWidth * 0.9, 1), 0, 1.5);
     const bafflePreheatBonus = baffleHeightNorm * 25 + baffleAngleNorm * 15;

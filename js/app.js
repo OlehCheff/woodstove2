@@ -610,6 +610,7 @@ function syncUI() {
   }
   document.getElementById('showFlow').checked = config.flow.visible;
   document.getElementById('animateFlow').checked = config.flow.animated;
+  document.getElementById('aeroFlow').checked = config.flow.aero;
   document.getElementById('modeHint').textContent =
     `${config.operation.mode} · primary ${Math.round(config.primaryAir.openPct)}% · secondary ${Math.round(config.operation.secondaryAirPct)}%`;
 }
@@ -686,6 +687,9 @@ function bindUI() {
   });
   document.getElementById('animateFlow').addEventListener('change', (e) => {
     config.flow.animated = e.target.checked; saveConfig(config);
+  });
+  document.getElementById('aeroFlow').addEventListener('change', (e) => {
+    config.flow.aero = e.target.checked; saveConfig(config);
   });
   document.getElementById('toggleDoor').addEventListener('click', () => {
     config.door.isOpen = !config.door.isOpen; saveConfig(config);
@@ -786,6 +790,21 @@ function animate() {
     refs.flowArrows.forEach((arrow, i) => {
       arrow.line.material.opacity = pulse + (i % 2) * 0.08;
       arrow.cone.material.opacity = Math.min(1, pulse + 0.2);
+    });
+  }
+  if (refs.aeroParticles) {
+    const aeroOn = config.flow.aero && config.flow.visible;
+    const aeroSpeed = 0.004 + config.operation.flameIntensity * 0.008;
+    refs.aeroParticles.forEach((dot, i) => {
+      dot.visible = aeroOn;
+      if (!aeroOn) return;
+      dot.userData.t += aeroSpeed * (1 + (i % 2) * 0.25);
+      if (dot.userData.t > 1) dot.userData.t -= 1;
+      const pts = dot.userData.path.pts;
+      const seg = dot.userData.t * (pts.length - 1);
+      const idx = Math.min(pts.length - 2, Math.floor(seg));
+      const f = seg - idx;
+      dot.position.lerpVectors(pts[idx], pts[idx + 1], f);
     });
   }
   if (refs.smokeParticles) {

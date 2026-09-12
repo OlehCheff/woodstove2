@@ -71,7 +71,7 @@ export const defaultConfig = {
     gapCm: 1.4, intakePct: 60, slotWidthPct: 94,
     channelWidthCm: 4, channelDepthCm: 4, preheatLengthCm: 45,
   },
-  flow: { visible: false, animated: true },
+  flow: { visible: false, animated: true, aero: false },
   visibility: { firebrick: true, baffle: true, airChannels: true, chimney: true, section: false, grid: true, thermal: false, shields: false },
   explode: { enabled: false, distanceCm: 18 },
   operation: { mode: 'medium', secondaryAirPct: 55, flameIntensity: 0.62 },
@@ -141,9 +141,9 @@ export function normalizeConfig(cfg) {
   cfg.primaryAir.holeSpacingCm = clamp(+cfg.primaryAir.holeSpacingCm || 4, 2, 8);
   cfg.primaryAir.openPct = clamp(+cfg.primaryAir.openPct ?? 52, 0, 100);
 
-  cfg.secondaryAir.holeCount = clamp(Math.round(+cfg.secondaryAir.holeCount || 10), 4, 24);
-  cfg.secondaryAir.holeDiameterCm = clamp(+cfg.secondaryAir.holeDiameterCm || 0.7, 0.4, 1.2);
-  cfg.secondaryAir.holeSpacingCm = clamp(+cfg.secondaryAir.holeSpacingCm || 2.4, 1.5, 4);
+  cfg.secondaryAir.holeCount = clamp(Math.round(+cfg.secondaryAir.holeCount || 10), 8, 60);
+  cfg.secondaryAir.holeDiameterCm = clamp(+cfg.secondaryAir.holeDiameterCm || 0.7, 0.25, 5);
+  cfg.secondaryAir.holeSpacingCm = clamp(+cfg.secondaryAir.holeSpacingCm || 2.4, 0.6, 6);
   cfg.secondaryAir.channelWidthCm = clamp(+cfg.secondaryAir.channelWidthCm || 5, 2, 12);
   cfg.secondaryAir.channelDepthCm = clamp(+cfg.secondaryAir.channelDepthCm || 4, 2, 10);
   cfg.secondaryAir.preheatLengthCm = clamp(+cfg.secondaryAir.preheatLengthCm || 55, 15, 140);
@@ -158,6 +158,7 @@ export function normalizeConfig(cfg) {
 
   cfg.flow.visible = Boolean(cfg.flow.visible);
   cfg.flow.animated = cfg.flow.animated !== false;
+  cfg.flow.aero = Boolean(cfg.flow.aero);
 
   for (const k of ['firebrick', 'baffle', 'airChannels', 'chimney', 'section', 'grid', 'thermal', 'shields']) cfg.visibility[k] = Boolean(cfg.visibility[k]);
   cfg.explode.enabled = Boolean(cfg.explode.enabled);

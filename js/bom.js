@@ -24,6 +24,10 @@ const NAME_EN = {
   'Шамот — дно': 'Firebrick — floor', 'Шамот — стіни (Л/П/З)': 'Firebrick — walls (L/R/back)',
   'Ізоляція топки (4 сторони)': 'Firebox insulation (4 sides)', 'Комір димоходу': 'Flue collar', 'Ніжки 50×50': 'Legs 50×50',
   'Тепловий екран — задній': 'Heat shield — rear', 'Тепловий екран — бічні (Л/П)': 'Heat shield — sides (L/R)',
+  'Primary — 2 овальні отвори + заслінка': 'Primary — 2 oval holes + gate',
+  'Secondary труба впоперек (SS)': 'Secondary cross tube (SS)',
+  'Air-wash щілина + флоп': 'Air-wash slit + flap',
+  'Air-wash бокова ручка + тяга': 'Air-wash side lever + rod',
 };
 function translateNote(s, lang) {
   if (lang !== 'en' || !s) return s;
@@ -124,24 +128,19 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
   add('Задня перепускна стінка', 1, innerW, Math.max(6, (hoodY - cfg.baffle.heightCm) * 0.55), steelCm, `сталь ${steelMm} мм`);
   add('Внутрішня димова труба (flue bell)', 1, Math.PI * chimR * 1.06 * 2, flueBellH, 0.3, 'сталь 3 мм', 'Ø' + round(chimR * 2.12, 1) + ' см, розгортка', 'tube', Math.PI * chimR * 2);
   add('Люк чистки + кришка', 1, 8.2, 8.2, 0.9, 'сталь', 'Ø68/82 мм', 'purchased');
-  // Повітряні системи — короби з листа 3 мм, тому маса = РОЗГОРТКА × 0.3 см,
-  // а не суцільний блок (глибина каналу не є товщиною стінки).
+  // Повітряні системи — короби/труби з листа 3 мм (маса = розгортка × товщина стінки).
   const wallT = 0.3;
-  add('Панель primary + задвижка', 1, Math.min(w - steelCm * 3, cfg.primaryAir.holeCount * cfg.primaryAir.holeSpacingCm + 8), 11.5, steelCm, `сталь ${steelMm} мм`, `${cfg.primaryAir.holeCount}×Ø${cfg.primaryAir.holeDiameterCm} см`);
+  // Primary: 2 овальні отвори в передній плиті + ковзна заслінка.
+  add('Primary — 2 овальні отвори + заслінка', 1, 2 * (openingW * 0.26) + 6, Math.max(4, openingBottom * 0.45) * 2.6, steelCm, `сталь ${steelMm} мм`, 'отвори в передній плиті під дверцятами');
+  // Secondary: 2 стояки + поперечна SS-труба з отворами Ø3 мм.
   const secRiserDev = 2 * (cfg.secondaryAir.channelWidthCm + cfg.secondaryAir.channelDepthCm);
   add('Secondary стояки (Л/П)', 2, secRiserDev, Math.max(12, cfg.secondaryAir.preheatLengthCm), wallT, 'сталь 3 мм', 'розгортка короба', 'tube');
-  const secManW = Math.max(12, Math.min(innerW - 2, cfg.secondaryAir.holeCount * cfg.secondaryAir.holeSpacingCm + 10));
-  add('Secondary manifold', 1, 2 * (cfg.secondaryAir.manifoldHeightCm + cfg.secondaryAir.channelDepthCm), secManW, wallT, 'сталь 3 мм', `${cfg.secondaryAir.holeCount}×Ø${cfg.secondaryAir.holeDiameterCm} см, розгортка`, 'tube');
+  const tubeLen = Math.max(16, Math.min(innerW * 0.9, 120));
+  add('Secondary труба впоперек (SS)', 1, Math.PI * 3.2, tubeLen, 0.15, 'нерж. 1.5 мм', `Ø32×1.5, ${cfg.secondaryAir.holeCount}×Ø3 мм`, 'tube');
+  // Air-wash: суцільна щілина над склом + флоп-заслінка + бокова ручка.
   const washW = Math.max(12, Math.min(w - steelCm * 3, doorW + 6));
-  add('Air-wash канали (Л/П)', 2, 2 * (cfg.airWash.channelWidthCm + cfg.airWash.channelDepthCm), Math.max(12, cfg.airWash.preheatLengthCm), wallT, 'сталь 3 мм', 'розгортка короба', 'tube');
-  add('Air-wash корпус + щілина', 1, 2 * (3.2 + cfg.airWash.channelDepthCm), washW, wallT, 'сталь 3 мм', `щілина ${cfg.airWash.gapCm} см, розгортка`, 'tube');
-  add('Верхнє піддувало', 1, Math.max(12, washW * 0.62), 1.1, 0.9, 'сталь');
-  // Колосник + зольник
-  const grateSpan = Math.max(14, innerW - 8);
-  const slatCount = Math.max(5, Math.floor(grateSpan / 3.4));
-  add('Колосник (прути)', slatCount, 1.6, Math.max(10, innerD * 0.68), 1.6, 'сталь', 'переріз 16×16 мм', 'bar');
-  const drawerW = Math.min(innerW - 6, doorW * 0.66);
-  add('Зольник (ящик + фасад)', 1, 2 * (drawerW + 5), innerD * 0.4 + 5.5, wallT, 'сталь', 'розгортка + фасад', 'tube');
+  add('Air-wash щілина + флоп', 1, washW, Math.max(3, cfg.airWash.gapCm * 4), wallT, 'сталь 3 мм', `щілина ${cfg.airWash.gapCm} см на всю ширину`, 'tube');
+  add('Air-wash бокова ручка + тяга', 1, 6, 3, 0.8, 'сталь', 'права стінка, звʼязок з флопом', 'bar');
   // Шамот + ізоляція
   const cw = Math.max(10, w - steelCm * 2);
   const cd = Math.max(10, d - steelCm * 2);

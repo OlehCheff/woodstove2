@@ -11,6 +11,7 @@ export function designInternals(cfg) {
   const w = +cfg.dimensions.widthCm;
   const d = +cfg.dimensions.depthCm;
   const h = +cfg.dimensions.heightCm;
+  const steelCm = (+cfg.materials.steelThicknessMm || 5) / 10;
 
   // Ергономіка дверцят — фіксовані найкращі значення.
   cfg.door.glassInsetCm = 2;
@@ -28,13 +29,20 @@ export function designInternals(cfg) {
   cfg.primaryAir.holeDiameterCm = 1.2;
   cfg.primaryAir.holeSpacingCm = clamp(round((w - 6) / Math.max(1, cfg.primaryAir.holeCount - 1), 1), 2, 8);
 
-  // Secondary: масштаб під топку для повного покриття (великі печі — більші отвори).
-  cfg.secondaryAir.holeCount = clamp(Math.round(w / 6), 4, 30);
-  cfg.secondaryAir.holeDiameterCm = clamp(round(w * 0.012 * 10) / 10, 0.6, 1.4);
-  cfg.secondaryAir.holeSpacingCm = clamp(round((w - 12) / Math.max(1, cfg.secondaryAir.holeCount - 1), 1), 1.5, 3.0);
+  // Secondary: поперечна SS-труба з отворами Ø3 мм; кількість масштабується від топки.
+  // Орієнтир сумарної площі вторинного входу ~1% об'єму топки (0.6–3 см²).
+  const linerCmEst = (+cfg.materials.firebrickThicknessCm || 4) + 3;
+  const innerWEst = Math.max(10, w - steelCm * 2 - linerCmEst * 2);
+  const innerDEst = Math.max(10, d - steelCm * 2 - linerCmEst * 2);
+  const innerHEst = Math.max(10, Math.round(h * 0.6) - steelCm - linerCmEst);
+  const litersEst = (innerWEst * innerDEst * innerHEst) / 1000;
+  const targetSecArea = clamp(litersEst * 0.01, 1.0, 4.0);
+  cfg.secondaryAir.holeDiameterCm = 0.3;
+  cfg.secondaryAir.holeCount = clamp(Math.round(targetSecArea / (Math.PI * 0.15 * 0.15)), 8, 60);
+  cfg.secondaryAir.holeSpacingCm = clamp(round((w * 0.8) / Math.max(1, cfg.secondaryAir.holeCount), 1), 1.0, 4);
   cfg.secondaryAir.channelWidthCm = 5;
   cfg.secondaryAir.channelDepthCm = 4;
-  cfg.secondaryAir.preheatLengthCm = clamp(Math.round(h * 0.6), 15, 140);
+  cfg.secondaryAir.preheatLengthCm = clamp(Math.round(h * 0.55), 15, 140);
   cfg.secondaryAir.manifoldHeightCm = 4;
 
   // Air-wash.
@@ -50,7 +58,6 @@ export function designInternals(cfg) {
   cfg.thermal.heatExchangePasses = 2;
 
   // Шамот обмежуємо, щоб фізично лишалася топка (інакше 30 см + 8 см шамоту = 0 об'єму).
-  const steelCm = (+cfg.materials.steelThicknessMm || 5) / 10;
   const minDim = Math.min(w, d);
   const maxBrick = Math.max(2, Math.floor(((minDim - steelCm * 2 - 8.5) / 2 - 3) * 2) / 2);
   cfg.materials.firebrickThicknessCm = Math.min(+cfg.materials.firebrickThicknessCm || 4, maxBrick);
