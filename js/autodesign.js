@@ -28,10 +28,10 @@ export function designInternals(cfg) {
   cfg.primaryAir.holeDiameterCm = 1.2;
   cfg.primaryAir.holeSpacingCm = clamp(round((w - 6) / Math.max(1, cfg.primaryAir.holeCount - 1), 1), 2, 8);
 
-  // Secondary: масштаб під топку для повного покриття.
-  cfg.secondaryAir.holeCount = clamp(Math.round(w / 7), 4, 24);
-  cfg.secondaryAir.holeDiameterCm = 0.7;
-  cfg.secondaryAir.holeSpacingCm = 2.4;
+  // Secondary: масштаб під топку для повного покриття (великі печі — більші отвори).
+  cfg.secondaryAir.holeCount = clamp(Math.round(w / 6), 4, 30);
+  cfg.secondaryAir.holeDiameterCm = clamp(round(w * 0.012 * 10) / 10, 0.6, 1.4);
+  cfg.secondaryAir.holeSpacingCm = clamp(round((w - 12) / Math.max(1, cfg.secondaryAir.holeCount - 1), 1), 1.5, 3.0);
   cfg.secondaryAir.channelWidthCm = 5;
   cfg.secondaryAir.channelDepthCm = 4;
   cfg.secondaryAir.preheatLengthCm = clamp(Math.round(h * 0.6), 15, 140);

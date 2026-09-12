@@ -143,25 +143,25 @@ export const PhysicsModel = {
     );
 
     const warnings = [];
-    if (primaryPct < 22 && secondaryPct < 30)
+    if (primaryPct < 18 && secondaryPct < 20)
       warnings.push({ level: 'warn', code: 'SMOKE_RISK', message: 'Ризик димлення: замало первинного і вторинного повітря.' });
     if (heatOutputKw > 9.0 && steelMm <= 4)
       warnings.push({ level: 'danger', code: 'OVERHEAT_RISK', message: 'Перегрів: висока потужність при сталі ≤4 мм.' });
-    if (efficiencyPct < 62)
-      warnings.push({ level: 'warn', code: 'INEFFICIENT_MODE', message: 'Неефективний режим: ККД < 62%.' });
+    if (efficiencyPct < 58 && mode !== 'overnight')
+      warnings.push({ level: 'warn', code: 'INEFFICIENT_MODE', message: 'Неефективний режим: ККД < 58%.' });
     if (washGap < 0.9 && flame > 0.75)
       warnings.push({ level: 'warn', code: 'DIRTY_GLASS', message: 'Закопчення скла: вузький air-wash при сильному полум’ї.' });
-    if (draftPa < 7)
+    if (draftPa < 7 && mode !== 'overnight')
       warnings.push({ level: 'warn', code: 'DRAFT_WEAK', message: `Слабка тяга (${round(draftPa, 1)} Па): збільшіть висоту/Ø димоходу або інтенсивність.` });
     if (baffleGap > 12)
       warnings.push({ level: 'info', code: 'BAFFLE_GAP', message: 'Великий передній зазор бафля — гази йдуть повз догорання.' });
-    if (secondaryCoverage < 0.62)
+    if (secondaryCoverage < 0.62 && mode !== 'overnight')
       warnings.push({ level: 'warn', code: 'SECONDARY_RESTRICTED', message: 'Замала площа secondary-отворів для обʼєму топки.' });
     if (secondaryPreheatC < 130)
       warnings.push({ level: 'warn', code: 'SECONDARY_COLD', message: 'Secondary air недостатньо підігрівається перед догоранням.' });
     if (airWashVelocityMs > 2.0 && washWidthPct < 80)
       warnings.push({ level: 'warn', code: 'AIRWASH_JETS', message: 'Air-wash може працювати струменями: розширте slot або зменште intake.' });
-    if (airWashCoverage < 0.55)
+    if (airWashCoverage < 0.55 && mode !== 'overnight')
       warnings.push({ level: 'warn', code: 'AIRWASH_LOW', message: 'Недостатнє покриття скла повітряною завісою.' });
     if (mode === 'start-up' && burnTimeHours > 6)
       warnings.push({ level: 'info', code: 'STARTUP_LONG', message: 'Start-up з довгим горінням — перевірте подачу повітря.' });

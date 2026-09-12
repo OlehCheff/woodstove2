@@ -5,7 +5,44 @@ import { PhysicsModel } from './physics-model.js';
 
 const round = (v, d = 1) => Math.round(v * 10 ** d) / 10 ** d;
 
-export function buildBOM(cfg, physicsResult = null) {
+const NAME_EN = {
+  'Днище': 'Bottom', 'Бічна панель (Л/П)': 'Side panel (L/R)', 'Задня панель': 'Back panel',
+  'Передня панель — бічна (Л/П)': 'Front panel — side (L/R)', 'Передня панель — під дверима': 'Front panel — below door',
+  'Передня панель — над дверима': 'Front panel — above door', 'Верх — передня смуга': 'Top — front strip',
+  'Верх — задня смуга': 'Top — rear strip', 'Верх — бічні смуги (Л/П)': 'Top — side strips (L/R)',
+  'Дверцята — планки рами гориз. (верх/низ)': 'Door — frame bars horiz. (top/bottom)',
+  'Дверцята — планки рами верт. (Л/П)': 'Door — frame bars vert. (L/R)',
+  'Скло дверцят': 'Door glass', 'Петля дверцят (кріплення + втулка)': 'Door hinge (mount + bushing)',
+  'Пружинна ручка-спіраль': 'Spring coil handle', 'Засувка дверцят (клямка)': 'Door latch',
+  'Бафль (пластина)': 'Baffle plate', 'Refractory плита над бафлем': 'Refractory plate above baffle',
+  'Засувка бафля': 'Baffle damper', 'Димова полиця': 'Smoke shelf', 'Бічні напрямні верхнього ходу (Л/П)': 'Upper gas-path guides (L/R)',
+  'Задня перепускна стінка': 'Rear bypass wall', 'Внутрішня димова труба (flue bell)': 'Internal flue bell',
+  'Люк чистки + кришка': 'Cleaning port + cap', 'Панель primary + задвижка': 'Primary panel + gate',
+  'Secondary стояки (Л/П)': 'Secondary risers (L/R)', 'Secondary manifold': 'Secondary manifold',
+  'Air-wash канали (Л/П)': 'Air-wash channels (L/R)', 'Air-wash корпус + щілина': 'Air-wash box + slot',
+  'Верхнє піддувало': 'Upper vent', 'Колосник (прути)': 'Grate bars', 'Зольник (ящик + фасад)': 'Ash pan (box + front)',
+  'Шамот — дно': 'Firebrick — floor', 'Шамот — стіни (Л/П/З)': 'Firebrick — walls (L/R/back)',
+  'Ізоляція топки (4 сторони)': 'Firebox insulation (4 sides)', 'Комір димоходу': 'Flue collar', 'Ніжки 50×50': 'Legs 50×50',
+  'Тепловий екран — задній': 'Heat shield — rear', 'Тепловий екран — бічні (Л/П)': 'Heat shield — sides (L/R)',
+};
+function translateNote(s, lang) {
+  if (lang !== 'en' || !s) return s;
+  return s
+    .replace(/розгортка/g, 'developed').replace(/з ручкою/g, 'with handle').replace(/переріз/g, 'section')
+    .replace(/щілина/g, 'slot').replace(/кут/g, 'angle').replace(/зазор/g, 'clearance')
+    .replace(/Л \+ П \+ задня/g, 'L+R+back').replace(/Л \+ П/g, 'L+R').replace(/покупна\/токарка/g, 'purchased/machined')
+    .replace(/кручена/g, 'coiled').replace(/з зачепом/g, 'with catch').replace(/термостійке/g, 'heat-resistant')
+    .replace(/гориз\./g, 'horiz.').replace(/верт\./g, 'vert.').replace(/профільна труба/g, 'profile tube')
+    .replace(/см/g, 'cm');
+}
+function translateMat(s, lang) {
+  if (lang !== 'en') return s;
+  return s.replace(/сталь/g, 'steel').replace(/шамот/g, 'firebrick').replace(/скло/g, 'glass')
+    .replace(/вермикуліт/g, 'vermiculite').replace(/покупна/g, 'purchased').replace(/мм/g, 'mm');
+}
+
+export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
+  const trName = (s) => (lang === 'en' ? (NAME_EN[s] || s.replace('Димохід', 'Flue').replace(/ см/g, ' cm')) : s);
   const w = cfg.dimensions.widthCm;
   const d = cfg.dimensions.depthCm;
   const h = cfg.dimensions.heightCm;
@@ -47,8 +84,8 @@ export function buildBOM(cfg, physicsResult = null) {
     const areaCm2 = round(wCm * hCm, 1);
     const massKg = round(areaCm2 * tCm * densityOf(mat), 2);
     parts.push({
-      name, qty, wCm: round(wCm, 1), hCm: round(hCm, 1), tCm: round(tCm, 1),
-      areaCm2, massKg, mat, note, kind, weldCm: round(weldCm, 1), estimate: true,
+      name: trName(name), qty, wCm: round(wCm, 1), hCm: round(hCm, 1), tCm: round(tCm, 1),
+      areaCm2, massKg, mat: translateMat(mat, lang), note: translateNote(note, lang), kind, weldCm: round(weldCm, 1), estimate: true,
     });
   };
 
@@ -111,7 +148,7 @@ export function buildBOM(cfg, physicsResult = null) {
   const linerTopY = Math.max(steelCm * 4, Math.min(h - steelCm * 2 - insT, cfg.baffle.heightCm - steelCm));
   const brickH = Math.max(10, linerTopY - steelCm - insT - brickT);
   add('Шамот — дно', 1, cw - insT * 2, cd - insT * 2, brickT, 'шамот');
-  add('Шамот — стіни (Л/П/З)', 3, brickT, brickH, brickT, 'шамот', 'Л + П + задня');
+  add('Шамот — стіни (Л/П/З)', 3, brickH, Math.max(10, cd - insT * 2), brickT, 'шамот', 'Л + П + задня');
   if (insT > 0) add('Ізоляція топки (4 сторони)', 4, cw, linerTopY - steelCm, insT, 'vermiculite/CFB');
   // Димохід
   add('Димохід Ø' + cfg.chimney.diameterCm + ' см', 1, Math.PI * chimR * 2, cfg.chimney.heightCm, 0.3, 'сталь 3 мм', 'розгортка', 'tube', Math.PI * chimR * 2);
@@ -126,11 +163,12 @@ export function buildBOM(cfg, physicsResult = null) {
     add('Тепловий екран — бічні (Л/П)', 2, d - 4, shieldH, 0.3, 'сталь 3 мм');
   }
 
-  const steelMass = parts.filter(p => p.mat.includes('сталь')).reduce((s, p) => s + p.massKg * p.qty, 0);
-  const brickMass = parts.filter(p => p.mat === 'шамот').reduce((s, p) => s + p.massKg * p.qty, 0);
-  const glassMass = parts.filter(p => p.mat.includes('скло')).reduce((s, p) => s + p.massKg * p.qty, 0);
-  const insMass = parts.filter(p => p.mat.includes('vermiculite') || p.mat.includes('CFB')).reduce((s, p) => s + p.massKg * p.qty, 0);
-  const cutParts = parts.filter(p => p.kind === 'sheet' || p.kind === 'bar' || p.kind === 'tube');
+  const isSteel = (m) => /steel|сталь/.test(m);
+  const steelMass = parts.filter(p => isSteel(p.mat)).reduce((s, p) => s + p.massKg * p.qty, 0);
+  const brickMass = parts.filter(p => /firebrick|шамот/.test(p.mat)).reduce((s, p) => s + p.massKg * p.qty, 0);
+  const glassMass = parts.filter(p => /glass|скло/.test(p.mat)).reduce((s, p) => s + p.massKg * p.qty, 0);
+  const insMass = parts.filter(p => /vermiculite|CFB|вермикуліт/.test(p.mat)).reduce((s, p) => s + p.massKg * p.qty, 0);
+  const cutParts = parts.filter(p => p.mat.match(/steel|сталь/) && (p.kind === 'sheet' || p.kind === 'bar' || p.kind === 'tube'));
   const cutAreaCm2 = cutParts.reduce((s, p) => s + p.areaCm2 * p.qty, 0);
   const weldCm = parts.reduce((s, p) => s + p.weldCm * p.qty, 0);
   const physics = physicsResult || PhysicsModel.evaluate(cfg);
@@ -162,11 +200,14 @@ export function bomToCsv(bom, lang = 'uk') {
   const head = lang === 'en'
     ? 'Part,Qty,Width cm,Height cm,Thickness cm,Type,Cut area cm2,Mass kg,Material,Weld cm,Note'
     : 'Деталь,К-ть,Ширина см,Висота см,Товщина см,Тип,Площа різу см2,Маса кг,Матеріал,Шов см,Примітка';
-  const kindTxt = { sheet: 'лист', bar: 'планка', tube: 'розгортка', purchased: 'покупна' };
+  const kindTxt = lang === 'en'
+    ? { sheet: 'sheet', bar: 'bar', tube: 'developed', purchased: 'purchased' }
+    : { sheet: 'лист', bar: 'планка', tube: 'розгортка', purchased: 'покупна' };
+  const esc = (v) => { const s = String(v == null ? '' : v); return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const rows = bom.parts.map((p) => [
     p.name, p.qty, p.wCm, p.hCm, p.tCm, kindTxt[p.kind] || p.kind,
     (p.kind === 'purchased' ? '' : p.areaCm2), p.massKg, p.mat, p.weldCm, p.note,
-  ].join(','));
+  ].map(esc).join(','));
   const totals = lang === 'en'
     ? `TOTAL,,steel ${bom.totals.steelMassKg} kg,brick ${bom.totals.brickMassKg} kg,glass ${bom.totals.glassMassKg} kg,cut ${bom.totals.cutAreaM2} m2,weld ${bom.totals.weldMeters} m,purchased ${bom.totals.purchasedCount} pcs,total ${bom.totals.totalMassKg} kg (estimate)`
     : `РАЗОМ,,сталь ${bom.totals.steelMassKg} кг,шамот ${bom.totals.brickMassKg} кг,скло ${bom.totals.glassMassKg} кг,різ ${bom.totals.cutAreaM2} м2,шов ${bom.totals.weldMeters} м,покупних ${bom.totals.purchasedCount} шт,загалом ${bom.totals.totalMassKg} кг (оцінка)`;
@@ -175,9 +216,9 @@ export function bomToCsv(bom, lang = 'uk') {
 
 // DXF R12 (LINE + TEXT) — розкладка плоских деталей для плазми/лазера.
 // Одиниці — мм (1 см = 10 мм). Одна деталь = прямокутник + маркування.
-export function buildDXF(cfg) {
-  const bom = buildBOM(cfg);
-  const flat = bom.parts.filter(p => p.kind === 'sheet' || p.kind === 'bar' || p.kind === 'tube');
+export function buildDXF(cfg, lang = 'uk') {
+  const bom = buildBOM(cfg, null, lang);
+  const flat = bom.parts.filter(p => /steel|сталь/.test(p.mat) && (p.kind === 'sheet' || p.kind === 'bar' || p.kind === 'tube'));
   const sheetW = 2000; // мм корисна ширина листа
   const gap = 20;      // мм між деталями
   let x = 20, y = 20, rowH = 0, n = 0;
@@ -203,8 +244,8 @@ export function buildDXF(cfg) {
   return ['0', 'SECTION', '2', 'ENTITIES', ...out, '0', 'ENDSEC', '0', 'EOF'].join('\n');
 }
 
-// Технічне креслення у SVG: front/side/top з внутрішніми деталями.
-export function buildDrawingSVG(cfg) {
+// Технічне креслення у SVG: front/side/top. Підлога — внизу (Y інвертований коректно).
+export function buildDrawingSVG(cfg, lang = 'uk') {
   const { widthCm: W, depthCm: D, heightCm: H, legHeightCm: L } = cfg.dimensions;
   const steelMm = cfg.materials.steelThicknessMm;
   const steelCm = steelMm / 10;
@@ -212,54 +253,68 @@ export function buildDrawingSVG(cfg) {
   const scale = 3; // px per cm
   const margin = 70;
   const px = (v) => round(v * scale, 1);
+  const u = lang === 'en' ? 'cm' : 'см';
+  const lbBody = lang === 'en' ? 'Body H' : 'H корпусу';
+  const lbLegs = lang === 'en' ? 'Legs' : 'Ніжки';
+  const lbTotal = lang === 'en' ? 'Overall H' : 'H загальна';
+  const lbDoor = lang === 'en' ? 'door' : 'дверцята';
+  const lbBaffle = lang === 'en' ? 'baffle Y' : 'бафль Y';
   const dimLine = (x1, y1, x2, y2, label, side = 'top') => {
     const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
     const tx = side === 'top' ? midX : midX - 6;
     const ty = side === 'top' ? midY - 8 : midY + 4;
     return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#333" stroke-width="1" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
-      <rect x="${tx - 30}" y="${ty - 10}" width="60" height="16" rx="3" fill="#fff" stroke="#4f8cff"/><text x="${tx}" y="${ty + 2}" text-anchor="middle" font-size="10" fill="#172033">${label}</text>`;
+      <rect x="${tx - 32}" y="${ty - 10}" width="64" height="16" rx="3" fill="#fff" stroke="#4f8cff"/><text x="${tx}" y="${ty + 2}" text-anchor="middle" font-size="10" fill="#172033">${label}</text>`;
   };
 
   // ---- FRONT VIEW ----
   const fw = px(W), fh = px(H + L);
   const fx0 = margin, fy0 = margin;
+  const floorY = fy0 + fh;                      // низ = підлога
+  const sy = (cm) => floorY - px(cm);           // см від підлоги → екран Y
   const doorW = Math.min(cfg.door.widthCm, W - steelCm * 4);
   const doorH = Math.min(cfg.door.heightCm, H - steelCm * 4);
+  const doorCenterCm = L + H * 0.48;
   const dx0 = fx0 + (fw - px(doorW)) / 2;
-  const dy0 = fy0 + px(L) + px(H * 0.48) - px(doorH) / 2;
+  const dyTop = sy(doorCenterCm + doorH / 2);
   const baffleY = Math.max(steelCm * 4, Math.min(H - steelCm * 2, cfg.baffle.heightCm));
   const front = `
     <rect x="${fx0}" y="${fy0}" width="${fw}" height="${fh}" fill="#f8f9fb" stroke="#172033" stroke-width="1.5"/>
-    <rect x="${dx0}" y="${dy0}" width="${px(doorW)}" height="${px(doorH)}" fill="#eef3fa" stroke="#4f8cff" stroke-width="1" stroke-dasharray="4 2"/>
-    <text x="${dx0 + px(doorW) / 2}" y="${dy0 + px(doorH) / 2}" text-anchor="middle" font-size="10" fill="#4f8cff">дверцята</text>
-    <line x1="${fx0}" y1="${fy0 + px(L + baffleY)}" x2="${fx0 + fw}" y2="${fy0 + px(L + baffleY)}" stroke="#c56a2d" stroke-width="1.5" stroke-dasharray="6 3"/>
-    <text x="${fx0 + fw - 8}" y="${fy0 + px(L + baffleY) - 4}" text-anchor="end" font-size="9" fill="#c56a2d">бафль Y=${cfg.baffle.heightCm} см</text>
-    ${dimLine(fx0, fy0 + fh + 20, fx0 + fw, fy0 + fh + 20, `W ${W} см`, 'top')}
-    ${dimLine(fx0 + fw + 20, fy0 + px(L), fx0 + fw + 20, fy0 + px(L + H), `H ${H} см`, 'side')}
-    ${L > 0 ? dimLine(fx0 + fw + 45, fy0, fx0 + fw + 45, fy0 + fh, `Σ ${H + L} см`, 'side') : ''}
-    ${L > 0 ? dimLine(fx0 - 20, fy0, fx0 - 20, fy0 + px(L), `legs ${L} см`, 'side') : ''}
+    ${L > 0 ? `<line x1="${fx0}" y1="${sy(L)}" x2="${fx0 + fw}" y2="${sy(L)}" stroke="#172033" stroke-width="1" stroke-dasharray="3 3"/>` : ''}
+    <rect x="${dx0}" y="${dyTop}" width="${px(doorW)}" height="${px(doorH)}" fill="#eef3fa" stroke="#4f8cff" stroke-width="1" stroke-dasharray="4 2"/>
+    <text x="${dx0 + px(doorW) / 2}" y="${dyTop + px(doorH) / 2}" text-anchor="middle" font-size="10" fill="#4f8cff">${lbDoor}</text>
+    <line x1="${fx0}" y1="${sy(L + baffleY)}" x2="${fx0 + fw}" y2="${sy(L + baffleY)}" stroke="#c56a2d" stroke-width="1.5" stroke-dasharray="6 3"/>
+    <text x="${fx0 + fw - 8}" y="${sy(L + baffleY) - 4}" text-anchor="end" font-size="9" fill="#c56a2d">${lbBaffle}=${cfg.baffle.heightCm} ${u}</text>
+    ${dimLine(fx0, floorY + 20, fx0 + fw, floorY + 20, `W ${W} ${u}`, 'top')}
+    ${dimLine(fx0 + fw + 20, sy(L), fx0 + fw + 20, sy(L + H), `${lbBody} ${H} ${u}`, 'side')}
+    ${L > 0 ? dimLine(fx0 + fw + 48, sy(0), fx0 + fw + 48, sy(L + H), `${lbTotal} ${H + L} ${u}`, 'side') : ''}
+    ${L > 0 ? dimLine(fx0 - 22, sy(0), fx0 - 22, sy(L), `${lbLegs} ${L} ${u}`, 'side') : ''}
   `;
   // ---- SIDE VIEW ----
-  const sx0 = margin + fw + 140;
+  const sx0 = margin + fw + 150;
   const sw = px(D);
   const side = `
     <rect x="${sx0}" y="${fy0}" width="${sw}" height="${fh}" fill="#f8f9fb" stroke="#172033" stroke-width="1.5"/>
-    <rect x="${sx0}" y="${fy0 + px(L + baffleY) - px(brickT)}" width="${sw}" height="${px(brickT)}" fill="#f5e3d0" stroke="#c56a2d"/>
-    <circle cx="${sx0 + sw / 2}" cy="${fy0 + px(L + H) - px(cfg.chimney.diameterCm / 2)}" r="${px(cfg.chimney.diameterCm / 2)}" fill="none" stroke="#172033" stroke-width="1"/>
-    ${dimLine(sx0, fy0 + fh + 20, sx0 + sw, fy0 + fh + 20, `D ${D} см`, 'top')}
+    ${L > 0 ? `<line x1="${sx0}" y1="${sy(L)}" x2="${sx0 + sw}" y2="${sy(L)}" stroke="#172033" stroke-width="1" stroke-dasharray="3 3"/>` : ''}
+    <rect x="${sx0}" y="${sy(L + baffleY)}" width="${sw}" height="${px(brickT)}" fill="#f5e3d0" stroke="#c56a2d"/>
+    <circle cx="${sx0 + sw / 2}" cy="${sy(L + H)}" r="${px(cfg.chimney.diameterCm / 2)}" fill="none" stroke="#172033" stroke-width="1"/>
+    ${dimLine(sx0, floorY + 20, sx0 + sw, floorY + 20, `D ${D} ${u}`, 'top')}
   `;
-  // ---- TOP VIEW ----
-  const ty0 = fy0 + fh + 70;
-  const chimZoff = D * 0.2;
+  // ---- TOP VIEW ---- (перед унизу, зад/димохід — вище)
+  const ty0 = fy0 + fh + 80;
   const top = `
     <rect x="${fx0}" y="${ty0}" width="${fw}" height="${sw}" fill="#f8f9fb" stroke="#172033" stroke-width="1.5"/>
-    <circle cx="${fx0 + fw / 2}" cy="${ty0 + px(chimZoff)}" r="${px(cfg.chimney.diameterCm / 2)}" fill="#eef3fa" stroke="#4f8cff" stroke-width="1"/>
-    <text x="${fx0 + fw / 2}" y="${ty0 + px(chimZoff) - px(cfg.chimney.diameterCm / 2) - 5}" text-anchor="middle" font-size="9" fill="#4f8cff">Ø${cfg.chimney.diameterCm} см</text>
-    ${dimLine(fx0, ty0 + sw + 20, fx0 + fw, ty0 + sw + 20, `W ${W} см`, 'top')}
+    <circle cx="${fx0 + fw / 2}" cy="${ty0 + px(D * 0.3)}" r="${px(cfg.chimney.diameterCm / 2)}" fill="#eef3fa" stroke="#4f8cff" stroke-width="1"/>
+    <text x="${fx0 + fw / 2}" y="${ty0 + px(D * 0.3) - px(cfg.chimney.diameterCm / 2) - 5}" text-anchor="middle" font-size="9" fill="#4f8cff">Ø${cfg.chimney.diameterCm} ${u}</text>
+    ${dimLine(fx0, ty0 + sw + 20, fx0 + fw, ty0 + sw + 20, `W ${W} ${u}`, 'top')}
   `;
 
-  const totalW = margin * 2 + fw + 140 + sw;
+  const totalW = margin * 2 + fw + 150 + sw;
   const totalH = ty0 + sw + 90;
+  const title = lang === 'en' ? 'Woodstove 2 — technical drawing (cm)' : 'Woodstove 2 — технічне креслення (см)';
+  const sub = lang === 'en'
+    ? `steel ${steelMm} mm · firebrick ${brickT} cm · ${new Date().toLocaleDateString()}`
+    : `сталь ${steelMm} мм · шамот ${brickT} см · ${new Date().toLocaleDateString()}`;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${totalW} ${totalH}" font-family="Arial">
     <defs>
       <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
@@ -267,8 +322,8 @@ export function buildDrawingSVG(cfg) {
       </marker>
     </defs>
     <rect width="${totalW}" height="${totalH}" fill="#fff"/>
-    <text x="${margin}" y="${30}" font-size="14" font-weight="bold" fill="#172033">Woodstove 2 — технічне креслення (см)</text>
-    <text x="${margin}" y="${48}" font-size="10" fill="#666">сталь ${steelMm} мм · шамот ${brickT} см · ${new Date().toLocaleDateString()}</text>
+    <text x="${margin}" y="${30}" font-size="14" font-weight="bold" fill="#172033">${title}</text>
+    <text x="${margin}" y="${48}" font-size="10" fill="#666">${sub}</text>
     ${front}${side}${top}
   </svg>`;
 }

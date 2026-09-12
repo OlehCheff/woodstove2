@@ -126,11 +126,12 @@ export function buildStove(cfg, cache = new Map()) {
   const baffleControlX = -regTravel / 2 + regTravel * (cfg.baffle.airflowPct / 100);
   baffleReg.position.set(baffleControlX, baffleY - 2.4, d * 0.16);
   baffleReg.name = 'baffleReg'; shell.add(baffleReg);
-  const baffleRod = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 4.5, 10), baffleControlM);
-  baffleRod.rotation.z = Math.PI / 2;
-  baffleRod.position.set(w / 2 + 1.3, baffleY, d * 0.12); shell.add(baffleRod);
-  const baffleKnob = new THREE.Mesh(new THREE.SphereGeometry(1.5, 14, 14), baffleControlM);
-  baffleKnob.position.set(w / 2 + 3.3, baffleY, d * 0.12);
+  const stripCenterX = (w / 2 + openingW / 2) / 2;
+  const baffleRod = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 3.0, 10), baffleControlM);
+  baffleRod.rotation.x = Math.PI / 2;
+  baffleRod.position.set(stripCenterX, baffleY, d / 2 + 1.0); shell.add(baffleRod);
+  const baffleKnob = new THREE.Mesh(new THREE.SphereGeometry(1.3, 14, 14), baffleControlM);
+  baffleKnob.position.set(stripCenterX, baffleY, d / 2 + 2.6);
   baffleKnob.name = 'baffleHandle'; shell.add(baffleKnob);
 
   // Повітряні канали: primary знизу, secondary через два підігрівальні стояки,
@@ -385,14 +386,20 @@ export function buildStove(cfg, cache = new Map()) {
   }
   const knob = new THREE.Mesh(new THREE.SphereGeometry(1.15, 14, 14), handleMat);
   knob.position.x = shaftLen / 2 + 0.5; springHandle.add(knob);
-  springHandle.position.set(-hingeSign * doorWc * 0.33, 0, frameT / 2 + 2.0);
+  // Ручка кріпиться до вільної вертикальної планки рамки (не «на склі»).
+  const freeEdgeX = -hingeSign * (doorWc / 2 - frameT / 2);
+  const handleMount = plate(frameT + 0.4, frameT + 1.6, 1.0, darkM);
+  handleMount.position.set(freeEdgeX, 0, frameT / 2 + 0.5); leaf.add(handleMount);
+  springHandle.position.set(freeEdgeX, 0, frameT / 2 + 0.95);
   leaf.add(springHandle);
-  // Засувка: вертикальна планка на дверцятах + ролик + зачіп на корпусі.
+  // Засувка: планка + кронштейн + ролик біля фасаду.
   const latchX = -hingeSign * (doorWc / 2 - 1.4);
   const latchBar = new THREE.Mesh(new THREE.BoxGeometry(0.9, Math.min(7, doorHc * 0.22), 0.9), darkM);
-  latchBar.position.set(latchX, 0, frameT / 2 + 0.5); leaf.add(latchBar);
+  latchBar.position.set(latchX, 0, frameT / 2 + 0.3); leaf.add(latchBar);
+  const latchBracket = plate(1.4, Math.min(7, doorHc * 0.22), 0.6, darkM);
+  latchBracket.position.set(latchX, 0, frameT / 2 + 0.7); leaf.add(latchBracket);
   const latchRoller = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 5.2, 12), handleMat);
-  latchRoller.rotation.x = Math.PI / 2; latchRoller.position.set(latchX, 0, frameT + 1.1); leaf.add(latchRoller);
+  latchRoller.rotation.x = Math.PI / 2; latchRoller.position.set(latchX, 0, frameT / 2 + 1.0); leaf.add(latchRoller);
   doorPivot.add(leaf); shell.add(doorPivot);
   const catchPlate = plate(1.6, Math.min(9, doorHc * 0.3), 1.6, darkM);
   catchPlate.position.set(-hingeSign * (openingW / 2 - 0.9), openingBottom + openingH / 2, d / 2 + steelT * 0.5 + frameT * 0.6);

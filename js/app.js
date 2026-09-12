@@ -16,7 +16,11 @@ const t = (k) => (STR[lang] && STR[lang][k]) || STR.uk[k] || k;
 
 let config = loadConfig();
 const sharedValue = location.hash.startsWith('#config=') ? decodeConfig(location.hash.slice(8)) : null;
-if (sharedValue) config = normalizeConfig(deepMerge(structuredClone(defaultConfig), sharedValue));
+if (sharedValue) {
+  config = normalizeConfig(deepMerge(structuredClone(defaultConfig), sharedValue));
+  // Прибираємо #config з адреси, інакше він перекриватиме подальші правки та «Скинути» після F5.
+  try { history.replaceState(null, '', location.pathname + location.search); } catch { /* ignore */ }
+}
 config = designInternals(config);
 const cache = new Map(); // кеш матеріалів
 const COMPARE_KEY = 'woodstove2CompareV1';
@@ -86,7 +90,12 @@ function applyVisibility() {
 }
 const sectionPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
 function applySection() {
-  renderer.clippingPlanes = config.visibility.section ? [sectionPlane] : [];
+  const planes = config.visibility.section ? [sectionPlane] : [];
+  if (!stove) return;
+  stove.traverse((n) => {
+    const mats = Array.isArray(n.material) ? n.material : (n.material ? [n.material] : []);
+    for (const m of mats) { m.clippingPlanes = planes; m.clipShadows = true; m.needsUpdate = true; }
+  });
 }
 function applyGrid() {
   const show = config.visibility.grid !== false;
@@ -140,7 +149,7 @@ function applyViewMode() {
   const overlay = document.getElementById('drawing-overlay');
   const m = config.viewMode;
   document.getElementById('viewMode').value = m;
-  if (m === '3d') { overlay.style.display = 'none'; controls.enabled = true; syncCamera(false); return; }
+  if (m === '3d') { overlay.style.display = 'none'; controls.enabled = true; camera.up.set(0, 1, 0); syncCamera(true); return; }
   const def = DRAW_DEFS[m]; if (!def) return;
   controls.enabled = false;
   camera.position.set(...def.pos); camera.up.set(...def.up);
@@ -315,11 +324,12 @@ function renderTestLog() {
 }
 function saveTestToLog() {  const r = computeTestBurn();
   if (!r.hasMeasurement) { renderTestBurn(); return; }
+  const uncal = PhysicsModel.evaluate({ ...config, calibration: { ...config.calibration, enabled: false } }).metrics.heatOutputKw;
   const log = getTestLog();
   log.push({
     ts: Date.now(), mode: r.predicted.mode, species: config.testBurn.woodSpecies,
     moisturePct: config.testBurn.woodMoisturePct, loadKg: r.loadKg, burnHours: config.testBurn.measuredBurnHours,
-    usefulHeatKwh: r.measuredHeatKwh, predictedKw: r.predicted.metrics.heatOutputKw,
+    usefulHeatKwh: r.measuredHeatKwh, predictedKw: +uncal.toFixed(2),
     predictedEffPct: r.predicted.metrics.efficiencyPct, measuredKw: +r.measuredPower.toFixed(2),
     measuredEffPct: +r.measuredEfficiency.toFixed(1), deviationPct: +r.errorPct.toFixed(1),
   });
@@ -419,18 +429,18 @@ function downloadBlob(blob, filename) {
 }
 
 function exportBomCsv() {
-  const bom = buildBOM(config);
+  const bom = buildBOM(config, null, lang);
   const csv = bomToCsv(bom, lang);
   downloadBlob(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), `woodstove-bom-${Date.now()}.csv`);
 }
 
 function exportDrawingSvg() {
-  const svg = buildDrawingSVG(config);
+  const svg = buildDrawingSVG(config, lang);
   downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), `woodstove-drawing-${Date.now()}.svg`);
 }
 
 function exportDxf() {
-  const dxf = buildDXF(config);
+  const dxf = buildDXF(config, lang);
   downloadBlob(new Blob([dxf], { type: 'application/dxf' }), `woodstove-cut-${Date.now()}.dxf`);
 }
 
@@ -449,13 +459,15 @@ function renderRoomSummary() {
 }
 
 function fitRoomToStove() {
+  // Спочатку ставимо режим, що відповідає призначенню, і лише потім підбираємо габарити,
+  // інакше підбір рахується для старого режиму і фактична потужність не збігається.
+  const purpose = PURPOSES[config.room.purpose] || PURPOSES.room;
+  applyModePreset(config, purpose.mode);
+  designInternals(config);
   const volume = roomVolume(config.room);
   const target = requiredPowerKw(config.room.purpose, volume);
   const best = sizeStoveForPower(target, config);
-  if (!best) return;
-  config = best.config;
-  applyModePreset(config, (PURPOSES[config.room.purpose] || PURPOSES.room).mode);
-  designInternals(config);
+  if (best) config = best.config;
   saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
 }
 
@@ -467,7 +479,7 @@ function renderAutoSummary(r = null) {  const target = document.getElementById('
 
 function renderBomSummary(physicsResult = null) {  const target = document.getElementById('bomSummary');
   if (!target) return;
-  const bom = buildBOM(config, physicsResult);
+  const bom = buildBOM(config, physicsResult, lang);
   target.innerHTML = `${t('bomSteel')}: <b>${bom.totals.steelMassKg} kg</b> · ${t('bomArea')}: <b>${bom.totals.steelAreaM2} m²</b> · ${t('bomBrick')}: <b>${bom.totals.brickMassKg} kg</b> · ${t('bomInsulation')}: <b>${bom.totals.insulationMassKg} kg</b> · ${t('bomTotal')}: <b>${bom.totals.totalMassKg} kg</b><br>
     ${t('bomCut')}: <b>${bom.totals.cutAreaM2} m²</b> · ${t('bomWeld')}: <b>${bom.totals.weldMeters} m</b> · ${t('bomPurchased')}: <b>${bom.totals.purchasedCount}</b> · <span class="est">${t('bomEstimate')}</span>`;
 }
@@ -481,7 +493,6 @@ function shareConfig() {
     button.textContent = t('copied'); setTimeout(() => { button.textContent = t('share'); }, 1600);
   }).catch(() => window.prompt(t('share'), url.href));
   else window.prompt(t('share'), url.href);
-  history.replaceState(null, '', url);
 }
 
 function downloadScreenshot() {
@@ -496,8 +507,9 @@ function downloadScreenshot() {
 function printReport() {
   try {
     const dataUrl = renderer.domElement.toDataURL('image/png');
-    const report = window.open('about:blank', '_blank', 'noopener,noreferrer');
+    const report = window.open('', '_blank');
     if (!report) return;
+    try { report.opener = null; } catch { /* ignore */ }
     const metrics = getCompareMetrics(config);
     const rows = Object.entries(metrics).map(([key, value]) => `<tr><td>${key}</td><td>${value}</td></tr>`).join('');
     report.document.write(`<!doctype html><html lang="${lang}"><head><title>${t('title')}</title><style>body{font:14px Arial;color:#172033;padding:24px}h1{font-size:22px}img{max-width:100%;background:#101318;border-radius:10px}table{border-collapse:collapse;margin-top:14px}td{border-bottom:1px solid #ddd;padding:7px 14px 7px 0}</style></head><body><h1>🔥 Woodstove 2</h1><p>${new Date().toLocaleString()}</p><img id="repImg" src="${dataUrl}"><table>${rows}</table><script>document.getElementById('repImg').onload=function(){window.print()}<\/script></body></html>`);
@@ -620,14 +632,13 @@ function bindUI() {
       if (id in { woodMoisturePct: 1, loadKg: 1, measuredBurnHours: 1, measuredUsefulHeatKwh: 1, flueTempC: 1, stoveTopTempC: 1, glassTempC: 1, smokeOpacityPct: 1 }) {
         renderTestBurn(); return;
       }
-      if (DESIGN_IDS[id]) designInternals(config);
+      if (DESIGN_IDS[id]) { designInternals(config); syncUI(); }
       scheduleRebuild(); renderPhysics();
       if (config.viewMode !== '3d') renderOverlaySVG();
     });
   }
   document.getElementById('operationMode').addEventListener('change', (e) => {
     applyModePreset(config, e.target.value);
-    designInternals(config);
     saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics();
   });
   document.getElementById('viewMode').addEventListener('change', (e) => {
