@@ -735,8 +735,13 @@ function bindUI() {
   document.getElementById('resetConfig').addEventListener('click', () => {
     localStorage.removeItem('woodstove2ConfigV1');
     config = designInternals(normalizeConfig(structuredClone(defaultConfig)));
+    // Explode й камера — стан анімації поза config, «Скинути» мав його
+    // ігнорувати: піч лишалась розібраною, а перший клік по Explode після
+    // цього нічого не робив (explodeTarget уже дорівнював 1).
+    explodeTarget = config.explode.enabled ? 1 : 0; explodeCur = explodeTarget;
+    camera.position.set(190, 170, 220);
     cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
-    syncDoorBtn();
+    syncCamera(true); syncDoorBtn(); syncExplodeBtn();
   });
   document.getElementById('saveJson').addEventListener('click', () => {
     const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
