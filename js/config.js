@@ -119,6 +119,11 @@ export function setByPath(obj, path, value) {
 }
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+// `+x ?? d` і `x == null ? d : +x` обидва пропускають NaN: якщо x — рядок
+// на кшталт "abc" (пошкоджений share-лінк, вручну відредагований JSON),
+// `+"abc"` дає NaN, а `??`/`== null` перевіряють лише null/undefined, не
+// NaN. safeNum ловить це явно й повертає безпечне значення за замовчуванням.
+const safeNum = (v, def) => { const n = +v; return Number.isFinite(n) ? n : def; };
 
 export function normalizeConfig(cfg) {
   cfg.dimensions.widthCm = clamp(+cfg.dimensions.widthCm || 70, 30, 140);
@@ -152,12 +157,12 @@ export function normalizeConfig(cfg) {
   cfg.baffle.heightCm = clamp(+cfg.baffle.heightCm || 58, 20, 120);
   cfg.baffle.angleDeg = clamp(+cfg.baffle.angleDeg || 0, -20, 30);
   cfg.baffle.frontGapCm = clamp(+cfg.baffle.frontGapCm || 6, 2, 15);
-  cfg.baffle.airflowPct = clamp(+cfg.baffle.airflowPct ?? 55, 0, 100);
+  cfg.baffle.airflowPct = clamp(safeNum(cfg.baffle.airflowPct, 55), 0, 100);
 
   cfg.primaryAir.holeCount = clamp(Math.round(+cfg.primaryAir.holeCount || 8), 3, 14);
   cfg.primaryAir.holeDiameterCm = clamp(+cfg.primaryAir.holeDiameterCm || 1.2, 0.6, 2.5);
   cfg.primaryAir.holeSpacingCm = clamp(+cfg.primaryAir.holeSpacingCm || 4, 2, 8);
-  cfg.primaryAir.openPct = clamp(+cfg.primaryAir.openPct ?? 52, 0, 100);
+  cfg.primaryAir.openPct = clamp(safeNum(cfg.primaryAir.openPct, 52), 0, 100);
 
   cfg.secondaryAir.holeCount = clamp(Math.round(+cfg.secondaryAir.holeCount || 10), 8, 60);
   cfg.secondaryAir.holeDiameterCm = clamp(+cfg.secondaryAir.holeDiameterCm || 0.7, 0.25, 5);
@@ -168,7 +173,7 @@ export function normalizeConfig(cfg) {
   cfg.secondaryAir.manifoldHeightCm = clamp(+cfg.secondaryAir.manifoldHeightCm || 4, 2, 10);
 
   cfg.airWash.gapCm = clamp(+cfg.airWash.gapCm || 1.4, 0.5, 3);
-  cfg.airWash.intakePct = clamp(+cfg.airWash.intakePct ?? 60, 0, 100);
+  cfg.airWash.intakePct = clamp(safeNum(cfg.airWash.intakePct, 60), 0, 100);
   cfg.airWash.slotWidthPct = clamp(+cfg.airWash.slotWidthPct || 94, 40, 100);
   cfg.airWash.channelWidthCm = clamp(+cfg.airWash.channelWidthCm || 4, 2, 10);
   cfg.airWash.channelDepthCm = clamp(+cfg.airWash.channelDepthCm || 4, 2, 10);
@@ -184,12 +189,12 @@ export function normalizeConfig(cfg) {
 
   if (!OPERATION_PRESETS[cfg.operation.mode]) cfg.operation.mode = 'medium';
   if (!['3d', 'drawing-front', 'drawing-side', 'drawing-top'].includes(cfg.viewMode)) cfg.viewMode = '3d';
-  cfg.operation.secondaryAirPct = clamp(+cfg.operation.secondaryAirPct ?? 55, 0, 100);
-  cfg.operation.flameIntensity = clamp(+cfg.operation.flameIntensity ?? 0.62, 0, 1);
+  cfg.operation.secondaryAirPct = clamp(safeNum(cfg.operation.secondaryAirPct, 55), 0, 100);
+  cfg.operation.flameIntensity = clamp(safeNum(cfg.operation.flameIntensity, 0.62), 0, 1);
 
   cfg.thermal ??= {};
-  cfg.thermal.insulationThicknessCm = clamp(cfg.thermal.insulationThicknessCm == null ? 3 : +cfg.thermal.insulationThicknessCm, 0, 8);
-  cfg.thermal.baffleRefractoryThicknessCm = clamp(cfg.thermal.baffleRefractoryThicknessCm == null ? 3 : +cfg.thermal.baffleRefractoryThicknessCm, 0, 8);
+  cfg.thermal.insulationThicknessCm = clamp(safeNum(cfg.thermal.insulationThicknessCm, 3), 0, 8);
+  cfg.thermal.baffleRefractoryThicknessCm = clamp(safeNum(cfg.thermal.baffleRefractoryThicknessCm, 3), 0, 8);
   cfg.thermal.targetCombustionTempC = clamp(+cfg.thermal.targetCombustionTempC || 850, 600, 1100);
   cfg.thermal.heatExchangePasses = clamp(Math.round(+cfg.thermal.heatExchangePasses || 2), 1, 4);
 
@@ -217,7 +222,7 @@ export function normalizeConfig(cfg) {
 
   cfg.calibration ??= {};
   cfg.calibration.enabled = Boolean(cfg.calibration.enabled);
-  cfg.calibration.damping = clamp(cfg.calibration.damping == null ? 0.75 : +cfg.calibration.damping, 0, 1);
+  cfg.calibration.damping = clamp(safeNum(cfg.calibration.damping, 0.75), 0, 1);
   cfg.calibration.globalScale = clamp(+cfg.calibration.globalScale || 1, 0.5, 2);
   cfg.calibration.modeScale = cfg.calibration.modeScale && typeof cfg.calibration.modeScale === 'object' ? cfg.calibration.modeScale : {};
   cfg.calibration.samples = Math.max(0, Math.round(+cfg.calibration.samples || 0));
