@@ -547,6 +547,7 @@ const controlMap = {
   flueTempC: 'testBurn.flueTempC', stoveTopTempC: 'testBurn.stoveTopTempC', glassTempC: 'testBurn.glassTempC', smokeOpacityPct: 'testBurn.smokeOpacityPct',
   volumeM3: 'room.volumeM3', areaM2: 'room.areaM2', ceilingM: 'room.ceilingM',
   chimneyTotalHeightM: 'chimney.totalHeightM', chimneyBends: 'chimney.bends', tertiaryHoleCount: 'combustion.tertiary.holeCount',
+  catalystLightoffC: 'combustion.catalyst.lightoffC',
 };
 // Зміна цих полів запускає перепроєктування внутрішньої геометрії.
 const DESIGN_IDS = { widthCm: 1, depthCm: 1, heightCm: 1, legHeightCm: 1, steelThicknessMm: 1, firebrickThicknessCm: 1, doorWidthCm: 1, doorHeightCm: 1 };
@@ -560,6 +561,7 @@ function fmt(id, v) {
   if (id === 'ceilingM') return `${v} m`;
   if (id === 'chimneyTotalHeightM') return `${v} m`;
   if (id === 'chimneyBends' || id === 'tertiaryHoleCount') return `${v}`;
+  if (id === 'catalystLightoffC') return `${v} °C`;
   if (id === 'heatExchangePasses') return `${v}`;
   if (/TempC$/.test(id)) return `${v} °C`;
   if (id === 'steelThicknessMm') return `${v} ${t('unitMm')}`;

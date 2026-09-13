@@ -217,6 +217,10 @@ export const PhysicsModel = {
       warnings.push({ level: 'info', code: 'MIX_LEAN', message: `Багато повітря (Φ=${round(equivalenceRatio, 2)}): зона охолоджується, зайві втрати.` });
     if (exitFlueTempC < 150)
       warnings.push({ level: 'danger', code: 'CREOSOTE_RISK', message: `Димові гази на виході ${round(exitFlueTempC, 0)}°C < 150°C: конденсат і креозот.` });
+    // Примітка: це стаціонарна модель без часової осі, тож "не прогрітий" тут
+    // означає "зона на сталому режимі холодніша за поріг", а не "перші хвилини
+    // після розпалу". Мінімальна досяжна зона в межах UI ~590°C, тож поріг
+    // потрібно підняти вище цього значення, щоб побачити попередження.
     if (catalystEnabled && !catalystActive)
       warnings.push({ level: 'info', code: 'CATALYST_COLD', message: `Каталізатор не прогрітий (${round(combustionTempC, 0)}°C < ${round(catalystLightoffC, 0)}°C) — байпас відкрито.` });
 
