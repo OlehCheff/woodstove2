@@ -321,13 +321,16 @@ export function buildStove(cfg, cache = new Map()) {
     { color: 0x22c55e, pts: [V(riserX, 9, riserZ), V(riserX, secTubeY - 1, riserZ), V(0, secTubeY, secTubeZ), V(0, secTubeY - 3, secTubeZ)] },
     { color: 0xef7d32, pts: [V(0, baffleY - 6, d / 2 - baffleGap * 0.5), V(0, baffleY + 4, d / 2 - baffleGap * 0.5), V(0, baffleY + 5, chimZ), V(0, h + 8, chimZ)] },
   ];
+  // Окрема іменована група — щоб стрілки/крапки потоків надійно вирізались
+  // з GLTF/STL-експорту (buildExportModel у app.js фільтрує за назвою вузла).
+  const aeroFlow = new THREE.Group(); aeroFlow.name = 'aeroFlow'; shell.add(aeroFlow);
   const aeroParticles = [];
   const aeroMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false });
   for (const path of flowPaths) {
     const dot = new THREE.Mesh(new THREE.SphereGeometry(0.9, 8, 8), aeroMat.clone());
     dot.material.color.setHex(path.color);
     dot.visible = false; dot.userData = { path, t: Math.random() };
-    shell.add(dot); aeroParticles.push(dot);
+    aeroFlow.add(dot); aeroParticles.push(dot);
   }
 
   // камера + полум'я

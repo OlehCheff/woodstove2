@@ -525,7 +525,7 @@ function buildExportModel() {
   const model = stove.clone(true);
   const strip = (root) => {
     for (const child of root.children.slice()) {
-      if (['flowVisualization', 'innerChamber', 'doorSeal', 'thermalZones', 'smoke'].includes(child.name)) root.remove(child);
+      if (['flowVisualization', 'aeroFlow', 'innerChamber', 'doorSeal', 'thermalZones', 'smoke'].includes(child.name)) root.remove(child);
       else strip(child);
     }
   };
