@@ -34,8 +34,8 @@ woodstove2/
 
 **Геометрія / виріб**
 - корпус зі сталі заданої товщини, передня панель з отвором під дверцята;
-- дверцята: рама, скло, підсилення, пружинна ручка-спіраль, засувка, петлі (ліва/права);
-- футерування: вермикуліт (світлий) — боки, зад, дно + передній бортик;
+- дверцята: рама, скло, кріплення ручки, пружинна ручка-спіраль, засувка, петлі (ліва/права);
+- футерування: шамот (світлий) — боки, зад, дно + передній бортик, з прошарком вермикуліт/CFB ізоляції між сталлю та шамотом;
 - глухе дно (без колосника й зольника);
 - primary — 2 овальні отвори в передній плиті під дверцятами + ковзна заслінка;
 - secondary — 2 задні підігрівальні стояки + поперечна SS-труба з отворами Ø3 мм;
@@ -69,9 +69,12 @@ draftPa ∈ [3, 40]
 
 **Температури:**
 ```
-combustionTempC = 480 + flame·260 + secondaryPreheat·0.55 + retention·160 + residence·12 − moisturePenalty   [450,1100]
+moistureTempPenalty = max(0, moisture% − 12) · 6                              [°C]
+combustionTempC = 480 + flame·260 + secondaryPreheat·0.55 + retention·160 + residence·12 − moistureTempPenalty   [450,1100]
 modeledFlueTempC = combustionTempC − passes·110 − ins·18 − refractory·12      [120,650]
-exitFlueTempC = modeledFlueTempC·(1−0.09·H) − bends·6                          [40,600]
+exitFlueTempC = ambient + (modeledFlueTempC − ambient)·exp(−0.12·H) − bends·6   [40,600]  (ambient = 20°C;
+                                                                                 експоненційне охолодження вздовж
+                                                                                 труби, а не лінійне)
 ```
 
 **Вторинне горіння (гейт):**
@@ -82,12 +85,16 @@ secondaryActive = combustionTempC ≥ secondaryIgnitionC
 
 **ККД:**
 ```
+moistureEffPenalty = max(0, moisture% − 12) · 0.15
+moistureFlueLossPenalty = max(0, moisture% − 12) · 0.25   (прихована теплота пароутворення, що йде з димом)
 combustionEff = 68 + (T−600)·0.04 + secondaryQuality·1.2 + retention·5 + residence
-              + airMix·5 + staging + draftBonus·0.3 + targetFit − moisturePenalty
-              + secondaryGate(+3 / −8) + catalystBonus(0 / +2.5) + effBias    [48,92]
-flueLoss = 7 + (flueTemp−150)·0.025 + (1−retention)·8 − passes·1.5            [8,28]
-efficiency = combustionEff − flueLoss                                         [35,88]
+              + airMix·5 + staging + draftBonus·0.3 + targetFit − moistureEffPenalty
+              + secondaryGate(+3 / −8) + effBias                              [48,92]
+flueLoss = 7 + (flueTemp−150)·0.025 + (1−retention)·8 − passes·1.5 + moistureFlueLossPenalty   [8,28]
+efficiency = combustionEff − flueLoss + catalystBonus(0 / +2.5)               [35,88]
 ```
+Каталізатор рахується ПІСЛЯ стелі `combustionEff` (не всередині неї) — інакше
+на печі, що й так впирається у стелю 92, бонус каталізатора був непомітний.
 
 **Надлишок повітря:**
 ```
@@ -105,10 +112,13 @@ burn = usefulEnergy/heat · burnFactor · (1+steelMm·0.015)                    
 **Варнінги:**
 `SMOKE_RISK, OVERHEAT_RISK, STEEL_OVERHEAT, WET_WOOD, INEFFICIENT_MODE, DIRTY_GLASS, DRAFT_WEAK, SECONDARY_RESTRICTED, SECONDARY_COLD, SECONDARY_INACTIVE, AIRWASH_JETS, AIRWASH_LOW, BAFFLE_GAP, STARTUP_LONG, CHIMNEY_NARROW, CHIMNEY_LARGE, CREOSOTE_RISK, MIX_RICH, MIX_LEAN, CATALYST_COLD`.
 
-## 5. BOM (поточні значення, Standard)
+## 5. BOM (поточні значення, Standard за замовчуванням у UI)
 
-- сталь ≈202 кг, шамот ≈86 кг, ізоляція ≈29 кг, скло ≈2.3 кг;
-- різ (з розкладкою) ≈5.6 м², зварні шви ≈25 м, покупних 6;
+- метал (сталь + нержавійка secondary-труби) ≈205 кг, шамот ≈79 кг, ізоляція ≈26 кг, скло ≈2,3 кг;
+- різ (з розкладкою) ≈5,8 м², зварні шви ≈25,4 м, покупних 6;
+- числа взято напряму з `buildBOM(designInternals(normalizeConfig(defaultConfig)))` —
+  тобто те, що фактично показує UI на стандартній печі, а не окремий пресет
+  без автопроєктування;
 - усе — **оцінка**, не виробничий розрахунок.
 
 ## 6. Тести
@@ -121,5 +131,9 @@ burn = usefulEnergy/heat · burnFactor · (1+steelMm·0.015)                    
 - усі числа — інженерна оцінка, не CFD і не сертифікація;
 - маса чутлива до товщини сталі (4–5 мм = важка піч);
 - автодизайн обмежує шамот на малих печах;
-- експорт у EN — частково транслітеровані/перекладені назви;
-- тяга рахується від «ідеального» димоходу без урахування вітру/температури зовні.
+- тяга рахується від «ідеального» димоходу без урахування вітру/температури зовні;
+- `CATALYST_COLD` описує перехідний стан прогріву каталізатора одразу після
+  розпалу, а модель — стаціонарна (без часової осі): мінімальна досяжна
+  температура зони допалювання в межах UI ≈590°C, тож поріг займання
+  каталізатора (150–500°C у налаштуваннях) фактично завжди нижчий за неї.
+  Це обмеження моделі, а не помилка порогу.
