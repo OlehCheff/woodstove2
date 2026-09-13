@@ -454,8 +454,12 @@ export function buildStove(cfg, cache = new Map()) {
   const latchRoller = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 5.2, 12), handleMat);
   latchRoller.rotation.x = Math.PI / 2; latchRoller.position.set(latchX, 0, frameT / 2 + 1.0); leaf.add(latchRoller);
   doorPivot.add(leaf); shell.add(doorPivot);
-  const catchPlate = plate(1.6, Math.min(9, doorHc * 0.3), 1.6, darkM);
-  catchPlate.position.set(-hingeSign * (openingW / 2 - 0.9), openingBottom + openingH / 2, d / 2 + steelT * 0.5 + frameT * 0.6);
+  // Зачіп ставимо впритул до ущільнювача (doorSeal, центр d/2+steelT*0.5,
+  // товщина sealT=0.8), а не на довільній відстані від нього — інакше він
+  // "висить" у повітрі окремо від корпусу й дверцят (0.6-1.25 см зазору).
+  const catchThickness = 1.6;
+  const catchPlate = plate(catchThickness, Math.min(9, doorHc * 0.3), catchThickness, darkM);
+  catchPlate.position.set(-hingeSign * (openingW / 2 - 0.9), openingBottom + openingH / 2, d / 2 + steelT * 0.5 + sealT / 2 + catchThickness / 2);
   catchPlate.name = 'doorCatch'; shell.add(catchPlate);
   for (const y of [-doorHc * 0.32, doorHc * 0.32]) {
     const hinge = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 6, 16), darkM);
