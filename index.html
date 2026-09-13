@@ -95,6 +95,15 @@
     <div class="row"><label data-i18n="doorHinge">Петля дверцят</label><select id="doorHingeSide"><option value="left" data-i18n="hingeLeft">Ліва сторона</option><option value="right" data-i18n="hingeRight">Права сторона</option></select></div>
   </div></details>
 
+  <details open><summary data-i18n="secCombustion">Димохід / горіння</summary><div class="body">
+    <div class="row"><label><span data-i18n="flueHeight">Висота димоходу (повна)</span> <output id="chimneyTotalHeightM-v"></output></label><input type="range" id="chimneyTotalHeightM" min="2" max="12" step="0.5"></div>
+    <div class="row"><label><span data-i18n="flueBends">Вигинів димоходу</span> <output id="chimneyBends-v"></output></label><input type="range" id="chimneyBends" min="0" max="4" step="1"></div>
+    <div class="row check"><input type="checkbox" id="washAsSecondary"><label for="washAsSecondary" data-i18n="washAsSecondary">Air-wash як вторинне повітря</label></div>
+    <div class="row check"><input type="checkbox" id="tertiaryEnabled"><label for="tertiaryEnabled" data-i18n="tertiaryEnabled">Третинне повітря (tertiary)</label></div>
+    <div class="row"><label><span data-i18n="tertiaryHoles">Отворів tertiary</span> <output id="tertiaryHoleCount-v"></output></label><input type="range" id="tertiaryHoleCount" min="2" max="30" step="1"></div>
+    <div class="row check"><input type="checkbox" id="catalystEnabled"><label for="catalystEnabled" data-i18n="catalystEnabled">Каталізатор (honeycomb)</label></div>
+  </div></details>
+
   <details open><summary data-i18n="secPurpose">Призначення печі</summary><div class="body">
     <div class="row"><label data-i18n="purpose">Призначення</label>
       <select id="roomPurpose">
@@ -115,7 +124,7 @@
     <div class="hint" data-i18n="roomHint">Оцінка для середньої смуги України. Значення — орієнтир, не сертифікація.</div>
   </div></details>
 
-  <details open><summary data-i18n="secPhys">Фізика v4</summary><div class="body" id="physics">
+  <details open><summary data-i18n="secPhys">Фізика v5</summary><div class="body" id="physics">
     <div class="kpi">
       <div class="card"><span data-i18n="kEff">ККД</span><b id="m-eff">—</b></div>
       <div class="card"><span data-i18n="kKw">Потужність</span><b id="m-kw">—</b></div>
@@ -142,6 +151,10 @@
       <div><span data-i18n="gasResidence">Час газів у каналі</span><b id="m-residence">—</b></div>
       <div><span data-i18n="flueLoss">Втрати через димохід</span><b id="m-flue-loss">—</b></div>
       <div><span data-i18n="thermalEff">Допалювання → корисний ККД</span><b id="m-thermal-eff">—</b></div>
+      <div><span data-i18n="secStatus">Вторинне горіння</span><b id="m-secondary-active">—</b></div>
+      <div><span data-i18n="equivRatio">Надлишок повітря Φ</span><b id="m-equiv-ratio">—</b></div>
+      <div><span data-i18n="exitFlueTemp">T димових газів (вихід)</span><b id="m-exit-flue">—</b></div>
+      <div><span data-i18n="tertiaryAreaLbl">Площа tertiary</span><b id="m-tertiary-area">—</b></div>
     </div>
   </div></details>
 

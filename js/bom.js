@@ -142,6 +142,12 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
   add('Secondary стояки (Л/П)', 2, secRiserDev, Math.max(12, cfg.secondaryAir.preheatLengthCm), wallT, 'сталь 3 мм', 'розгортка короба', 'tube');
   const tubeLen = Math.max(16, Math.min(innerW * 0.9, 120));
   add('Secondary труба впоперек (SS)', 1, Math.PI * 3.2, tubeLen, 0.15, 'нерж. 1.5 мм', `Ø32×1.5, ${cfg.secondaryAir.holeCount}×Ø3 мм`, 'tube');
+  if (cfg.combustion && cfg.combustion.tertiary && cfg.combustion.tertiary.enabled) {
+    add('Третинна труба (tertiary)', 1, Math.PI * 1.6, Math.max(14, innerW * 0.8), 0.15, 'нерж. 1.5 мм', `${cfg.combustion.tertiary.holeCount}×Ø${cfg.combustion.tertiary.holeDiameterCm} см`, 'tube');
+  }
+  if (cfg.combustion && cfg.combustion.catalyst && cfg.combustion.catalyst.enabled) {
+    add('Каталітичний стільник', 1, cfg.chimney.diameterCm, cfg.chimney.diameterCm, 2.5, 'каталізатор', `${cfg.combustion.catalyst.cellsPerCm2 || 62} cell/cm²`, 'purchased');
+  }
   // Air-wash: суцільна щілина над склом + флоп-заслінка + бокова ручка.
   const washW = Math.max(12, Math.min(w - steelCm * 3, doorW + 6));
   add('Air-wash щілина + флоп', 1, washW, Math.max(3, cfg.airWash.gapCm * 4), wallT, 'сталь 3 мм', `щілина ${cfg.airWash.gapCm} см на всю ширину`, 'tube');

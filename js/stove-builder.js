@@ -204,6 +204,25 @@ export function buildStove(cfg, cache = new Map()) {
   }
   airSystems.add(secondary);
 
+  // ---- TERTIARY: дрібні отвори у верхній задній зоні (фінальне догорання CO) ----
+  const tert = cfg.combustion?.tertiary || {};
+  const tertiary = new THREE.Group(); tertiary.name = 'tertiaryAir';
+  if (tert.enabled) {
+    const tCount = clamp(Math.round(tert.holeCount || 8), 2, 30);
+    const tDia = Math.max(0.3, +tert.holeDiameterCm || 0.5);
+    const tBarY = Math.min(h - steelT * 3, baffleY + steelT * 4);
+    const tBarZ = -innerD * 0.3;
+    const tLen = clamp(innerW * 0.8, 14, 110);
+    const tBar = new THREE.Mesh(new THREE.CylinderGeometry(tDia * 0.9, tDia * 0.9, tLen, 12), secondaryAirM);
+    tBar.rotation.z = Math.PI / 2; tBar.position.set(0, tBarY, tBarZ); tertiary.add(tBar);
+    const tStep = tLen / tCount, tx0 = -((tCount - 1) * tStep) / 2;
+    for (let i = 0; i < tCount; i++) {
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(tDia / 2, tDia / 2, tDia * 3, 8), holeM);
+      p.position.set(tx0 + i * tStep, tBarY - tDia * 0.5, tBarZ); tertiary.add(p);
+    }
+  }
+  tertiary.visible = Boolean(tert.enabled); airSystems.add(tertiary);
+
   // ---- AIR-WASH: кожух над дверцятами + флоп-заслінка + щілина на всю ширину; бокова ручка ----
   const airWash = new THREE.Group(); airWash.name = 'airWashChannel';
   const slitW = Math.max(10, openingW * (cfg.airWash.slotWidthPct / 100));
@@ -457,6 +476,20 @@ export function buildStove(cfg, cache = new Map()) {
   const flueBellBase = new THREE.Mesh(new THREE.CylinderGeometry(chimR * 1.3, chimR * 1.16, 2.2, 28), darkM);
   flueBellBase.position.set(0, flueBellBottom - 0.4, chimZ);
   gasChannels.add(flueBellBase);
+  // Каталітичний стільник (опція) — у потоці газів перед димоходом.
+  const cat = cfg.combustion?.catalyst || {};
+  let catalyst = null;
+  if (cat.enabled) {
+    catalyst = new THREE.Group(); catalyst.name = 'catalyst';
+    const cr = chimR * 0.92;
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(cr, cr, 2.2, 24), darkM);
+    disc.position.set(0, flueBellBottom - 2.2, chimZ); catalyst.add(disc);
+    for (let i = 0; i < 3; i++) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(Math.max(0.4, cr * 0.8 - i * cr * 0.24), 0.22, 6, 20), ductM);
+      ring.rotation.x = Math.PI / 2; ring.position.set(0, flueBellBottom - 1.0, chimZ); catalyst.add(ring);
+    }
+    shell.add(catalyst);
+  }
 
   // ніжки
   if (legH > 0) {
@@ -499,7 +532,7 @@ export function buildStove(cfg, cache = new Map()) {
   smoke.visible = false; shell.add(smoke);
 
   group.add(shell);
-  const refs = { shell, chimney, collar, doorPivot, frontPanel, firebrick, refractoryRoof, baffle, baffleAngles, frontDeflector, airSystems, gasChannels, chamber, flame, core, outer, sparks, shutter, flow, flowArrows, heatShield, thermalZones, zoneFirebox, zoneAfterburn, zoneChimney, smoke, smokeParticles, flowPaths, aeroParticles };
+  const refs = { shell, chimney, collar, doorPivot, frontPanel, firebrick, refractoryRoof, baffle, baffleAngles, frontDeflector, airSystems, tertiary, catalyst, gasChannels, chamber, flame, core, outer, sparks, shutter, flow, flowArrows, heatShield, thermalZones, zoneFirebox, zoneAfterburn, zoneChimney, smoke, smokeParticles, flowPaths, aeroParticles };
   for (const n of [chimney, collar, doorPivot, frontPanel, firebrick, baffle, airSystems, gasChannels, chamber, flow]) {
     if (n) n.userData.basePosition = n.position.clone();
   }

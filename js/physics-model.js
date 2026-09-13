@@ -32,6 +32,11 @@ export const PhysicsModel = {
     const brickCm = +config?.materials?.firebrickThicknessCm || 4;
     const chimD = +config?.chimney?.diameterCm || 15;
     const chimH = +config?.chimney?.heightCm || 120;
+    const flueH = +config?.chimney?.totalHeightM || 5;
+    const flueBends = +config?.chimney?.bends || 0;
+    const washAsSecondary = config?.combustion?.washAsSecondary !== false;
+    const tertiaryCfg = config?.combustion?.tertiary || {};
+    const catalystCfg = config?.combustion?.catalyst || {};
 
     const primaryPct = +config?.primaryAir?.openPct ?? 52;
     const secondaryPct = +config?.operation?.secondaryAirPct ?? 55;
@@ -75,21 +80,33 @@ export const PhysicsModel = {
     const doorWidth = Math.max(20, Math.min(+config?.door?.widthCm || 42, w - steelCm * 4));
     const slotWidthCm = doorWidth * washWidthPct / 100;
     const airWashOpeningAreaCm2 = slotWidthCm * washGap * washIntake / 100;
+    // Tertiary: окремі дрібні отвори у найгарячішій зоні (фінальне догорання CO).
+    const tertiaryAreaCm2 = tertiaryCfg.enabled ? circleArea(+tertiaryCfg.holeDiameterCm || 0.5) * (+tertiaryCfg.holeCount || 8) : 0;
+    // Air-wash науково бере участь у вторинному горінні (завіса = потік окислювача).
+    const washSecondaryShare = washAsSecondary ? 0.5 : 0;
+    const secondaryTotalAreaCm2 = secondaryOpeningAreaCm2 + airWashOpeningAreaCm2 * washSecondaryShare + tertiaryAreaCm2 * 0.6;
     const chimneyAreaCm2 = circleArea(chimD);
-    const effectiveIntakeAreaCm2 = primaryOpeningAreaCm2 + secondaryOpeningAreaCm2 + airWashOpeningAreaCm2;
+    const effectiveIntakeAreaCm2 = primaryOpeningAreaCm2 + secondaryOpeningAreaCm2 + airWashOpeningAreaCm2 + tertiaryAreaCm2;
 
-    // Тяга і пропускна здатність: спрощена модель для порівняння варіантів.
+    // Тяга: двигун системи — ПОВНИЙ димохід (плавучисть гарячих газів).
+    // Δp ≈ g·H·(ρ_повітря − ρ_газів); вигини й опір зменшують тягу.
     const baffleHeightNorm = clamp((baffleHeight - 20) / 60, 0, 1);
     const baffleAngleNorm = clamp(baffleAngle / 15, -1, 1);
     const baffleDraftPenalty = baffleHeightNorm * 1.2;
-    const draftPa = clamp((chimH / 100) * (3.2 + flame * 9) * (chimD / 15) ** 1.15 - baffleDraftPenalty, 4, 30);
-    const stackVelocityMs = clamp(0.75 * Math.sqrt(Math.max(draftPa, 0.1)), 1, 6);
-    const draftFlowM3s = clamp((chimneyAreaCm2 / 10000) * stackVelocityMs, 0.003, 0.15);
+    const stackTempC = clamp(120 + flame * 320 + (mode === 'high' ? 50 : 0), 120, 650);
+    const rhoAir = 1.2;
+    const rhoGas = rhoAir * 293 / (stackTempC + 273);
+    const buoyancyPa = 9.81 * flueH * (rhoAir - rhoGas);
+    const bendPenalty = 1 / (1 + 0.12 * flueBends);
+    const diaFactor = clamp((chimD / 15) ** 0.3, 0.8, 1.2);
+    const draftPa = clamp(buoyancyPa * bendPenalty * diaFactor - baffleDraftPenalty, 3, 40);
+    const stackVelocityMs = clamp(0.75 * Math.sqrt(Math.max(draftPa, 0.1)), 1, 7);
+    const draftFlowM3s = clamp((chimneyAreaCm2 / 10000) * stackVelocityMs, 0.003, 0.2);
     const secondaryVelocityMs = clamp((draftPa * 0.12) / Math.max(secondaryOpeningAreaCm2, 0.4), 0.05, 8);
     const airWashVelocityMs = clamp((draftPa * 0.04) / Math.max(airWashOpeningAreaCm2 / 10, 0.6), 0.05, 5);
 
     const secondaryDemandCm2 = clamp(fireboxLiters * 0.006, 0.4, 2.0);
-    const secondaryCoverage = clamp(secondaryOpeningAreaCm2 / secondaryDemandCm2, 0, 1.5);
+    const secondaryCoverage = clamp(secondaryTotalAreaCm2 / secondaryDemandCm2, 0, 1.5);
     const airWashCoverage = clamp(airWashOpeningAreaCm2 / Math.max(doorWidth * 0.9, 1), 0, 1.5);
     const bafflePreheatBonus = baffleHeightNorm * 25 + baffleAngleNorm * 15;
     const secondaryPreheatC = clamp(20 + (+secondary.preheatLengthCm || 55) * 1.9 + flame * 95 + bafflePreheatBonus, 60, 420);
@@ -97,7 +114,7 @@ export const PhysicsModel = {
     const washEffPct = clamp((washGap / 3) * (washIntake / 100) * 100, 0, 100);
     const airMix = (primaryPct * 0.55 + secondaryPct * 0.35 + washEffPct * 0.10) / 100;
     const staging = clamp((secondaryPct - 20) * 0.06 + (baffleFlow - 50) * 0.04, -4, +5);
-    const draftBonus = (clamp(chimH / 120, 0.8, 1.25) - 1) * 8;
+    const draftBonus = (clamp(flueH / 5, 0.7, 1.4) - 1) * 6;
 
     // Thermal architecture: a hotter insulated firebox, a defined gas path,
     // and heat extraction after secondary combustion. This remains an estimate,
@@ -108,15 +125,28 @@ export const PhysicsModel = {
     const combustionTempC = clamp(480 + flame * 260 + secondaryPreheatC * 0.55 + thermalRetention * 160 + gasResidenceSeconds * 12 - moistureTempPenaltyC, 450, 1100);
     const targetTemperatureFit = clamp(2 - Math.abs(combustionTempC - targetCombustionTempC) / 180, -2, 2);
     const secondaryQuality = clamp((secondaryCoverage - 0.75) * 4 + (secondaryPreheatC - 160) / 120, -3, 4);
+    // Каталізатор знижує поріг займання диму; без нього вторинне горіння потребує ~600 °C.
+    const catalystEnabled = Boolean(catalystCfg.enabled);
+    const catalystLightoffC = +catalystCfg.lightoffC || 260;
+    const secondaryIgnitionC = catalystEnabled ? Math.min(600, catalystLightoffC) : 600;
+    const secondaryActive = combustionTempC >= secondaryIgnitionC;
+    const catalystActive = catalystEnabled && combustionTempC >= catalystLightoffC;
+    const catalystBonus = catalystActive ? 2.5 : 0;
+    const secondaryGateBonus = secondaryActive ? 3 : -8;
     const combustionEfficiencyPct = clamp(
       68 + (combustionTempC - 600) * 0.04 + secondaryQuality * 1.2 + thermalRetention * 5 + gasResidenceSeconds
-        + airMix * 5 + staging + draftBonus * 0.3 + targetTemperatureFit - moistureEffPenalty + mc.effBias,
+        + airMix * 5 + staging + draftBonus * 0.3 + targetTemperatureFit - moistureEffPenalty + secondaryGateBonus + catalystBonus + mc.effBias,
       48, 92
     );
     const modeledFlueTempC = clamp(combustionTempC - heatExchangePasses * 110 - insulationCm * 18 - baffleRefractoryCm * 12, 120, 650);
     const baffleExitTempC = clamp(modeledFlueTempC + (combustionTempC - modeledFlueTempC) * 0.55, 130, 900);
     const flueLossPct = clamp(7 + (modeledFlueTempC - 150) * 0.025 + (1 - thermalRetention) * 8 - heatExchangePasses * 1.5, 8, 28);
     const efficiencyPct = clamp(combustionEfficiencyPct - flueLossPct, 35, 88);
+    // Температура димових газів на ВИХОДІ з труби (охолодження по висоті + вигини).
+    const exitFlueTempC = clamp(modeledFlueTempC * (1 - 0.09 * flueH) - flueBends * 6, 40, 600);
+    // Коефіцієнт надлишку повітря λ та Φ=1/λ (ціль Φ 0.4–0.5).
+    const lambda = clamp(1.4 + airMix * 1.6, 1.1, 4);
+    const equivalenceRatio = 1 / lambda;
     const bodyTempC = clamp(110 + (1 - thermalRetention) * 520 + flame * 120 - (steelMm - 5) * 9, 40, 480);
     const bodyHeatSharePct = clamp((1 - thermalRetention) * 26 + 8, 8, 30);
 
@@ -169,9 +199,19 @@ export const PhysicsModel = {
       warnings.push({ level: 'danger', code: 'STEEL_OVERHEAT', message: `Корпус ~${round(bodyTempC, 0)}°C при сталі ≤4 мм: збільшіть ізоляцію або товщину сталі.` });
     if (moisturePct > 22)
       warnings.push({ level: 'warn', code: 'WET_WOOD', message: `Вологість ${round(moisturePct, 0)}% знижує температуру допалювання та ККД.` });
+    if (!secondaryActive)
+      warnings.push({ level: 'warn', code: 'SECONDARY_INACTIVE', message: `Вторинне горіння не запалюється: зона ${round(combustionTempC, 0)}°C < ${round(secondaryIgnitionC, 0)}°C.` });
+    if (equivalenceRatio > 0.55 && mode !== 'overnight')
+      warnings.push({ level: 'warn', code: 'MIX_RICH', message: `Замало повітря (Φ=${round(equivalenceRatio, 2)}): дим і CO. Додайте вторинне/третинне повітря.` });
+    if (equivalenceRatio < 0.33)
+      warnings.push({ level: 'info', code: 'MIX_LEAN', message: `Багато повітря (Φ=${round(equivalenceRatio, 2)}): зона охолоджується, зайві втрати.` });
+    if (exitFlueTempC < 150)
+      warnings.push({ level: 'danger', code: 'CREOSOTE_RISK', message: `Димові гази на виході ${round(exitFlueTempC, 0)}°C < 150°C: конденсат і креозот.` });
+    if (catalystEnabled && !catalystActive)
+      warnings.push({ level: 'info', code: 'CATALYST_COLD', message: `Каталізатор не прогрітий (${round(combustionTempC, 0)}°C < ${round(catalystLightoffC, 0)}°C) — байпас відкрито.` });
 
     return {
-      version: 4,
+      version: 5,
       mode,
       metrics: {
         efficiencyPct: round(efficiencyPct, 1), heatOutputKw: round(heatOutputKw, 2), burnTimeHours: round(burnTimeHours, 1),
@@ -189,6 +229,12 @@ export const PhysicsModel = {
         inputEnergyKwh: round(inputEnergyKwh, 1), usefulEnergyKwh: round(usefulEnergyKwh, 1),
         recommendedLoadKg: round(recommendedLoadKg, 1), maxLoadKg: round(maxLoadKg, 1), loadingVolumePct: round((mc.fillFactor ?? 0.7) * 100, 0),
         calibrationFactor: round(calibrationFactor, 3),
+        secondaryActive, catalystActive,
+        equivalenceRatio: round(equivalenceRatio, 3), lambda: round(lambda, 2),
+        exitFlueTempC: round(exitFlueTempC, 0),
+        secondaryTotalAreaCm2: round(secondaryTotalAreaCm2, 2), tertiaryAreaCm2: round(tertiaryAreaCm2, 2),
+        secondaryIgnitionC: round(secondaryIgnitionC, 0),
+        flueH, flueBends,
       },
       breakdown: {
         airMix: round(airMix, 3), staging: round(staging, 2), loadKg: round(loadKg, 1),

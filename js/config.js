@@ -27,7 +27,12 @@ export const MODEL_PRESETS = {
     patch: {
       dimensions: { widthCm: 70, depthCm: 55, heightCm: 95, legHeightCm: 15 },
       materials: { steelThicknessMm: 5, firebrickThicknessCm: 4 },
-      chimney: { diameterCm: 15, heightCm: 120 },
+  chimney: { diameterCm: 15, heightCm: 120, totalHeightM: 5, bends: 1 },
+  combustion: {
+    washAsSecondary: true,
+    tertiary: { enabled: false, holeCount: 8, holeDiameterCm: 0.5 },
+    catalyst: { enabled: false, lightoffC: 260, areaCm2: 120 },
+  },
       door: { widthCm: 42, heightCm: 38 },
       baffle: { heightCm: 58, frontGapCm: 6 },
       operation: { mode: 'medium' },
@@ -130,6 +135,19 @@ export function normalizeConfig(cfg) {
 
   cfg.chimney.diameterCm = clamp(+cfg.chimney.diameterCm || 15, 10, 25);
   cfg.chimney.heightCm = clamp(+cfg.chimney.heightCm || 120, 100, 150);
+  cfg.chimney.totalHeightM = clamp(+cfg.chimney.totalHeightM || 5, 2, 12);
+  cfg.chimney.bends = clamp(Math.round(+cfg.chimney.bends || 0), 0, 4);
+
+  cfg.combustion ??= {};
+  cfg.combustion.washAsSecondary = cfg.combustion.washAsSecondary !== false;
+  cfg.combustion.tertiary ??= {};
+  cfg.combustion.tertiary.enabled = Boolean(cfg.combustion.tertiary.enabled);
+  cfg.combustion.tertiary.holeCount = clamp(Math.round(+cfg.combustion.tertiary.holeCount || 8), 2, 30);
+  cfg.combustion.tertiary.holeDiameterCm = clamp(+cfg.combustion.tertiary.holeDiameterCm || 0.5, 0.2, 1.5);
+  cfg.combustion.catalyst ??= {};
+  cfg.combustion.catalyst.enabled = Boolean(cfg.combustion.catalyst.enabled);
+  cfg.combustion.catalyst.lightoffC = clamp(+cfg.combustion.catalyst.lightoffC || 260, 150, 500);
+  cfg.combustion.catalyst.areaCm2 = clamp(+cfg.combustion.catalyst.areaCm2 || 120, 40, 400);
 
   cfg.baffle.heightCm = clamp(+cfg.baffle.heightCm || 58, 20, 120);
   cfg.baffle.angleDeg = clamp(+cfg.baffle.angleDeg || 0, -20, 30);

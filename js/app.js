@@ -226,6 +226,10 @@ function renderPhysics() {
   document.getElementById('m-residence').textContent = `${r.metrics.gasResidenceSeconds} s`;
   document.getElementById('m-flue-loss').textContent = `${r.metrics.flueLossPct}%`;
   document.getElementById('m-thermal-eff').textContent = `${r.metrics.combustionEfficiencyPct}% → ${r.metrics.efficiencyPct}%`;
+  document.getElementById('m-secondary-active').textContent = r.metrics.secondaryActive ? t('secActive') : t('secInactive');
+  document.getElementById('m-equiv-ratio').textContent = `${r.metrics.equivalenceRatio} (λ${r.metrics.lambda})`;
+  document.getElementById('m-exit-flue').textContent = `${r.metrics.exitFlueTempC} °C`;
+  document.getElementById('m-tertiary-area').textContent = `${r.metrics.tertiaryAreaCm2} cm²`;
   const ul = document.getElementById('warnings'); ul.innerHTML = '';
   if (!r.warnings.length) ul.innerHTML = `<li>${t('noIssues')}</li>`;
   for (const wmsg of r.warnings) {
@@ -542,6 +546,7 @@ const controlMap = {
   woodMoisturePct: 'testBurn.woodMoisturePct', loadKg: 'testBurn.loadKg', measuredBurnHours: 'testBurn.measuredBurnHours', measuredUsefulHeatKwh: 'testBurn.measuredUsefulHeatKwh',
   flueTempC: 'testBurn.flueTempC', stoveTopTempC: 'testBurn.stoveTopTempC', glassTempC: 'testBurn.glassTempC', smokeOpacityPct: 'testBurn.smokeOpacityPct',
   volumeM3: 'room.volumeM3', areaM2: 'room.areaM2', ceilingM: 'room.ceilingM',
+  chimneyTotalHeightM: 'chimney.totalHeightM', chimneyBends: 'chimney.bends', tertiaryHoleCount: 'combustion.tertiary.holeCount',
 };
 // Зміна цих полів запускає перепроєктування внутрішньої геометрії.
 const DESIGN_IDS = { widthCm: 1, depthCm: 1, heightCm: 1, legHeightCm: 1, steelThicknessMm: 1, firebrickThicknessCm: 1, doorWidthCm: 1, doorHeightCm: 1 };
@@ -553,6 +558,8 @@ function fmt(id, v) {
   if (id === 'volumeM3') return `${v} m³`;
   if (id === 'areaM2') return `${v} m²`;
   if (id === 'ceilingM') return `${v} m`;
+  if (id === 'chimneyTotalHeightM') return `${v} m`;
+  if (id === 'chimneyBends' || id === 'tertiaryHoleCount') return `${v}`;
   if (id === 'heatExchangePasses') return `${v}`;
   if (/TempC$/.test(id)) return `${v} °C`;
   if (id === 'steelThicknessMm') return `${v} ${t('unitMm')}`;
@@ -567,6 +574,9 @@ function warnText(code, fallback, m) {
   if (typeof entry === 'function') {
     if (code === 'STEEL_OVERHEAT') return entry(m.bodyTempC);
     if (code === 'WET_WOOD') return entry(m.moisturePct);
+    if (code === 'SECONDARY_INACTIVE' || code === 'CATALYST_COLD') return entry(m.combustionTempC);
+    if (code === 'MIX_RICH' || code === 'MIX_LEAN') return entry(m.equivalenceRatio);
+    if (code === 'CREOSOTE_RISK') return entry(m.exitFlueTempC);
     return entry(m.draftPa);
   }
   return entry || fallback;
@@ -611,6 +621,9 @@ function syncUI() {
   document.getElementById('showFlow').checked = config.flow.visible;
   document.getElementById('animateFlow').checked = config.flow.animated;
   document.getElementById('aeroFlow').checked = config.flow.aero;
+  document.getElementById('washAsSecondary').checked = config.combustion.washAsSecondary;
+  document.getElementById('tertiaryEnabled').checked = config.combustion.tertiary.enabled;
+  document.getElementById('catalystEnabled').checked = config.combustion.catalyst.enabled;
   document.getElementById('modeHint').textContent =
     `${config.operation.mode} · primary ${Math.round(config.primaryAir.openPct)}% · secondary ${Math.round(config.operation.secondaryAirPct)}%`;
 }
@@ -690,6 +703,17 @@ function bindUI() {
   });
   document.getElementById('aeroFlow').addEventListener('change', (e) => {
     config.flow.aero = e.target.checked; saveConfig(config);
+  });
+  document.getElementById('washAsSecondary').addEventListener('change', (e) => {
+    config.combustion.washAsSecondary = e.target.checked; saveConfig(config); renderPhysics();
+  });
+  document.getElementById('tertiaryEnabled').addEventListener('change', (e) => {
+    config.combustion.tertiary.enabled = e.target.checked; saveConfig(config);
+    cache.clear(); rebuildStove(); renderPhysics();
+  });
+  document.getElementById('catalystEnabled').addEventListener('change', (e) => {
+    config.combustion.catalyst.enabled = e.target.checked; saveConfig(config);
+    cache.clear(); rebuildStove(); renderPhysics();
   });
   document.getElementById('toggleDoor').addEventListener('click', () => {
     config.door.isOpen = !config.door.isOpen; saveConfig(config);

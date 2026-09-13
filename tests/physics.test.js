@@ -62,6 +62,7 @@ ok(r.warnings.some(w => w.code === 'SMOKE_RISK'), 'smoke warning', JSON.stringif
 
 // 5. малий secondary manifold та вузький air-wash дають окремі технічні warnings
 let restricted = normalizeConfig(clone(defaultConfig));
+restricted.combustion.washAsSecondary = false;
 restricted.secondaryAir.holeCount = 4;
 restricted.secondaryAir.holeDiameterCm = 0.4;
 restricted.airWash.slotWidthPct = 50;
@@ -73,7 +74,7 @@ ok(r.warnings.some(w => w.code === 'AIRWASH_LOW' || w.code === 'AIRWASH_JETS'), 
 
 // 6. низький димохід = слабка тяга
 let lowStack = normalizeConfig(clone(defaultConfig));
-lowStack.chimney.heightCm = 100; lowStack.chimney.diameterCm = 10; lowStack.operation.flameIntensity = 0.2;
+lowStack.chimney.heightCm = 100; lowStack.chimney.diameterCm = 10; lowStack.chimney.totalHeightM = 2; lowStack.chimney.bends = 3; lowStack.operation.flameIntensity = 0.2;
 r = PhysicsModel.evaluate(lowStack);
 ok(r.metrics.draftPa < 10, 'weak draft value', JSON.stringify(r.metrics));
 ok(r.warnings.some(w => w.code === 'DRAFT_WEAK'), 'draft warning', JSON.stringify(r.warnings.map(w=>w.code)));
