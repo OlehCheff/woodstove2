@@ -653,6 +653,11 @@ function bindUI() {
   }
   document.getElementById('operationMode').addEventListener('change', (e) => {
     applyModePreset(config, e.target.value);
+    // Бафль підбирається оптимізатором під поточний режим (designInternals),
+    // так само як при завантаженні сторінки / переході за посиланням. Без
+    // цього виклику перемикання режиму в сесії й перезавантаження тієї самої
+    // печі давали різні цифри (F5 наздоганяв перерахунок, зміна режиму — ні).
+    designInternals(config);
     saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics();
   });
   document.getElementById('viewMode').addEventListener('change', (e) => {
