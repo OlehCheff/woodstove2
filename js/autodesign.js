@@ -17,8 +17,12 @@ export function designInternals(cfg) {
   cfg.door.glassInsetCm = 2;
   cfg.door.frameThicknessCm = 3;
   cfg.door.openAngleDeg = 70;
-  cfg.door.widthCm = clamp(+cfg.door.widthCm || 42, 20, Math.max(20, w - 6));
-  cfg.door.heightCm = clamp(+cfg.door.heightCm || 38, 20, Math.max(20, h - 10));
+  // Обрізаємо від "бажаного" розміру (останній навмисний вибір користувача),
+  // а не від поточного widthCm/heightCm — інакше після зменшення печі
+  // дверцята обрізались один раз і вже ніколи не поверталися до нормального
+  // розміру, навіть коли піч знову ставала достатньо великою.
+  cfg.door.widthCm = clamp(+cfg.door.preferredWidthCm || +cfg.door.widthCm || 42, 20, Math.max(20, w - 6));
+  cfg.door.heightCm = clamp(+cfg.door.preferredHeightCm || +cfg.door.heightCm || 38, 20, Math.max(20, h - 10));
 
   // Висота труби масштабується від розміру печі. Діаметр рахується нижче,
   // після підбору бафля — він залежить від об'єму топки, а топка залежить

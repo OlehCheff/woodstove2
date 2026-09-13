@@ -636,6 +636,11 @@ function bindUI() {
       let v = el.type === 'color' ? el.value : parseFloat(el.value);
       if (el.type === 'range' && (id === 'steelRoughness' || id === 'steelMetalness')) v = parseFloat(el.value);
       setByPath(config, path, v);
+      // Ручний рух слайдера дверцят — навмисний вибір: запам'ятовуємо його
+      // окремо від widthCm/heightCm, щоб autodesign.js міг повернутися до
+      // нього пізніше, навіть якщо зараз доводиться тимчасово обрізати.
+      if (id === 'doorWidthCm') config.door.preferredWidthCm = v;
+      if (id === 'doorHeightCm') config.door.preferredHeightCm = v;
       normalizeConfig(config); saveConfig(config);
       const o = document.getElementById(`${id}-v`); if (o) o.textContent = fmt(id, getByPath(config, path));
       if (['showFirebrick', 'showBaffle'].includes(id)) { applyVisibility(); return; }

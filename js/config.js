@@ -91,7 +91,12 @@ export const defaultConfig = {
     measuredUsefulHeatKwh: 0, flueTempC: 260, stoveTopTempC: 420, glassTempC: 180, smokeOpacityPct: 5,
   },
   viewMode: '3d',
-  door: { widthCm: 42, heightCm: 38, frameThicknessCm: 3, glassInsetCm: 2, openAngleDeg: 70, hingeSide: 'left', isOpen: false },
+  // preferredWidthCm/preferredHeightCm — останній НАВМИСНО обраний розмір
+  // дверцят (слайдер або пресет). Автопроєктування (autodesign.js) обрізає
+  // widthCm/heightCm лише коли фасад замалий, і завжди рахує від preferred,
+  // а не від уже обрізаного значення — інакше зменшена й потім знову
+  // збільшена піч лишалась із крихітними дверцятами назавжди.
+  door: { widthCm: 42, heightCm: 38, preferredWidthCm: 42, preferredHeightCm: 38, frameThicknessCm: 3, glassInsetCm: 2, openAngleDeg: 70, hingeSide: 'left', isOpen: false },
   camera: { fov: 50, distance: 270, targetY: 60 },
   calibration: { enabled: false, damping: 0.75, globalScale: 1, modeScale: {}, samples: 0, updated: null },
   room: { purpose: 'room', inputMode: 'volume', volumeM3: 60, areaM2: 30, ceilingM: 2.7 },
@@ -201,6 +206,8 @@ export function normalizeConfig(cfg) {
   // дверцята не більші за фасад
   cfg.door.widthCm = clamp(+cfg.door.widthCm || 42, 20, 70);
   cfg.door.heightCm = clamp(+cfg.door.heightCm || 38, 20, 70);
+  cfg.door.preferredWidthCm = clamp(+cfg.door.preferredWidthCm || cfg.door.widthCm, 20, 70);
+  cfg.door.preferredHeightCm = clamp(+cfg.door.preferredHeightCm || cfg.door.heightCm, 20, 70);
   cfg.door.frameThicknessCm = clamp(+cfg.door.frameThicknessCm || 3, 1, 6);
   cfg.door.glassInsetCm = clamp(+cfg.door.glassInsetCm || 2, 0.5, 6);
   cfg.door.openAngleDeg = clamp(+cfg.door.openAngleDeg || 70, 30, 120);
@@ -252,7 +259,14 @@ export function saveConfig(cfg) {
 export function applyModelPreset(cfg, presetName) {
   const preset = MODEL_PRESETS[presetName];
   if (!preset) return cfg;
-  return normalizeConfig(deepMerge(cfg, preset.patch));
+  const merged = deepMerge(cfg, preset.patch);
+  // Готова модель обирає дверцята так само навмисно, як і ручний слайдер —
+  // цей розмір стає новим "бажаним" (див. door.preferredWidthCm/HeightCm).
+  if (preset.patch.door) {
+    merged.door.preferredWidthCm = merged.door.widthCm;
+    merged.door.preferredHeightCm = merged.door.heightCm;
+  }
+  return normalizeConfig(merged);
 }
 
 export function validateConfig(cfg) {
