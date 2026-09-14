@@ -17,11 +17,16 @@ export function designInternals(cfg) {
   cfg.door.glassInsetCm = 2;
   cfg.door.frameThicknessCm = 3;
   cfg.door.openAngleDeg = 70;
-  cfg.door.widthCm = clamp(+cfg.door.widthCm || 42, 20, Math.max(20, w - 6));
-  cfg.door.heightCm = clamp(+cfg.door.heightCm || 38, 20, Math.max(20, h - 10));
+  // Обрізаємо від "бажаного" розміру (останній навмисний вибір користувача),
+  // а не від поточного widthCm/heightCm — інакше після зменшення печі
+  // дверцята обрізались один раз і вже ніколи не поверталися до нормального
+  // розміру, навіть коли піч знову ставала достатньо великою.
+  cfg.door.widthCm = clamp(+cfg.door.preferredWidthCm || +cfg.door.widthCm || 42, 20, Math.max(20, w - 6));
+  cfg.door.heightCm = clamp(+cfg.door.preferredHeightCm || +cfg.door.heightCm || 38, 20, Math.max(20, h - 10));
 
-  // Димохід масштабується від розміру печі.
-  cfg.chimney.diameterCm = clamp(round(Math.sqrt(w * d) * 0.24 * 2) / 2, 10, 25);
+  // Висота труби масштабується від розміру печі. Діаметр рахується нижче,
+  // після підбору бафля — він залежить від об'єму топки, а топка залежить
+  // від фінальної висоти бафля.
   cfg.chimney.heightCm = clamp(Math.round((110 + (h - 60) * 0.5) / 5) * 5, 100, 150);
 
   // Primary: кількість/крок отворів від ширини.
@@ -73,5 +78,21 @@ export function designInternals(cfg) {
     cfg.baffle.frontGapCm = best.config.baffle.frontGapCm;
     cfg.baffle.airflowPct = best.config.baffle.airflowPct;
   }
+
+  // Діаметр труби — середина того самого коридору [flueMinCm, flueMaxCm],
+  // який config.js:validateConfig рахує з обсягу топки (та сама формула).
+  // Рахуємо тут, а не на початку функції, бо коридор залежить від фінальної
+  // висоти бафля (topка вище бафля вже не рахується як об'єм топки), і без
+  // цього автопідбір діаметра й валідатор регулярно сперечались одне з одним
+  // (CHIMNEY_NARROW/CHIMNEY_LARGE навіть на «нормальних» печах).
+  const linerFlue = cfg.materials.firebrickThicknessCm + cfg.thermal.insulationThicknessCm;
+  const fbW = Math.max(10, w - steelCm * 2 - linerFlue * 2);
+  const fbD = Math.max(10, d - steelCm * 2 - linerFlue * 2);
+  const fbH = Math.max(10, Math.min(cfg.baffle.heightCm, h) - steelCm - linerFlue);
+  const flueLiters = (fbW * fbD * fbH) / 1000;
+  const flueMinCm = Math.max(10, Math.min(18, 11 + flueLiters * 0.03));
+  const flueMaxCm = Math.max(14, Math.min(25, 17 + flueLiters * 0.05));
+  cfg.chimney.diameterCm = clamp(Math.round(((flueMinCm + flueMaxCm) / 2 - steelCm) * 2) / 2, 10, 25);
+
   return normalizeConfig(cfg);
 }

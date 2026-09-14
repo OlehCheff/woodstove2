@@ -525,7 +525,7 @@ function buildExportModel() {
   const model = stove.clone(true);
   const strip = (root) => {
     for (const child of root.children.slice()) {
-      if (['flowVisualization', 'innerChamber', 'doorSeal', 'thermalZones', 'smoke'].includes(child.name)) root.remove(child);
+      if (['flowVisualization', 'aeroFlow', 'innerChamber', 'doorSeal', 'thermalZones', 'smoke'].includes(child.name)) root.remove(child);
       else strip(child);
     }
   };
@@ -541,12 +541,13 @@ const controlMap = {
   explodeDistanceCm: 'explode.distanceCm',
   cameraFov: 'camera.fov', cameraDistance: 'camera.distance', cameraTargetYCm: 'camera.targetY',
   steelColor: 'colors.steel', brickColor: 'colors.brick', glassColor: 'colors.glass', floorColor: 'colors.floor',
-  handleColor: 'colors.handle', controlColor: 'colors.control',
+  handleColor: 'colors.handle',
   steelRoughness: 'colors.steelRoughness', steelMetalness: 'colors.steelMetalness',
   woodMoisturePct: 'testBurn.woodMoisturePct', loadKg: 'testBurn.loadKg', measuredBurnHours: 'testBurn.measuredBurnHours', measuredUsefulHeatKwh: 'testBurn.measuredUsefulHeatKwh',
   flueTempC: 'testBurn.flueTempC', stoveTopTempC: 'testBurn.stoveTopTempC', glassTempC: 'testBurn.glassTempC', smokeOpacityPct: 'testBurn.smokeOpacityPct',
   volumeM3: 'room.volumeM3', areaM2: 'room.areaM2', ceilingM: 'room.ceilingM',
   chimneyTotalHeightM: 'chimney.totalHeightM', chimneyBends: 'chimney.bends', tertiaryHoleCount: 'combustion.tertiary.holeCount',
+  catalystLightoffC: 'combustion.catalyst.lightoffC',
 };
 // Зміна цих полів запускає перепроєктування внутрішньої геометрії.
 const DESIGN_IDS = { widthCm: 1, depthCm: 1, heightCm: 1, legHeightCm: 1, steelThicknessMm: 1, firebrickThicknessCm: 1, doorWidthCm: 1, doorHeightCm: 1 };
@@ -560,6 +561,7 @@ function fmt(id, v) {
   if (id === 'ceilingM') return `${v} m`;
   if (id === 'chimneyTotalHeightM') return `${v} m`;
   if (id === 'chimneyBends' || id === 'tertiaryHoleCount') return `${v}`;
+  if (id === 'catalystLightoffC') return `${v} °C`;
   if (id === 'heatExchangePasses') return `${v}`;
   if (/TempC$/.test(id)) return `${v} °C`;
   if (id === 'steelThicknessMm') return `${v} ${t('unitMm')}`;
@@ -634,6 +636,11 @@ function bindUI() {
       let v = el.type === 'color' ? el.value : parseFloat(el.value);
       if (el.type === 'range' && (id === 'steelRoughness' || id === 'steelMetalness')) v = parseFloat(el.value);
       setByPath(config, path, v);
+      // Ручний рух слайдера дверцят — навмисний вибір: запам'ятовуємо його
+      // окремо від widthCm/heightCm, щоб autodesign.js міг повернутися до
+      // нього пізніше, навіть якщо зараз доводиться тимчасово обрізати.
+      if (id === 'doorWidthCm') config.door.preferredWidthCm = v;
+      if (id === 'doorHeightCm') config.door.preferredHeightCm = v;
       normalizeConfig(config); saveConfig(config);
       const o = document.getElementById(`${id}-v`); if (o) o.textContent = fmt(id, getByPath(config, path));
       if (['showFirebrick', 'showBaffle'].includes(id)) { applyVisibility(); return; }
@@ -653,6 +660,11 @@ function bindUI() {
   }
   document.getElementById('operationMode').addEventListener('change', (e) => {
     applyModePreset(config, e.target.value);
+    // Бафль підбирається оптимізатором під поточний режим (designInternals),
+    // так само як при завантаженні сторінки / переході за посиланням. Без
+    // цього виклику перемикання режиму в сесії й перезавантаження тієї самої
+    // печі давали різні цифри (F5 наздоганяв перерахунок, зміна режиму — ні).
+    designInternals(config);
     saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics();
   });
   document.getElementById('viewMode').addEventListener('change', (e) => {
@@ -728,8 +740,13 @@ function bindUI() {
   document.getElementById('resetConfig').addEventListener('click', () => {
     localStorage.removeItem('woodstove2ConfigV1');
     config = designInternals(normalizeConfig(structuredClone(defaultConfig)));
+    // Explode й камера — стан анімації поза config, «Скинути» мав його
+    // ігнорувати: піч лишалась розібраною, а перший клік по Explode після
+    // цього нічого не робив (explodeTarget уже дорівнював 1).
+    explodeTarget = config.explode.enabled ? 1 : 0; explodeCur = explodeTarget;
+    camera.position.set(190, 170, 220);
     cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
-    syncDoorBtn();
+    syncCamera(true); syncDoorBtn(); syncExplodeBtn();
   });
   document.getElementById('saveJson').addEventListener('click', () => {
     const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });

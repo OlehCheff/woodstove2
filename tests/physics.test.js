@@ -1,6 +1,6 @@
-// Швидкі тести PhysicsModel v2 — запуск: node tests/physics.test.js
+// Швидкі тести PhysicsModel v5 — запуск: node tests/physics.test.js
 import { PhysicsModel, optimizeConfig } from '../js/physics-model.js';
-import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, MODEL_PRESETS } from '../js/config.js';
+import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, deepMerge, encodeConfig, decodeConfig, MODEL_PRESETS } from '../js/config.js';
 import { calibrateFromLog, evaluateCalibration } from '../js/calibration.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from '../js/bom.js';
 import { designInternals } from '../js/autodesign.js';
@@ -188,5 +188,202 @@ roomCfg.room = { purpose: 'room', inputMode: 'volume', volumeM3: 60, areaM2: 30,
 const rc = evaluateRoom(roomCfg);
 ok(rc.volume === 60 && rc.targetKw > 0 && Number.isFinite(rc.actualKw), 'evaluateRoom', JSON.stringify(rc));
 for (const p of Object.keys(PURPOSES)) ok(PURPOSES[p].kwPerM3 > 0 && PURPOSES[p].mode, `purpose ${p} defined`);
+
+// ---------------------------------------------------------------------
+// 16+. Регресійні тести за незалежною верифікацією 2026-09-13/14.
+// Кожен блок закріплює один Major/Minor фікс, щоб числа не «зʼїхали»
+// назад мовчки. Геометричні фікси (aeroFlow-експорт, doorCatch, Explode/
+// камера при Скинути) сюди НЕ входять — вони живуть у stove-builder.js /
+// app.js, які імпортують `three` й DOM; у проєкті свідомо немає збірки й
+// node_modules, тож three не резолвиться в plain Node. Ці три фікси
+// перевірені вручну в headless Chromium (див. коміти fix(geometry)/
+// fix(app): "Скинути" — скріншоти й виміряні зазори в повідомленнях
+// комітів), а не автотестом.
+// ---------------------------------------------------------------------
+
+// 16. Major #1: ККД не має зростати з вологістю дров (латентна теплота
+// пароутворення йде в димохід, а не зникає безслідно).
+{
+  let anyRise = 0, n = 0;
+  for (const w of [40, 70, 100, 130]) for (const mode of ['start-up', 'low', 'medium', 'high', 'overnight']) {
+    const c = normalizeConfig(clone(defaultConfig)); c.dimensions.widthCm = w; applyModePreset(c, mode); designInternals(c);
+    let prevEff = -1, rose = false;
+    for (const mo of [8, 15, 22, 28, 35]) {
+      const cc = clone(c); cc.testBurn.woodMoisturePct = mo;
+      const e = PhysicsModel.evaluate(cc).metrics.efficiencyPct;
+      if (prevEff >= 0 && e > prevEff + 1e-9) rose = true;
+      prevEff = e;
+    }
+    n++; if (rose) anyRise++;
+  }
+  ok(anyRise === 0, 'efficiency never rises with moisture', JSON.stringify({ cases: n, rose: anyRise }));
+}
+
+// 17. Major #2: бонус каталізатора видно навіть коли combustionEff уже на
+// стелі 92 (типовий випадок для Standard/medium) — рахується ПІСЛЯ стелі.
+{
+  const c = designInternals(normalizeConfig(clone(defaultConfig)));
+  const off = PhysicsModel.evaluate(c).metrics;
+  const on = clone(c); on.combustion.catalyst.enabled = true;
+  const onM = PhysicsModel.evaluate(on).metrics;
+  ok(onM.catalystActive === true, 'catalyst active on default stove', JSON.stringify({ combustionTempC: onM.combustionTempC }));
+  ok(onM.efficiencyPct > off.efficiencyPct, 'catalyst bonus visible in efficiencyPct', JSON.stringify({ off: off.efficiencyPct, on: onM.efficiencyPct }));
+  ok(onM.heatOutputKw > off.heatOutputKw, 'catalyst bonus visible in heatOutputKw', JSON.stringify({ off: off.heatOutputKw, on: onM.heatOutputKw }));
+}
+
+// 18. Major #3: SECONDARY_INACTIVE реально досяжний (не лише теоретично)
+// на холодній, вологій, слабкій печі — раніше мінімум по UI був 633°C
+// (>600°C поріг), тепер має опускатись нижче.
+{
+  const c = normalizeConfig(clone(defaultConfig));
+  Object.assign(c.dimensions, { widthCm: 40, depthCm: 45, heightCm: 40 });
+  c.materials.steelThicknessMm = 8; c.materials.firebrickThicknessCm = 2;
+  applyModePreset(c, 'overnight'); designInternals(c);
+  c.testBurn.woodMoisturePct = 35;
+  const r = PhysicsModel.evaluate(c);
+  ok(r.metrics.combustionTempC < 600, 'coldest UI-reachable zone dips below 600C', JSON.stringify({ combustionTempC: r.metrics.combustionTempC }));
+  ok(r.metrics.secondaryActive === false, 'secondaryActive false there', JSON.stringify({ secondaryActive: r.metrics.secondaryActive }));
+  ok(r.warnings.some((w) => w.code === 'SECONDARY_INACTIVE'), 'SECONDARY_INACTIVE fires', JSON.stringify(r.warnings.map((w) => w.code)));
+}
+
+// 19. Major #4: DRAFT_WEAK спрацьовує на задокументованому сценарії
+// (2 м димоходу + 3 вигини, medium) — раніше поріг 7 Па не ловив 8.1 Па.
+{
+  const c = designInternals(normalizeConfig(clone(defaultConfig)));
+  c.chimney.totalHeightM = 2; c.chimney.bends = 3;
+  const r = PhysicsModel.evaluate(c);
+  ok(r.metrics.draftPa < 9, 'weak-chimney scenario draft below new threshold', JSON.stringify({ draftPa: r.metrics.draftPa }));
+  ok(r.warnings.some((w) => w.code === 'DRAFT_WEAK'), 'DRAFT_WEAK fires on medium, 2m+3 bends', JSON.stringify(r.warnings.map((w) => w.code)));
+}
+
+// 20. Major #6: вихідна температура димоходу — гладка монотонна крива, а
+// не лінійна формула, що впиралась у ту саму підлогу (40°C) для будь-якої
+// печі на довгих трубах.
+{
+  const c = designInternals(normalizeConfig(clone(defaultConfig)));
+  const exits = [2, 5, 9, 12].map((H) => { const cc = clone(c); cc.chimney.totalHeightM = H; return PhysicsModel.evaluate(cc).metrics.exitFlueTempC; });
+  ok(exits.every((v, i) => i === 0 || v < exits[i - 1]), 'exitFlueTempC strictly decreases with flue height', JSON.stringify(exits));
+  const hot = clone(c); hot.chimney.totalHeightM = 9; applyModePreset(hot, 'high'); designInternals(hot);
+  const cold = clone(c); cold.chimney.totalHeightM = 9; applyModePreset(cold, 'overnight'); designInternals(cold);
+  const hotExit = PhysicsModel.evaluate(hot).metrics.exitFlueTempC, coldExit = PhysicsModel.evaluate(cold).metrics.exitFlueTempC;
+  ok(hotExit !== coldExit, 'exitFlueTempC does not collapse to one floor value at H=9', JSON.stringify({ hotExit, coldExit }));
+}
+
+// 21. Major #5: перемикання режиму в сесії дає ту саму піч, що й
+// завантаження/поділитися-посилання з тим самим збереженим режимом
+// (обидва шляхи мають викликати designInternals після applyModePreset).
+{
+  for (const m of ['low', 'high', 'overnight']) {
+    const live = designInternals(normalizeConfig(clone(defaultConfig)));
+    applyModePreset(live, m); designInternals(live); // те, що робить app.js у обробнику зміни режиму
+    const reloaded = designInternals(normalizeConfig(deepMerge(clone(defaultConfig), clone(live)))); // те, що робить app.js при завантаженні
+    const a = PhysicsModel.evaluate(live).metrics, b = PhysicsModel.evaluate(reloaded).metrics;
+    ok(a.efficiencyPct === b.efficiencyPct && a.heatOutputKw === b.heatOutputKw && live.baffle.heightCm === reloaded.baffle.heightCm,
+      `mode switch matches reload for ${m}`, JSON.stringify({ live: { eff: a.efficiencyPct, kw: a.heatOutputKw, baffle: live.baffle.heightCm }, reloaded: { eff: b.efficiencyPct, kw: b.heatOutputKw, baffle: reloaded.baffle.heightCm } }));
+  }
+}
+
+// 22. Major #8: автопідібраний діаметр труби ніколи не суперечить
+// власному коридору валідатора (раніше — 634/1350 у свипі верифікації).
+{
+  let n = 0, bad = 0;
+  for (let w = 50; w <= 110; w += 10) for (let d = 45; d <= 90; d += 10) for (let h = 70; h <= 140; h += 20) {
+    const c = normalizeConfig(clone(defaultConfig)); Object.assign(c.dimensions, { widthCm: w, depthCm: d, heightCm: h }); designInternals(c); n++;
+    if (validateConfig(c).warnings.some((x) => x.code.startsWith('CHIMNEY'))) bad++;
+  }
+  ok(bad === 0, 'auto chimney diameter never conflicts with its own validator', JSON.stringify({ cases: n, conflicts: bad }));
+}
+
+// 23. Major #9: кожен рядок BOM CSV (заголовок, деталі, підсумок) має
+// рівно 11 колонок — раніше порожній рядок і підсумок ламали цю умову.
+{
+  const parseCsv = (text) => {
+    const rows = []; let row = [], f = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) { if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+      else if (c === '"') q = true;
+      else if (c === ',') { row.push(f); f = ''; }
+      else if (c === '\n') { row.push(f); rows.push(row); row = []; f = ''; }
+      else f += c;
+    }
+    row.push(f); rows.push(row); return rows;
+  };
+  for (const lang of ['uk', 'en']) {
+    const c = designInternals(normalizeConfig(clone(defaultConfig)));
+    const rows = parseCsv(bomToCsv(buildBOM(c, null, lang), lang));
+    const bad = rows.filter((row) => row.length !== 11);
+    ok(bad.length === 0, `BOM CSV ${lang}: every row has 11 columns`, JSON.stringify({ rows: rows.length, bad: bad.length }));
+  }
+}
+
+// 24. Major #10: EN BOM CSV не містить кирилиці.
+{
+  const cyr = /[А-Яа-яІіЇїЄєҐґʼ]/;
+  const c = designInternals(normalizeConfig(clone(defaultConfig)));
+  c.combustion.tertiary.enabled = true; c.combustion.catalyst.enabled = true;
+  const csv = bomToCsv(buildBOM(c, null, 'en'), 'en');
+  const cyrLines = csv.split('\n').filter((l) => cyr.test(l));
+  ok(cyrLines.length === 0, 'EN BOM CSV has no Cyrillic', JSON.stringify(cyrLines.slice(0, 3)));
+}
+
+// 25. Major #18: нержавійка (secondary/tertiary труби) входить у масу
+// металу в підсумку BOM, а не губиться повз фільтр "лише сталь".
+{
+  const c = designInternals(normalizeConfig(clone(defaultConfig)));
+  c.combustion.tertiary.enabled = true;
+  const bom = buildBOM(c, null, 'uk');
+  const ss = bom.parts.filter((p) => /нерж/.test(p.mat));
+  ok(ss.length >= 2, 'stainless parts present (secondary + tertiary tubes)', JSON.stringify(ss.map((p) => p.name)));
+  const manualSum = +bom.parts.filter((p) => /steel|сталь|нерж/.test(p.mat)).reduce((s, p) => s + p.massKg * p.qty, 0).toFixed(1);
+  ok(bom.totals.steelMassKg === manualSum, 'steelMassKg totals include stainless', JSON.stringify({ reported: bom.totals.steelMassKg, manualSum }));
+}
+
+// 26. Minor #13: підбір печі під приміщення лишається в межах ±20% на
+// сценарії, що раніше промахувався на 31% (майстерня 30 м³).
+{
+  const c = designInternals(normalizeConfig(clone(defaultConfig)));
+  applyModePreset(c, PURPOSES.workshop.mode); designInternals(c);
+  const target = requiredPowerKw('workshop', 30);
+  const t0 = Date.now();
+  const best = sizeStoveForPower(target, c);
+  const ms = Date.now() - t0;
+  const ratio = best.kw / target;
+  ok(ratio >= 0.8 && ratio <= 1.2, 'workshop 30m3 room-fit within +-20%', JSON.stringify({ target, got: best.kw, ratio }));
+  ok(ms < 3000, 'room-fit click stays reasonably fast', JSON.stringify({ ms }));
+}
+
+// 27. Minor #14: normalizeConfig не дає NaN на нечислових значеннях
+// (share-посилання чи вручну відредагований JSON з рядком замість числа).
+{
+  const fields = ['baffle.airflowPct', 'primaryAir.openPct', 'airWash.intakePct', 'operation.secondaryAirPct', 'operation.flameIntensity', 'thermal.insulationThicknessCm', 'thermal.baffleRefractoryThicknessCm', 'calibration.damping'];
+  let bad = [];
+  for (const path of fields) {
+    const patch = {}; let t = patch; const parts = path.split('.'); parts.slice(0, -1).forEach((k) => { t = t[k] = {}; }); t[parts.at(-1)] = 'abc';
+    const cfg = normalizeConfig(deepMerge(clone(defaultConfig), patch));
+    const v = parts.reduce((a, k) => a?.[k], cfg);
+    if (!Number.isFinite(v)) bad.push(path);
+  }
+  ok(bad.length === 0, 'normalizeConfig never leaves NaN from a non-numeric field', JSON.stringify(bad));
+  const linkCfg = clone(defaultConfig); linkCfg.primaryAir.openPct = 'abc';
+  const fromLink = designInternals(normalizeConfig(deepMerge(clone(defaultConfig), decodeConfig(encodeConfig(linkCfg)))));
+  ok(Number.isFinite(PhysicsModel.evaluate(fromLink).metrics.efficiencyPct), 'shared link with a corrupted field still evaluates to a finite result');
+}
+
+// 28. Minor #16: дверцята повертаються до бажаного розміру після
+// зменшення й повернення печі до попереднього розміру.
+{
+  let c = designInternals(normalizeConfig(clone(defaultConfig)));
+  ok(c.door.widthCm === 42 && c.door.heightCm === 38, 'default door size', JSON.stringify({ w: c.door.widthCm, h: c.door.heightCm }));
+  Object.assign(c.dimensions, { widthCm: 30, depthCm: 30, heightCm: 40 }); c = designInternals(c);
+  ok(c.door.widthCm < 42, 'door shrinks on a tiny stove', JSON.stringify({ w: c.door.widthCm }));
+  Object.assign(c.dimensions, { widthCm: 70, depthCm: 55, heightCm: 95 }); c = designInternals(c);
+  ok(c.door.widthCm === 42 && c.door.heightCm === 38, 'door regrows back to its preferred size', JSON.stringify({ w: c.door.widthCm, h: c.door.heightCm }));
+  // ручний вибір користувача (симуляція слайдера) не відкочується назад
+  let c2 = designInternals(normalizeConfig(clone(defaultConfig)));
+  c2.door.widthCm = 25; c2.door.preferredWidthCm = 25; c2 = designInternals(c2);
+  Object.assign(c2.dimensions, { widthCm: 140, depthCm: 120, heightCm: 180 }); c2 = designInternals(c2);
+  ok(c2.door.widthCm === 25, 'manual door choice survives growing the stove', JSON.stringify({ w: c2.door.widthCm }));
+}
 
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);process.exit(fails === 0 ? 0 : 1);

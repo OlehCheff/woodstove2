@@ -39,7 +39,6 @@ export function buildStove(cfg, cache = new Map()) {
     () => new THREE.MeshStandardMaterial({ color: 0x8f8172, roughness: 0.98, metalness: 0.02 }));
   const darkM = mat(cache, 'dark', () => new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.45, metalness: 0.6 }));
   const ductM = mat(cache, 'duct', () => new THREE.MeshStandardMaterial({ color: 0x616872, roughness: 0.4, metalness: 0.58 }));
-  const controlM = mat(cache, `control|${cfg.colors.control}`, () => new THREE.MeshStandardMaterial({ color: cfg.colors.control, roughness: 0.35, metalness: 0.35 }));
   const handleM = mat(cache, `handle|${cfg.colors.handle}`, () => new THREE.MeshStandardMaterial({ color: cfg.colors.handle, metalness: 0.85, roughness: 0.25 }));
   const primaryAirM = mat(cache, 'primary-air', () => new THREE.MeshStandardMaterial({ color: 0x4f8cff, roughness: 0.35, metalness: 0.45 }));
   const airWashM = mat(cache, 'air-wash', () => new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.35, metalness: 0.45 }));
@@ -81,7 +80,7 @@ export function buildStove(cfg, cache = new Map()) {
   shell.add(frontPanel);
   const seal = new THREE.Group(); seal.name = 'doorSeal';
   const sealT = 0.8, sealW = 1.2;
-  const sealOuterW = openingW + sealW * 2, sealOuterH = openingH + sealW * 2;
+  const sealOuterH = openingH + sealW * 2;
   const addSeal = (pw, ph, px, py) => { const piece = plate(pw, ph, sealT, gasketM); piece.position.set(px, py, d / 2 + steelT * 0.5); seal.add(piece); };
   addSeal(sealW, sealOuterH, -openingW / 2 - sealW / 2, openingBottom + openingH / 2);
   addSeal(sealW, sealOuterH, openingW / 2 + sealW / 2, openingBottom + openingH / 2);
@@ -321,13 +320,16 @@ export function buildStove(cfg, cache = new Map()) {
     { color: 0x22c55e, pts: [V(riserX, 9, riserZ), V(riserX, secTubeY - 1, riserZ), V(0, secTubeY, secTubeZ), V(0, secTubeY - 3, secTubeZ)] },
     { color: 0xef7d32, pts: [V(0, baffleY - 6, d / 2 - baffleGap * 0.5), V(0, baffleY + 4, d / 2 - baffleGap * 0.5), V(0, baffleY + 5, chimZ), V(0, h + 8, chimZ)] },
   ];
+  // Окрема іменована група — щоб стрілки/крапки потоків надійно вирізались
+  // з GLTF/STL-експорту (buildExportModel у app.js фільтрує за назвою вузла).
+  const aeroFlow = new THREE.Group(); aeroFlow.name = 'aeroFlow'; shell.add(aeroFlow);
   const aeroParticles = [];
   const aeroMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false });
   for (const path of flowPaths) {
     const dot = new THREE.Mesh(new THREE.SphereGeometry(0.9, 8, 8), aeroMat.clone());
     dot.material.color.setHex(path.color);
     dot.visible = false; dot.userData = { path, t: Math.random() };
-    shell.add(dot); aeroParticles.push(dot);
+    aeroFlow.add(dot); aeroParticles.push(dot);
   }
 
   // камера + полум'я
@@ -451,8 +453,12 @@ export function buildStove(cfg, cache = new Map()) {
   const latchRoller = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 5.2, 12), handleMat);
   latchRoller.rotation.x = Math.PI / 2; latchRoller.position.set(latchX, 0, frameT / 2 + 1.0); leaf.add(latchRoller);
   doorPivot.add(leaf); shell.add(doorPivot);
-  const catchPlate = plate(1.6, Math.min(9, doorHc * 0.3), 1.6, darkM);
-  catchPlate.position.set(-hingeSign * (openingW / 2 - 0.9), openingBottom + openingH / 2, d / 2 + steelT * 0.5 + frameT * 0.6);
+  // Зачіп ставимо впритул до ущільнювача (doorSeal, центр d/2+steelT*0.5,
+  // товщина sealT=0.8), а не на довільній відстані від нього — інакше він
+  // "висить" у повітрі окремо від корпусу й дверцят (0.6-1.25 см зазору).
+  const catchThickness = 1.6;
+  const catchPlate = plate(catchThickness, Math.min(9, doorHc * 0.3), catchThickness, darkM);
+  catchPlate.position.set(-hingeSign * (openingW / 2 - 0.9), openingBottom + openingH / 2, d / 2 + steelT * 0.5 + sealT / 2 + catchThickness / 2);
   catchPlate.name = 'doorCatch'; shell.add(catchPlate);
   for (const y of [-doorHc * 0.32, doorHc * 0.32]) {
     const hinge = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 6, 16), darkM);

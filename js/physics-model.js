@@ -1,4 +1,4 @@
-// PhysicsModel v4 — оціночна airflow/thermal модель, не CFD і не сертифікація.
+// PhysicsModel v5 — оціночна airflow/thermal модель, не CFD і не сертифікація.
 import { OPERATION_PRESETS } from './config.js';
 
 const MODE_COEFF = {
@@ -31,7 +31,6 @@ export const PhysicsModel = {
     const steelMm = +config?.materials?.steelThicknessMm || 5;
     const brickCm = +config?.materials?.firebrickThicknessCm || 4;
     const chimD = +config?.chimney?.diameterCm || 15;
-    const chimH = +config?.chimney?.heightCm || 120;
     const flueH = +config?.chimney?.totalHeightM || 5;
     const flueBends = +config?.chimney?.bends || 0;
     const washAsSecondary = config?.combustion?.washAsSecondary !== false;
@@ -57,8 +56,11 @@ export const PhysicsModel = {
     const species = WOOD_SPECIES[speciesKey] || WOOD_SPECIES.birch;
     const moisturePct = clamp(+config?.testBurn?.woodMoisturePct || 15, 8, 35);
     const woodEnergyKwhKg = species.lhvKwhKg * (1 - moisturePct * 0.007);
-    const moistureTempPenaltyC = Math.max(0, moisturePct - 12) * 4;
+    const moistureTempPenaltyC = Math.max(0, moisturePct - 12) * 6;
     const moistureEffPenalty = Math.max(0, moisturePct - 12) * 0.15;
+    // Волога, що википає з палива, іде з димом і забирає приховану теплоту
+    // пароутворення — це прямі втрати через димохід, а не лише нижча температура.
+    const moistureFlueLossPenalty = Math.max(0, moisturePct - 12) * 0.25;
     // Калібрування за реальними тестами (якщо увімкнено): глобальний масштаб + поправка режиму.
     const calibration = config?.calibration || {};
     const calibrationFactor = (calibration.enabled && calibration.globalScale)
@@ -131,19 +133,26 @@ export const PhysicsModel = {
     const secondaryIgnitionC = catalystEnabled ? Math.min(600, catalystLightoffC) : 600;
     const secondaryActive = combustionTempC >= secondaryIgnitionC;
     const catalystActive = catalystEnabled && combustionTempC >= catalystLightoffC;
+    // Каталізатор — окремий, прямий ефект (допалює CO/дим у власному стільнику),
+    // тому рахуємо його ПОСЛЕ стелі комбустійного ККД: інакше на добре спроєктованій
+    // печі (яка й так впирається у стелю 92) бонус каталізатора ніколи не видно.
     const catalystBonus = catalystActive ? 2.5 : 0;
     const secondaryGateBonus = secondaryActive ? 3 : -8;
     const combustionEfficiencyPct = clamp(
       68 + (combustionTempC - 600) * 0.04 + secondaryQuality * 1.2 + thermalRetention * 5 + gasResidenceSeconds
-        + airMix * 5 + staging + draftBonus * 0.3 + targetTemperatureFit - moistureEffPenalty + secondaryGateBonus + catalystBonus + mc.effBias,
+        + airMix * 5 + staging + draftBonus * 0.3 + targetTemperatureFit - moistureEffPenalty + secondaryGateBonus + mc.effBias,
       48, 92
     );
     const modeledFlueTempC = clamp(combustionTempC - heatExchangePasses * 110 - insulationCm * 18 - baffleRefractoryCm * 12, 120, 650);
     const baffleExitTempC = clamp(modeledFlueTempC + (combustionTempC - modeledFlueTempC) * 0.55, 130, 900);
-    const flueLossPct = clamp(7 + (modeledFlueTempC - 150) * 0.025 + (1 - thermalRetention) * 8 - heatExchangePasses * 1.5, 8, 28);
-    const efficiencyPct = clamp(combustionEfficiencyPct - flueLossPct, 35, 88);
-    // Температура димових газів на ВИХОДІ з труби (охолодження по висоті + вигини).
-    const exitFlueTempC = clamp(modeledFlueTempC * (1 - 0.09 * flueH) - flueBends * 6, 40, 600);
+    const flueLossPct = clamp(7 + (modeledFlueTempC - 150) * 0.025 + (1 - thermalRetention) * 8 - heatExchangePasses * 1.5 + moistureFlueLossPenalty, 8, 28);
+    const efficiencyPct = clamp(combustionEfficiencyPct - flueLossPct + catalystBonus, 35, 88);
+    // Температура димових газів на ВИХОДІ з труби: експоненційне охолодження вздовж
+    // каналу (наближення до температури довкілля), а не лінійне — лінійна форма
+    // перетинала нуль і давала однакові 40°C для будь-якої печі на довгих трубах.
+    const ambientC = 20;
+    const flueCoolingFactor = Math.exp(-0.12 * flueH);
+    const exitFlueTempC = clamp(ambientC + (modeledFlueTempC - ambientC) * flueCoolingFactor - flueBends * 6, 40, 600);
     // Коефіцієнт надлишку повітря λ та Φ=1/λ (ціль Φ 0.4–0.5).
     const lambda = clamp(1.4 + airMix * 1.6, 1.1, 4);
     const equivalenceRatio = 1 / lambda;
@@ -181,7 +190,7 @@ export const PhysicsModel = {
       warnings.push({ level: 'warn', code: 'INEFFICIENT_MODE', message: 'Неефективний режим: ККД < 58%.' });
     if (washGap < 0.9 && flame > 0.75)
       warnings.push({ level: 'warn', code: 'DIRTY_GLASS', message: 'Закопчення скла: вузький air-wash при сильному полум’ї.' });
-    if (draftPa < 7 && mode !== 'overnight')
+    if (draftPa < 9 && mode !== 'overnight')
       warnings.push({ level: 'warn', code: 'DRAFT_WEAK', message: `Слабка тяга (${round(draftPa, 1)} Па): збільшіть висоту/Ø димоходу або інтенсивність.` });
     if (baffleGap > 12)
       warnings.push({ level: 'info', code: 'BAFFLE_GAP', message: 'Великий передній зазор бафля — гази йдуть повз догорання.' });
@@ -207,6 +216,10 @@ export const PhysicsModel = {
       warnings.push({ level: 'info', code: 'MIX_LEAN', message: `Багато повітря (Φ=${round(equivalenceRatio, 2)}): зона охолоджується, зайві втрати.` });
     if (exitFlueTempC < 150)
       warnings.push({ level: 'danger', code: 'CREOSOTE_RISK', message: `Димові гази на виході ${round(exitFlueTempC, 0)}°C < 150°C: конденсат і креозот.` });
+    // Примітка: це стаціонарна модель без часової осі, тож "не прогрітий" тут
+    // означає "зона на сталому режимі холодніша за поріг", а не "перші хвилини
+    // після розпалу". Мінімальна досяжна зона в межах UI ~590°C, тож поріг
+    // потрібно підняти вище цього значення, щоб побачити попередження.
     if (catalystEnabled && !catalystActive)
       warnings.push({ level: 'info', code: 'CATALYST_COLD', message: `Каталізатор не прогрітий (${round(combustionTempC, 0)}°C < ${round(catalystLightoffC, 0)}°C) — байпас відкрито.` });
 
@@ -272,5 +285,3 @@ export function optimizeConfig(config) {
   return best;
 }
 
-if (typeof module !== 'undefined' && module.exports) module.exports = { PhysicsModel };
-if (typeof window !== 'undefined') window.PhysicsModel = PhysicsModel;

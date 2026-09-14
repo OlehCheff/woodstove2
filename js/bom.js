@@ -5,6 +5,9 @@ import { PhysicsModel } from './physics-model.js';
 
 const round = (v, d = 1) => Math.round(v * 10 ** d) / 10 ** d;
 const clampBom = (v, a, b) => Math.max(a, Math.min(b, v));
+// Нержавійка (secondary/tertiary труби) — теж метал, що йде під різ/зварювання;
+// без неї "Площа металу" й DXF губили ці деталі повністю.
+const METAL_RX = /steel|сталь|нерж|stainless/;
 
 const NAME_EN = {
   'Днище': 'Bottom', 'Бічна панель (Л/П)': 'Side panel (L/R)', 'Задня панель': 'Back panel',
@@ -31,21 +34,25 @@ const NAME_EN = {
   'Air-wash бокова ручка + тяга': 'Air-wash side lever + rod',
   'Уголки бафля (Л/П, 2 шт)': 'Baffle angle supports (L/R, 2 pcs)',
   'Передній дефлектор': 'Front deflector',
+  'Третинна труба (tertiary)': 'Tertiary tube', 'Каталітичний стільник': 'Catalytic honeycomb',
 };
 function translateNote(s, lang) {
   if (lang !== 'en' || !s) return s;
   return s
-    .replace(/розгортка/g, 'developed').replace(/з ручкою/g, 'with handle').replace(/переріз/g, 'section')
-    .replace(/щілина/g, 'slot').replace(/кут/g, 'angle').replace(/зазор/g, 'clearance')
+    .replace(/розгортка короба/g, 'developed duct').replace(/розгортка/g, 'developed').replace(/з ручкою/g, 'with handle').replace(/переріз/g, 'section')
+    .replace(/щілина/g, 'slot').replace(/кут/g, 'angle').replace(/зазор/g, 'clearance').replace(/знімний/g, 'removable')
     .replace(/Л \+ П \+ задня/g, 'L+R+back').replace(/Л \+ П/g, 'L+R').replace(/покупна\/токарка/g, 'purchased/machined')
     .replace(/кручена/g, 'coiled').replace(/з зачепом/g, 'with catch').replace(/термостійке/g, 'heat-resistant')
     .replace(/гориз\./g, 'horiz.').replace(/верт\./g, 'vert.').replace(/профільна труба/g, 'profile tube')
-    .replace(/см/g, 'cm');
+    .replace(/опора дефлекторів/g, 'deflector support').replace(/отвори в передній плиті під дверцятами/g, 'holes in front plate, under the door')
+    .replace(/на всю ширину/g, 'full width').replace(/права стінка/g, 'right wall').replace(/звʼязок з флопом/g, 'linked to the flap')
+    .replace(/см/g, 'cm').replace(/мм/g, 'mm');
 }
 function translateMat(s, lang) {
   if (lang !== 'en') return s;
   return s.replace(/сталь/g, 'steel').replace(/шамот/g, 'firebrick').replace(/скло/g, 'glass')
-    .replace(/вермикуліт/g, 'vermiculite').replace(/покупна/g, 'purchased').replace(/мм/g, 'mm');
+    .replace(/вермикуліт/g, 'vermiculite').replace(/нерж\.?/g, 'stainless').replace(/каталізатор/g, 'catalyst media')
+    .replace(/профіль/g, 'profile').replace(/покупна/g, 'purchased').replace(/мм/g, 'mm');
 }
 
 export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
@@ -173,12 +180,11 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
     add('Тепловий екран — бічні (Л/П)', 2, d - 4, shieldH, 0.3, 'сталь 3 мм');
   }
 
-  const isSteel = (m) => /steel|сталь/.test(m);
-  const steelMass = parts.filter(p => isSteel(p.mat)).reduce((s, p) => s + p.massKg * p.qty, 0);
+  const steelMass = parts.filter(p => METAL_RX.test(p.mat)).reduce((s, p) => s + p.massKg * p.qty, 0);
   const brickMass = parts.filter(p => /firebrick|шамот/.test(p.mat)).reduce((s, p) => s + p.massKg * p.qty, 0);
   const glassMass = parts.filter(p => /glass|скло/.test(p.mat)).reduce((s, p) => s + p.massKg * p.qty, 0);
   const insMass = parts.filter(p => /vermiculite|CFB|вермикуліт/.test(p.mat)).reduce((s, p) => s + p.massKg * p.qty, 0);
-  const cutParts = parts.filter(p => p.mat.match(/steel|сталь/) && (p.kind === 'sheet' || p.kind === 'bar' || p.kind === 'tube'));
+  const cutParts = parts.filter(p => METAL_RX.test(p.mat) && (p.kind === 'sheet' || p.kind === 'bar' || p.kind === 'tube'));
   const cutAreaCm2 = cutParts.reduce((s, p) => s + p.areaCm2 * p.qty, 0);
   const weldCm = parts.reduce((s, p) => s + p.weldCm * p.qty, 0);
   const physics = physicsResult || PhysicsModel.evaluate(cfg);
@@ -218,17 +224,22 @@ export function bomToCsv(bom, lang = 'uk') {
     p.name, p.qty, p.wCm, p.hCm, p.tCm, kindTxt[p.kind] || p.kind,
     (p.kind === 'purchased' ? '' : p.areaCm2), p.massKg, p.mat, p.weldCm, p.note,
   ].map(esc).join(','));
-  const totals = lang === 'en'
-    ? `TOTAL,,steel ${bom.totals.steelMassKg} kg,brick ${bom.totals.brickMassKg} kg,glass ${bom.totals.glassMassKg} kg,cut ${bom.totals.cutAreaM2} m2,weld ${bom.totals.weldMeters} m,purchased ${bom.totals.purchasedCount} pcs,total ${bom.totals.totalMassKg} kg (estimate)`
-    : `РАЗОМ,,сталь ${bom.totals.steelMassKg} кг,шамот ${bom.totals.brickMassKg} кг,скло ${bom.totals.glassMassKg} кг,різ ${bom.totals.cutAreaM2} м2,шов ${bom.totals.weldMeters} м,покупних ${bom.totals.purchasedCount} шт,загалом ${bom.totals.totalMassKg} кг (оцінка)`;
-  return [head, ...rows, '', totals].join('\n');
+  // Підсумок — теж рівно 11 полів (як заголовок і кожен рядок деталі): решта
+  // колонок порожні, а зведення тексту йде в останню (Примітка/Note), інакше
+  // короткий "РАЗОМ,,сталь Х кг,..." рядок ламав табличні парсери, які
+  // очікують однакову кількість полів у кожному рядку CSV.
+  const summary = lang === 'en'
+    ? `steel ${bom.totals.steelMassKg} kg, brick ${bom.totals.brickMassKg} kg, glass ${bom.totals.glassMassKg} kg, cut ${bom.totals.cutAreaM2} m2, weld ${bom.totals.weldMeters} m, purchased ${bom.totals.purchasedCount} pcs, total ${bom.totals.totalMassKg} kg (estimate)`
+    : `сталь ${bom.totals.steelMassKg} кг, шамот ${bom.totals.brickMassKg} кг, скло ${bom.totals.glassMassKg} кг, різ ${bom.totals.cutAreaM2} м2, шов ${bom.totals.weldMeters} м, покупних ${bom.totals.purchasedCount} шт, загалом ${bom.totals.totalMassKg} кг (оцінка)`;
+  const totalsRow = [lang === 'en' ? 'TOTAL' : 'РАЗОМ', '', '', '', '', '', '', '', '', '', summary].map(esc).join(',');
+  return [head, ...rows, totalsRow].join('\n');
 }
 
 // DXF R12 (LINE + TEXT) — розкладка плоских деталей для плазми/лазера.
 // Одиниці — мм (1 см = 10 мм). Одна деталь = прямокутник + маркування.
 export function buildDXF(cfg, lang = 'uk') {
   const bom = buildBOM(cfg, null, lang);
-  const flat = bom.parts.filter(p => /steel|сталь/.test(p.mat) && (p.kind === 'sheet' || p.kind === 'bar' || p.kind === 'tube'));
+  const flat = bom.parts.filter(p => METAL_RX.test(p.mat) && (p.kind === 'sheet' || p.kind === 'bar' || p.kind === 'tube'));
   const sheetW = 2000; // мм корисна ширина листа
   const gap = 20;      // мм між деталями
   let x = 20, y = 20, rowH = 0, n = 0;
@@ -273,8 +284,12 @@ export function buildDrawingSVG(cfg, lang = 'uk') {
     const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
     const tx = side === 'top' ? midX : midX - 6;
     const ty = side === 'top' ? midY - 8 : midY + 4;
+    // Плашка під підпис має підлаштовуватись під довжину тексту, інакше довші
+    // підписи ("H корпусу 95 см", "H загальна 110 см") вилазять за рамку 64px
+    // і перекриваються з сусідніми.
+    const boxW = Math.max(64, label.length * 6.3 + 14);
     return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#333" stroke-width="1" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
-      <rect x="${tx - 32}" y="${ty - 10}" width="64" height="16" rx="3" fill="#fff" stroke="#4f8cff"/><text x="${tx}" y="${ty + 2}" text-anchor="middle" font-size="10" fill="#172033">${label}</text>`;
+      <rect x="${tx - boxW / 2}" y="${ty - 10}" width="${boxW}" height="16" rx="3" fill="#fff" stroke="#4f8cff"/><text x="${tx}" y="${ty + 2}" text-anchor="middle" font-size="10" fill="#172033">${label}</text>`;
   };
 
   // ---- FRONT VIEW ----

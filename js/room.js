@@ -28,18 +28,32 @@ export function requiredPowerKw(purpose, volumeM3) {
 }
 
 // Підбір габаритів: масштабуємо пропорційну форму і беремо найближчу потужність.
+// Двофазний пошук: грубий скан (крок 0.05, як раніше) + точний прохід лише
+// навколо найкращого грубого кандидата. Суцільний дрібний крок на всьому
+// діапазоні майже потроїв час одного кліку (кожен designInternals() сам
+// запускає перебір бафля), а вузький другий прохід ловить ту саму точність
+// (сусідні grid-точки коарс-скану інколи давали розрив 1.34→2.62 кВт при
+// цілі 1.95 кВт — майстерня 30 м³, похибка −31%) майже без втрати швидкодії.
 export function sizeStoveForPower(targetKw, baseCfg) {
   const shape = { w: 70, d: 55, h: 95 };
-  let best = null;
-  for (let s = 0.55; s <= 1.95; s += 0.05) {
+  const evalScale = (s) => {
     const c = normalizeConfig(JSON.parse(JSON.stringify(baseCfg)));
     c.dimensions.widthCm = clamp(Math.round(shape.w * s), 30, 140);
     c.dimensions.depthCm = clamp(Math.round(shape.d * s), 30, 120);
     c.dimensions.heightCm = clamp(Math.round(shape.h * s), 40, 180);
     const designed = designInternals(c);
     const kw = PhysicsModel.evaluate(designed).metrics.heatOutputKw;
-    const err = Math.abs(kw - targetKw);
-    if (!best || err < best.err) best = { err, config: designed, kw: round(kw, 2) };
+    return { s, err: Math.abs(kw - targetKw), config: designed, kw: round(kw, 2) };
+  };
+  let best = null;
+  for (let s = 0.55; s <= 1.95; s += 0.05) {
+    const r = evalScale(s);
+    if (!best || r.err < best.err) best = r;
+  }
+  for (let s = Math.max(0.5, best.s - 0.06); s <= Math.min(2.0, best.s + 0.06); s += 0.015) {
+    if (Math.abs(s - best.s) < 1e-9) continue;
+    const r = evalScale(s);
+    if (r.err < best.err) best = r;
   }
   return best;
 }
