@@ -67,6 +67,12 @@ button:active{transform:translateY(1px)}
 .room-result .bad{color:#fca5a5}
 .calibration-result{margin-top:8px;font-size:11.5px;line-height:1.5;color:var(--muted);background:#12161d;border:1px solid var(--line);border-radius:9px;padding:8px}
 .calibration-result b{color:#fbbf24}
+.phi-gauge{margin-top:8px;padding:8px 4px 10px;border:1px solid var(--line);border-radius:9px;background:#101820}
+.phi-track{position:relative;height:10px;background:#1a1f2a;border-radius:4px;margin:0 8px 6px}
+.phi-band{position:absolute;left:40%;right:40%;top:0;bottom:0;background:rgba(34,197,94,.4);border-radius:4px}
+.phi-marker{position:absolute;top:-3px;width:4px;height:16px;background:#f97316;border-radius:2px;transform:translateX(-2px);transition:left .12s linear}
+.phi-label{font-size:11px;color:var(--muted);text-align:center;margin-bottom:2px}
+.phi-status{font-size:11.5px;color:#fbbf24;text-align:center}
 #tour{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55)}
 #tour .card{max-width:520px;background:#151a23;border:1px solid var(--line);border-radius:14px;padding:18px}
 #tour h2{font-size:16px;margin-bottom:8px}

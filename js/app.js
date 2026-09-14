@@ -476,6 +476,41 @@ function updateRoomRows() {
   const c = document.getElementById('ceilingRow'); if (c) c.style.display = mode === 'area' ? '' : 'none';
 }
 
+function renderPhiGauge(m) {
+  const marker = document.getElementById('phiMarker');
+  const label = document.getElementById('phiLabel');
+  const status = document.getElementById('phiStatus');
+  if (!marker || !label || !status) return;
+  const phi = m.equivalenceRatio;
+  // Мапа Φ → позиція 0–100% на шкалі: Φ=0.1 → 0, Φ=1.0 → 100%.
+  const left = clamp((phi - 0.1) / 0.9, 0, 1) * 100;
+  marker.style.left = `${left}%`;
+  const inBand = phi >= 0.4 && phi <= 0.5;
+  marker.style.background = inBand ? '#22c55e' : '#f97316';
+  label.textContent = `Φ = ${phi.toFixed(2)}`;
+  if (inBand) status.innerHTML = `<span style="color:#86efac">${t('phiInBand')}</span>`;
+  else if (phi > 0.5) status.innerHTML = `<span>${t('phiRich')}</span>`;
+  else status.innerHTML = `<span>${t('phiLean')}</span>`;
+}
+
+function autoPhi() {
+  // Шукаємо поєднання primary/secondary, що дає Φ найближче до 0.45.
+  let best = null;
+  for (let p = 15; p <= 95; p += 2) {
+    for (let s = 20; s <= 90; s += 4) {
+      const probe = { ...config, primaryAir: { ...config.primaryAir, openPct: p }, operation: { ...config.operation, secondaryAirPct: s }, calibration: { ...config.calibration, enabled: false } };
+      const phi = PhysicsModel.evaluate(probe).metrics.equivalenceRatio;
+      const score = Math.abs(phi - 0.45);
+      if (!best || score < best.score) best = { score, p, s, phi };
+    }
+  }
+  if (best) {
+    config.primaryAir.openPct = best.p;
+    config.operation.secondaryAirPct = best.s;
+    saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
+  }
+}
+
 function renderRoomSummary() {
   const target = document.getElementById('roomResult');
   if (!target) return;
@@ -500,6 +535,7 @@ function renderAutoSummary(r = null) {  const target = document.getElementById('
   if (!target) return;
   const m = (r || PhysicsModel.evaluate(config)).metrics;
   target.innerHTML = `<b>${t('autoTitle')}</b> · ${t('kEff')} <b>${m.efficiencyPct}%</b> · ${t('autoBaffle')} <b>${config.baffle.heightCm} ${t('unitCm')}</b> · ${t('autoChimney')} <b>Ø${config.chimney.diameterCm} ${t('unitCm')} × ${config.chimney.heightCm} ${t('unitCm')}</b> · ${t('autoInsulation')} <b>${config.thermal.insulationThicknessCm} ${t('unitCm')}</b> · ${t('autoSecondary')} <b>${config.secondaryAir.holeCount}×Ø${config.secondaryAir.holeDiameterCm}</b>`;
+  renderPhiGauge(m);
 }
 
 function renderBomSummary(physicsResult = null) {  const target = document.getElementById('bomSummary');
@@ -569,6 +605,7 @@ const controlMap = {
   volumeM3: 'room.volumeM3', areaM2: 'room.areaM2', ceilingM: 'room.ceilingM',
   chimneyTotalHeightM: 'chimney.totalHeightM', chimneyBends: 'chimney.bends', tertiaryHoleCount: 'combustion.tertiary.holeCount',
   excludeStartUp: 'calibration.excludeStartUp',
+  primaryAirOpenPct: 'primaryAir.openPct', operationSecondaryAirPct: 'operation.secondaryAirPct',
 };
 // Зміна цих полів запускає перепроєктування внутрішньої геометрії.
 const DESIGN_IDS = { widthCm: 1, depthCm: 1, heightCm: 1, legHeightCm: 1, steelThicknessMm: 1, firebrickThicknessCm: 1, doorWidthCm: 1, doorHeightCm: 1 };
@@ -577,6 +614,8 @@ function fmt(id, v) {
   if (id === 'loadKg') return `${v} kg`;
   if (id === 'measuredBurnHours') return `${v} ${t('unitH')}`;
   if (id === 'measuredUsefulHeatKwh') return `${v} kWh`;
+  if (id === 'primaryAirOpenPct') return `${v} %`;
+  if (id === 'operationSecondaryAirPct') return `${v} %`;
   if (id === 'volumeM3') return `${v} m³`;
   if (id === 'areaM2') return `${v} m²`;
   if (id === 'ceilingM') return `${v} m`;
@@ -753,6 +792,7 @@ function bindUI() {
     config.calibration.excludeStartUp = e.target.checked; saveConfig(config);
     calibrateModel();
   });
+  document.getElementById('phiAuto').addEventListener('click', autoPhi);
   document.getElementById('toggleDoor').addEventListener('click', () => {
     config.door.isOpen = !config.door.isOpen; saveConfig(config);
     doorTarget = config.door.isOpen ? doorOpenAngle() : 0;

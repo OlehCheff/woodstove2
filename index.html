@@ -94,6 +94,14 @@
     <div class="row"><label data-i18n="doorHinge">Петля дверцят</label><select id="doorHingeSide"><option value="left" data-i18n="hingeLeft">Ліва сторона</option><option value="right" data-i18n="hingeRight">Права сторона</option></select></div>
   </div></details>
 
+  <details open><summary data-i18n="secPhiTuner">Φ-тюнер (надлишок повітря)</summary><div class="body" id="phiTuner">
+    <div class="row"><label><span data-i18n="phiPrimary">Primary повітря (%)</span> <output id="primaryAirOpenPct-v"></output></label><input type="range" id="primaryAirOpenPct" min="10" max="95" step="1"></div>
+    <div class="row"><label><span data-i18n="phiSecondary">Secondary повітря (%)</span> <output id="operationSecondaryAirPct-v"></output></label><input type="range" id="operationSecondaryAirPct" min="10" max="95" step="1"></div>
+    <div class="phi-gauge"><div class="phi-track"><div class="phi-band"></div><div class="phi-marker" id="phiMarker"></div></div><div class="phi-label" id="phiLabel">Φ —</div></div>
+    <div class="phi-status" id="phiStatus">—</div>
+    <div class="btns"><button id="phiAuto" class="accent" data-i18n="phiAuto">Авто в зону (Φ≈0.45)</button></div>
+  </div></details>
+
   <details open><summary data-i18n="secCombustion">Димохід / горіння</summary><div class="body">
     <div class="row"><label><span data-i18n="flueHeight">Висота димоходу (повна)</span> <output id="chimneyTotalHeightM-v"></output></label><input type="range" id="chimneyTotalHeightM" min="2" max="12" step="0.5"></div>
     <div class="row"><label><span data-i18n="flueBends">Вигинів димоходу</span> <output id="chimneyBends-v"></output></label><input type="range" id="chimneyBends" min="0" max="4" step="1"></div>
