@@ -170,6 +170,7 @@
     <div class="row"><label><span data-i18n="stoveTemp">Температура верху</span> <output id="stoveTopTempC-v"></output></label><input type="range" id="stoveTopTempC" min="20" max="1000" step="5"></div>
     <div class="row"><label><span data-i18n="glassTemp">Температура скла</span> <output id="glassTempC-v"></output></label><input type="range" id="glassTempC" min="20" max="600" step="5"></div>
     <div class="row"><label><span data-i18n="smokeOpacity">Непрозорість диму</span> <output id="smokeOpacityPct-v"></output></label><input type="range" id="smokeOpacityPct" min="0" max="100" step="1"><div class="hint" data-i18n="smokeHint">Оціночна непрозорість видимого диму після прогріву: 0% — майже невидимий, 100% — густий дим. Це не лабораторний PM/CO вимір.</div></div>
+    <div class="row check"><input type="checkbox" id="excludeStartUp"><label for="excludeStartUp" data-i18n="calExcludeStartUp">Не калібрувати start-up (перехідний процес)</label></div>
     <div class="btns"><button id="saveTestBurn" class="green" data-i18n="saveTest">Зберегти тест</button></div>
     <div id="testBurnResult" class="test-result"></div>
     <ul id="testLog" class="test-log"></ul>

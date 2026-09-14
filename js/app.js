@@ -6,7 +6,7 @@ import { PhysicsModel } from './physics-model.js';
 import { buildStove, disposeGroup } from './stove-builder.js';
 import { exportGLTF, exportSTL } from './exporters.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from './bom.js';
-import { calibrateFromLog, evaluateCalibration, emptyCalibration } from './calibration.js';
+import { calibrateFromLog, evaluateCalibration, detectJournalDesync, emptyCalibration } from './calibration.js';
 import { designInternals } from './autodesign.js';
 import { PURPOSES, requiredPowerKw, roomVolume, sizeStoveForPower, evaluateRoom } from './room.js';
 import { STR, WARN_TXT, VALIDATION_TXT, TOUR, getLang, setLang } from './i18n.js';
@@ -326,16 +326,42 @@ function renderTestLog() {
       ${t('predicted')}: ${e.predictedKw} kW → ${t('measured')}: ${e.measuredKw} kW <span class="${Math.abs(e.deviationPct) <= 15 ? '' : 'bad'}">(${dev}${e.deviationPct}%)</span></li>`;
   }).join('') || `<li class="sub">${t('noTestsYet')}</li>`;
 }
+function pickConfigSnapshot(c) {
+  return {
+    dimensions: { ...c.dimensions },
+    materials: { steelThicknessMm: c.materials.steelThicknessMm, firebrickThicknessCm: c.materials.firebrickThicknessCm },
+    baffle: { ...c.baffle },
+    primaryAir: { holeCount: c.primaryAir.holeCount, holeDiameterCm: c.primaryAir.holeDiameterCm, holeSpacingCm: c.primaryAir.holeSpacingCm, openPct: c.primaryAir.openPct },
+    secondaryAir: { ...c.secondaryAir },
+    airWash: { ...c.airWash },
+    operation: { mode: c.operation.mode, secondaryAirPct: c.operation.secondaryAirPct, flameIntensity: c.operation.flameIntensity },
+    thermal: { ...c.thermal },
+    chimney: { diameterCm: c.chimney.diameterCm, totalHeightM: c.chimney.totalHeightM, bends: c.chimney.bends },
+    testBurn: { woodSpecies: c.testBurn.woodSpecies, moisturePct: c.testBurn.moisturePct, loadMode: c.testBurn.loadMode, loadKg: c.testBurn.loadKg },
+    combustion: { washAsSecondary: c.combustion.washAsSecondary, tertiary: { ...c.combustion.tertiary }, catalyst: { ...c.combustion.catalyst } },
+  };
+}
+
+function calibrateModel() {
+  const log = getTestLog();
+  const cal = calibrateFromLog(log, { excludeStartUp: !!config.calibration.excludeStartUp });
+  if (!cal) { renderCalibrationSummary(); return false; }
+  config.calibration = normalizeConfig({ ...config, calibration: cal }).calibration;
+  saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
+  return true;
+}
+
 function saveTestToLog() {  const r = computeTestBurn();
   if (!r.hasMeasurement) { renderTestBurn(); return; }
   const uncal = PhysicsModel.evaluate({ ...config, calibration: { ...config.calibration, enabled: false } }).metrics.heatOutputKw;
   const log = getTestLog();
   log.push({
     ts: Date.now(), mode: r.predicted.mode, species: config.testBurn.woodSpecies,
-    moisturePct: config.testBurn.woodMoisturePct, loadKg: r.loadKg, burnHours: config.testBurn.measuredBurnHours,
+    moisturePct: config.testBurn.moisturePct, loadKg: r.loadKg, burnHours: config.testBurn.measuredBurnHours,
     usefulHeatKwh: r.measuredHeatKwh, predictedKw: +uncal.toFixed(2),
     predictedEffPct: r.predicted.metrics.efficiencyPct, measuredKw: +r.measuredPower.toFixed(2),
     measuredEffPct: +r.measuredEfficiency.toFixed(1), deviationPct: +r.errorPct.toFixed(1),
+    config: pickConfigSnapshot(config), modelVersion: 5,
   });
   try { localStorage.setItem(TEST_LOG_KEY, JSON.stringify(log.slice(-30))); } catch { /* ignore */ }
   renderTestLog();
@@ -346,29 +372,24 @@ function renderCalibrationSummary() {
   const cal = config.calibration || {};
   const log = getTestLog();
   const stats = evaluateCalibration(log, cal);
+  const sync = detectJournalDesync(log);
+  const clamped = Object.entries(cal.modeScale || {})
+    .filter(([, v]) => v <= 0.8001 || v >= 1.1999)
+    .map(([m]) => m);
   if (!cal.enabled || !stats) {
     target.innerHTML = cal.samples > 0
-      ? `<span class="sub">${t('calibrationSaved')} (${cal.samples})</span>`
+      ? `<span class="sub">${t('calibrationSaved')} (${cal.samples})</span>${sync.count ? ` · <span class="bad">${t('calDesync').replace('${count}', sync.count)}</span>` : ''}`
       : `<span class="sub">${t('calibrationNeedsLog')}</span>`;
     return;
   }
   const modeRows = Object.entries(cal.modeScale || {})
     .filter(([, v]) => Math.abs(v - 1) > 0.001)
-    .map(([m, v]) => `${m} ×${v}`).join(' · ');
-  target.innerHTML = `<b>${t('calibrationApplied')}</b> · ${stats.samples} ${t('calibrationSamples')}<br>
-    ${t('calibrationGlobal')}: ×${cal.globalScale}${modeRows ? ' · ' + modeRows : ''}<br>
-    ${t('calibrationDev')}: ${stats.beforeMaxAbsPct}% → <b>${stats.afterMaxAbsPct}%</b> ${t('calibrationMax')} · ${stats.beforeMeanAbsPct}% → <b>${stats.afterMeanAbsPct}%</b> ${t('calibrationMean')}`;
-}
-
-function calibrateModel() {
-  const log = getTestLog();
-  const cal = calibrateFromLog(log);
-  if (!cal) { renderCalibrationSummary(); return false; }
-  const normalized = normalizeConfig({ ...config, calibration: cal });
-  config.calibration = normalized.calibration;
-  saveConfig(config);
-  renderPhysics();
-  return true;
+    .map(([m, v]) => `${m} ×${v}${clamped.includes(m) ? ` (${t('calClamped')})` : ''}`).join(' · ');
+  const clampedNote = clamped.length ? `<br><span class="sub">${t('calClampedNote')} ${clamped.join(', ')}</span>` : '';
+  const desyncNote = sync.count ? `<br><span class="bad">${t('calDesync').replace('${count}', sync.count)}</span>` : '';
+  target.innerHTML = `<b>${t('calibrationApplied')}</b> · ${stats.samples} ${t('calibrationSamples')}${config.calibration.excludeStartUp ? ` (${t('calExcludeStartUp')})` : ''}<br>
+    ${t('calibrationGlobal')}: ×${cal.globalScale}${modeRows ? ' · ' + modeRows : ''}${clampedNote}<br>
+    ${t('calibrationDev')}: ${stats.beforeMaxAbsPct}% → <b>${stats.afterMaxAbsPct}%</b> ${t('calibrationMax')} · ${stats.beforeMeanAbsPct}% → <b>${stats.afterMeanAbsPct}%</b> ${t('calibrationMean')}${desyncNote}`;
 }
 
 function resetCalibration() {
@@ -547,7 +568,7 @@ const controlMap = {
   flueTempC: 'testBurn.flueTempC', stoveTopTempC: 'testBurn.stoveTopTempC', glassTempC: 'testBurn.glassTempC', smokeOpacityPct: 'testBurn.smokeOpacityPct',
   volumeM3: 'room.volumeM3', areaM2: 'room.areaM2', ceilingM: 'room.ceilingM',
   chimneyTotalHeightM: 'chimney.totalHeightM', chimneyBends: 'chimney.bends', tertiaryHoleCount: 'combustion.tertiary.holeCount',
-  catalystLightoffC: 'combustion.catalyst.lightoffC',
+  excludeStartUp: 'calibration.excludeStartUp',
 };
 // Зміна цих полів запускає перепроєктування внутрішньої геометрії.
 const DESIGN_IDS = { widthCm: 1, depthCm: 1, heightCm: 1, legHeightCm: 1, steelThicknessMm: 1, firebrickThicknessCm: 1, doorWidthCm: 1, doorHeightCm: 1 };
@@ -626,6 +647,7 @@ function syncUI() {
   document.getElementById('washAsSecondary').checked = config.combustion.washAsSecondary;
   document.getElementById('tertiaryEnabled').checked = config.combustion.tertiary.enabled;
   document.getElementById('catalystEnabled').checked = config.combustion.catalyst.enabled;
+  const calExcl = document.getElementById('excludeStartUp'); if (calExcl) calExcl.checked = config.calibration.excludeStartUp;
   document.getElementById('modeHint').textContent =
     `${config.operation.mode} · primary ${Math.round(config.primaryAir.openPct)}% · secondary ${Math.round(config.operation.secondaryAirPct)}%`;
 }
@@ -726,6 +748,10 @@ function bindUI() {
   document.getElementById('catalystEnabled').addEventListener('change', (e) => {
     config.combustion.catalyst.enabled = e.target.checked; saveConfig(config);
     cache.clear(); rebuildStove(); renderPhysics();
+  });
+  document.getElementById('excludeStartUp').addEventListener('change', (e) => {
+    config.calibration.excludeStartUp = e.target.checked; saveConfig(config);
+    calibrateModel();
   });
   document.getElementById('toggleDoor').addEventListener('click', () => {
     config.door.isOpen = !config.door.isOpen; saveConfig(config);

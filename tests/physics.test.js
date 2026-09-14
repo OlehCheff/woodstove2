@@ -1,7 +1,7 @@
 // Швидкі тести PhysicsModel v5 — запуск: node tests/physics.test.js
 import { PhysicsModel, optimizeConfig } from '../js/physics-model.js';
 import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, deepMerge, encodeConfig, decodeConfig, MODEL_PRESETS } from '../js/config.js';
-import { calibrateFromLog, evaluateCalibration } from '../js/calibration.js';
+import { calibrateFromLog, evaluateCalibration, detectJournalDesync } from '../js/calibration.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from '../js/bom.js';
 import { designInternals } from '../js/autodesign.js';
 import { requiredPowerKw, sizeStoveForPower, evaluateRoom, PURPOSES } from '../js/room.js';
@@ -130,6 +130,39 @@ const lowNoCal = normalizeConfig(clone(defaultConfig)); lowNoCal.operation.mode 
 const kwCal = PhysicsModel.evaluate(calCfg).metrics.heatOutputKw;
 const kwNoCal = PhysicsModel.evaluate(lowNoCal).metrics.heatOutputKw;
 ok(Number.isFinite(kwCal) && Math.abs(kwCal - kwNoCal) > 0.01, 'calibration changes output', JSON.stringify({ kwCal, kwNoCal }));
+
+// 11c. excludeStartUp: start-up не входить у калібрування
+const withStartup = [
+  { mode: 'start-up', predictedKw: 6.0, measuredKw: 4.0 },
+  { mode: 'medium', predictedKw: 4.0, measuredKw: 4.0 },
+];
+const calNoExcl = calibrateFromLog(withStartup);
+const calExcl = calibrateFromLog(withStartup, { excludeStartUp: true });
+ok(calExcl && calExcl.samples === 1, 'excludeStartUp drops start-up entry', JSON.stringify({ calNoExcl, calExcl }));
+ok(calExcl.modeScale['start-up'] === 1, 'start-up modeScale untouched', JSON.stringify(calExcl.modeScale));
+
+// 11d. clamped modes виявлено коли глобальний масштаб сильно відрізняється
+const extreme = [
+  { mode: 'medium', predictedKw: 4.0, measuredKw: 7.0 },
+  { mode: 'low', predictedKw: 1.5, measuredKw: 7.0 },
+  { mode: 'high', predictedKw: 8.0, measuredKw: 7.0 },
+];
+const calExt = calibrateFromLog(extreme);
+ok(calExt, 'clamped modes computed');
+const statsExt = evaluateCalibration(extreme, calExt);
+ok(statsExt && Array.isArray(statsExt.clamped) && statsExt.clamped.length === 3, 'clamped mode list', JSON.stringify(statsExt.clamped));
+
+// 11e. detectJournalDesync: синхронний журнал → 0, підміна → count
+const livePredicted = PhysicsModel.evaluate({ ...base, calibration: { ...(base.calibration || {}), enabled: false } }).metrics.heatOutputKw;
+const syncLog = [
+  { mode: 'medium', predictedKw: +livePredicted.toFixed(2), measuredKw: +livePredicted.toFixed(2), config: JSON.parse(JSON.stringify(base)) },
+];
+ok(detectJournalDesync(syncLog).count === 0, 'sync journal detected as 0', JSON.stringify(detectJournalDesync(syncLog)));
+const staleLog = [
+  { mode: 'medium', predictedKw: +(livePredicted * 0.5).toFixed(2), measuredKw: +livePredicted.toFixed(2), config: JSON.parse(JSON.stringify(base)) },
+];
+const desyncResult = detectJournalDesync(staleLog);
+ok(desyncResult.count === 1 && desyncResult.samples === 1, 'desynced journal detected', JSON.stringify(desyncResult));
 
 // 12. BOM: стабільні числа, маса/різ/шви, без NaN на всіх пресетах
 for (const [name, preset] of Object.entries(MODEL_PRESETS)) {

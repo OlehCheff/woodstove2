@@ -98,7 +98,7 @@ export const defaultConfig = {
   // збільшена піч лишалась із крихітними дверцятами назавжди.
   door: { widthCm: 42, heightCm: 38, preferredWidthCm: 42, preferredHeightCm: 38, frameThicknessCm: 3, glassInsetCm: 2, openAngleDeg: 70, hingeSide: 'left', isOpen: false },
   camera: { fov: 50, distance: 270, targetY: 60 },
-  calibration: { enabled: false, damping: 0.75, globalScale: 1, modeScale: {}, samples: 0, updated: null },
+  calibration: { enabled: false, damping: 0.75, globalScale: 1, modeScale: {}, samples: 0, updated: null, excludeStartUp: true },
   room: { purpose: 'room', inputMode: 'volume', volumeM3: 60, areaM2: 30, ceilingM: 2.7 },
   colors: {
     steel: '#3a3d43', steelRoughness: 0.34, steelMetalness: 0.78,
@@ -233,6 +233,7 @@ export function normalizeConfig(cfg) {
   cfg.calibration.globalScale = clamp(+cfg.calibration.globalScale || 1, 0.5, 2);
   cfg.calibration.modeScale = cfg.calibration.modeScale && typeof cfg.calibration.modeScale === 'object' ? cfg.calibration.modeScale : {};
   cfg.calibration.samples = Math.max(0, Math.round(+cfg.calibration.samples || 0));
+  cfg.calibration.excludeStartUp = cfg.calibration.excludeStartUp !== false;
   cfg.room ??= {};
   cfg.room.purpose = ['sauna', 'room', 'workshop'].includes(cfg.room.purpose) ? cfg.room.purpose : 'room';
   cfg.room.inputMode = cfg.room.inputMode === 'area' ? 'area' : 'volume';
