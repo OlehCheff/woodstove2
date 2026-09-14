@@ -39,7 +39,6 @@ export function buildStove(cfg, cache = new Map()) {
     () => new THREE.MeshStandardMaterial({ color: 0x8f8172, roughness: 0.98, metalness: 0.02 }));
   const darkM = mat(cache, 'dark', () => new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.45, metalness: 0.6 }));
   const ductM = mat(cache, 'duct', () => new THREE.MeshStandardMaterial({ color: 0x616872, roughness: 0.4, metalness: 0.58 }));
-  const controlM = mat(cache, `control|${cfg.colors.control}`, () => new THREE.MeshStandardMaterial({ color: cfg.colors.control, roughness: 0.35, metalness: 0.35 }));
   const handleM = mat(cache, `handle|${cfg.colors.handle}`, () => new THREE.MeshStandardMaterial({ color: cfg.colors.handle, metalness: 0.85, roughness: 0.25 }));
   const primaryAirM = mat(cache, 'primary-air', () => new THREE.MeshStandardMaterial({ color: 0x4f8cff, roughness: 0.35, metalness: 0.45 }));
   const airWashM = mat(cache, 'air-wash', () => new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.35, metalness: 0.45 }));
@@ -81,7 +80,7 @@ export function buildStove(cfg, cache = new Map()) {
   shell.add(frontPanel);
   const seal = new THREE.Group(); seal.name = 'doorSeal';
   const sealT = 0.8, sealW = 1.2;
-  const sealOuterW = openingW + sealW * 2, sealOuterH = openingH + sealW * 2;
+  const sealOuterH = openingH + sealW * 2;
   const addSeal = (pw, ph, px, py) => { const piece = plate(pw, ph, sealT, gasketM); piece.position.set(px, py, d / 2 + steelT * 0.5); seal.add(piece); };
   addSeal(sealW, sealOuterH, -openingW / 2 - sealW / 2, openingBottom + openingH / 2);
   addSeal(sealW, sealOuterH, openingW / 2 + sealW / 2, openingBottom + openingH / 2);

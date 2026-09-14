@@ -31,7 +31,6 @@ export const PhysicsModel = {
     const steelMm = +config?.materials?.steelThicknessMm || 5;
     const brickCm = +config?.materials?.firebrickThicknessCm || 4;
     const chimD = +config?.chimney?.diameterCm || 15;
-    const chimH = +config?.chimney?.heightCm || 120;
     const flueH = +config?.chimney?.totalHeightM || 5;
     const flueBends = +config?.chimney?.bends || 0;
     const washAsSecondary = config?.combustion?.washAsSecondary !== false;
