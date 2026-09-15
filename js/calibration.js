@@ -72,7 +72,7 @@ export function detectJournalDesync(log, evalFn) {
     try {
       const cur = evaluate(e.config);
       if (Number.isFinite(cur) && Math.abs(cur - p) / p > 0.05) count++;
-    } catch (_) { /* geometry mismatch */ }
+    } catch { /* geometry mismatch */ }
   }
   return { count, samples };
 }

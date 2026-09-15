@@ -87,7 +87,7 @@ for (const m of ['start-up','low','medium','high','overnight']) {
 }
 
 // 8. модельні пресети дають валідну геометрію
-for (const [name, preset] of Object.entries(MODEL_PRESETS)) {
+for (const name of Object.keys(MODEL_PRESETS)) {
   let c = normalizeConfig(clone(defaultConfig));
   c = applyModelPreset(c, name);
   const validation = validateConfig(c);
@@ -165,7 +165,7 @@ const desyncResult = detectJournalDesync(staleLog);
 ok(desyncResult.count === 1 && desyncResult.samples === 1, 'desynced journal detected', JSON.stringify(desyncResult));
 
 // 12. BOM: стабільні числа, маса/різ/шви, без NaN на всіх пресетах
-for (const [name, preset] of Object.entries(MODEL_PRESETS)) {
+for (const name of Object.keys(MODEL_PRESETS)) {
   const c = applyModelPreset(normalizeConfig(clone(defaultConfig)), name);
   const bom = buildBOM(c);
   const bad = bom.parts.filter(p => !Number.isFinite(p.massKg) || !Number.isFinite(p.weldCm) || !Number.isFinite(p.areaCm2) || p.wCm <= 0 || p.hCm <= 0 || p.tCm <= 0);

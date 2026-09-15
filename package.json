@@ -4,6 +4,12 @@
   "type": "module",
   "scripts": {
     "test": "node tests/physics.test.js",
+    "lint": "eslint js tests *.js",
+    "smoke": "node tests/smoke.browser.mjs",
+    "check": "npm run lint && npm test",
     "serve": "npx serve ."
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5"
   }
 }
