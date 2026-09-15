@@ -14,6 +14,9 @@ import { STR, WARN_TXT, VALIDATION_TXT, TOUR, getLang, setLang } from './i18n.js
 let lang = getLang();
 const t = (k) => (STR[lang] && STR[lang][k]) || STR.uk[k] || k;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+// Ізолює будь-який крок ініціалізації/рендеру: помилка в одній панелі не повинна
+// зривати побудову 3D-сцени (інцидент: один ReferenceError ховав піч повністю).
+const safe = (fn, label = '') => { try { return fn(); } catch (e) { console.error('step failed' + (label ? ' [' + label + ']' : '') + ':', e); } };
 
 let config = loadConfig();
 const sharedValue = location.hash.startsWith('#config=') ? decodeConfig(location.hash.slice(8)) : null;
@@ -238,14 +241,16 @@ function renderPhysics() {
     li.textContent = `[${wmsg.code}] ${warnText(wmsg.code, wmsg.message, r.metrics)}`;
     ul.appendChild(li);
   }
-  renderValidation();
-  renderTestBurn();
-  renderTestLog();
-  renderBomSummary(r);
-  renderCalibrationSummary();
-  renderAutoSummary(r);
-  renderRoomSummary();
-  applyThermalZones(r.metrics);
+  // Захист: падіння одного рендер-кроку (напр., друкарська помилка в новій панелі)
+  // не має приховувати всю піч. Кожен крок — ізольований.
+  safe(renderValidation);
+  safe(() => renderTestBurn());
+  safe(renderTestLog);
+  safe(() => renderBomSummary(r));
+  safe(renderCalibrationSummary);
+  safe(() => renderAutoSummary(r));
+  safe(renderRoomSummary);
+  safe(() => applyThermalZones(r.metrics));
 }
 
 function validationText(item) {
@@ -944,5 +949,6 @@ addEventListener('resize', () => {
 });
 
 // ---------- старт ----------
-bindUI(); applyI18n(); rebuildStove(); applyViewMode();
+safe(bindUI, 'bindUI'); safe(applyI18n, 'applyI18n');
+safe(rebuildStove, 'rebuildStove'); safe(applyViewMode, 'applyViewMode');
 animate();
