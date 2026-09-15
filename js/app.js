@@ -13,6 +13,7 @@ import { STR, WARN_TXT, VALIDATION_TXT, TOUR, getLang, setLang } from './i18n.js
 
 let lang = getLang();
 const t = (k) => (STR[lang] && STR[lang][k]) || STR.uk[k] || k;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 let config = loadConfig();
 const sharedValue = location.hash.startsWith('#config=') ? decodeConfig(location.hash.slice(8)) : null;
