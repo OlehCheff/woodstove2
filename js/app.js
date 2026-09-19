@@ -6,7 +6,7 @@ import { PhysicsModel } from './physics-model.js';
 import { buildStove, disposeGroup } from './stove-builder.js';
 import { exportGLTF, exportSTL } from './exporters.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from './bom.js';
-import { calibrateFromLog, evaluateCalibration, detectJournalDesync, emptyCalibration, mergeCalibration } from './calibration.js';
+import { calibrateFromLog, evaluateCalibration, detectJournalDesync, emptyCalibration, mergeCalibration, configSnapshot } from './calibration.js';
 import { designInternals } from './autodesign.js';
 import { PURPOSES, requiredPowerKw, roomVolume, sizeStoveForPower, evaluateRoom } from './room.js';
 import { STR, WARN_TXT, VALIDATION_TXT, TOUR, getLang, setLang } from './i18n.js';
@@ -332,22 +332,6 @@ function renderTestLog() {
       ${t('predicted')}: ${e.predictedKw} kW → ${t('measured')}: ${e.measuredKw} kW <span class="${Math.abs(e.deviationPct) <= 15 ? '' : 'bad'}">(${dev}${e.deviationPct}%)</span></li>`;
   }).join('') || `<li class="sub">${t('noTestsYet')}</li>`;
 }
-function pickConfigSnapshot(c) {
-  return {
-    dimensions: { ...c.dimensions },
-    materials: { steelThicknessMm: c.materials.steelThicknessMm, firebrickThicknessCm: c.materials.firebrickThicknessCm },
-    baffle: { ...c.baffle },
-    primaryAir: { holeCount: c.primaryAir.holeCount, holeDiameterCm: c.primaryAir.holeDiameterCm, holeSpacingCm: c.primaryAir.holeSpacingCm, openPct: c.primaryAir.openPct },
-    secondaryAir: { ...c.secondaryAir },
-    airWash: { ...c.airWash },
-    operation: { mode: c.operation.mode, secondaryAirPct: c.operation.secondaryAirPct, flameIntensity: c.operation.flameIntensity },
-    thermal: { ...c.thermal },
-    chimney: { diameterCm: c.chimney.diameterCm, totalHeightM: c.chimney.totalHeightM, bends: c.chimney.bends },
-    testBurn: { woodSpecies: c.testBurn.woodSpecies, moisturePct: c.testBurn.moisturePct, loadMode: c.testBurn.loadMode, loadKg: c.testBurn.loadKg },
-    combustion: { washAsSecondary: c.combustion.washAsSecondary, tertiary: { ...c.combustion.tertiary }, catalyst: { ...c.combustion.catalyst } },
-  };
-}
-
 function calibrateModel() {
   const log = getTestLog();
   const cal = calibrateFromLog(log, { excludeStartUp: !!config.calibration.excludeStartUp });
@@ -363,11 +347,11 @@ function saveTestToLog() {  const r = computeTestBurn();
   const log = getTestLog();
   log.push({
     ts: Date.now(), mode: r.predicted.mode, species: config.testBurn.woodSpecies,
-    moisturePct: config.testBurn.moisturePct, loadKg: r.loadKg, burnHours: config.testBurn.measuredBurnHours,
+    moisturePct: config.testBurn.woodMoisturePct, loadKg: r.loadKg, burnHours: config.testBurn.measuredBurnHours,
     usefulHeatKwh: r.measuredHeatKwh, predictedKw: +uncal.toFixed(2),
     predictedEffPct: r.predicted.metrics.efficiencyPct, measuredKw: +r.measuredPower.toFixed(2),
     measuredEffPct: +r.measuredEfficiency.toFixed(1), deviationPct: +r.errorPct.toFixed(1),
-    config: pickConfigSnapshot(config), modelVersion: 5,
+    config: configSnapshot(config), modelVersion: 5,
   });
   try { localStorage.setItem(TEST_LOG_KEY, JSON.stringify(log.slice(-30))); } catch { /* ignore */ }
   renderTestLog();

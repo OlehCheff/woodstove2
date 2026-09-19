@@ -1,7 +1,7 @@
 // Швидкі тести PhysicsModel v5 — запуск: node tests/physics.test.js
 import { PhysicsModel, optimizeConfig } from '../js/physics-model.js';
 import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, deepMerge, encodeConfig, decodeConfig, MODEL_PRESETS } from '../js/config.js';
-import { calibrateFromLog, evaluateCalibration, detectJournalDesync, mergeCalibration, emptyCalibration } from '../js/calibration.js';
+import { calibrateFromLog, evaluateCalibration, detectJournalDesync, mergeCalibration, emptyCalibration, configSnapshot } from '../js/calibration.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from '../js/bom.js';
 import { designInternals } from '../js/autodesign.js';
 import { requiredPowerKw, sizeStoveForPower, evaluateRoom, PURPOSES } from '../js/room.js';
@@ -163,6 +163,24 @@ const staleLog = [
 ];
 const desyncResult = detectJournalDesync(staleLog);
 ok(desyncResult.count === 1 && desyncResult.samples === 1, 'desynced journal detected', JSON.stringify(desyncResult));
+
+// 11g. Minor #2: знімок журналу повний — прогноз по ньому = прогнозу по живому
+// конфігу навіть із нестандартною вологістю; старий знімок без вологості
+// і зсув моделі на ~3% (нижче старого порогу 5%) — ловляться.
+{
+  const c = designInternals(normalizeConfig(clone(defaultConfig)));
+  c.testBurn.woodMoisturePct = 25;
+  const kwOf = (x) => PhysicsModel.evaluate({ ...x, calibration: { ...(x.calibration || {}), enabled: false } }).metrics.heatOutputKw;
+  const snap = configSnapshot(c);
+  const live = kwOf(c);
+  ok(snap.testBurn.woodMoisturePct === 25 && !('camera' in snap) && !('calibration' in snap), 'snapshot keeps physics fields, drops UI ones', JSON.stringify(snap.testBurn));
+  ok(Math.abs(kwOf(snap) - live) < 1e-9, 'snapshot prediction equals live prediction', JSON.stringify({ live, snap: kwOf(snap) }));
+  const entry = (p, cfg) => ({ mode: 'medium', predictedKw: +p.toFixed(2), measuredKw: 5, config: cfg });
+  ok(detectJournalDesync([entry(live, snap)]).count === 0, 'fresh full snapshot is in sync');
+  ok(detectJournalDesync([entry(live * 1.03, snap)]).count === 1, '3% model drift is detected');
+  const legacy = clone(snap); delete legacy.testBurn.woodMoisturePct;
+  ok(detectJournalDesync([entry(live, legacy)]).count === 1, 'legacy snapshot without moisture is flagged');
+}
 
 // 11f. Major #1: шлях UI (calibrateModel) — повторне калібрування зі знятим
 // excludeStartUp дає ті самі фактори, прапорець не злітає назад у true.

@@ -67,9 +67,22 @@ function applyFactor(predictedKw, mode, calibration) {
   return predictedKw * calibration.globalScale * modeFactor;
 }
 
+// Знімок конфігу для запису журналу: повна копія без суто UI-полів. Раніше
+// тут був ручний перелік полів, і з нього випадали ті, що читає модель
+// (вологість дров, дверцята) — прогноз по знімку тихо розходився з реальним.
+const UI_ONLY_KEYS = ['camera', 'colors', 'viewMode', 'room', 'calibration'];
+export function configSnapshot(cfg) {
+  const snap = JSON.parse(JSON.stringify(cfg || {}));
+  for (const k of UI_ONLY_KEYS) delete snap[k];
+  return snap;
+}
+
 // Детектор розсинхрону журналу: predictKw записаний у записі має збігатися з поточним
 // прогнозом для того ж конфігу. Якщо модель оновили, а журнал зі старим прогнозом —
-// помітить і покаже N записів, що розходяться.
+// помітить і покаже N записів, що розходяться. Знімок повний, тож для свіжого
+// журналу розбіжність = 0; поріг 2% — лише запас на округлення predictedKw до 0.01.
+// Старі записи без вологості в знімку перевірити неможливо (вона не збереглась) —
+// вважаються розсинхронізованими, а не мовчки «синхронними».
 export function detectJournalDesync(log, evalFn) {
   const evaluate = evalFn || recomputeUncal;
   let count = 0, samples = 0;
@@ -77,9 +90,10 @@ export function detectJournalDesync(log, evalFn) {
     const p = +e.predictedKw;
     if (!(p > 0) || !e.config) continue;
     samples++;
+    if (e.config.testBurn?.woodMoisturePct == null) { count++; continue; }
     try {
       const cur = evaluate(e.config);
-      if (Number.isFinite(cur) && Math.abs(cur - p) / p > 0.05) count++;
+      if (Number.isFinite(cur) && Math.abs(cur - p) / p > 0.02) count++;
     } catch { /* geometry mismatch */ }
   }
   return { count, samples };
