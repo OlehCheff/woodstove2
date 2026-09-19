@@ -1,7 +1,7 @@
 // Швидкі тести PhysicsModel v5 — запуск: node tests/physics.test.js
 import { PhysicsModel, optimizeConfig } from '../js/physics-model.js';
 import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, deepMerge, encodeConfig, decodeConfig, MODEL_PRESETS } from '../js/config.js';
-import { calibrateFromLog, evaluateCalibration, detectJournalDesync } from '../js/calibration.js';
+import { calibrateFromLog, evaluateCalibration, detectJournalDesync, mergeCalibration, emptyCalibration } from '../js/calibration.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from '../js/bom.js';
 import { designInternals } from '../js/autodesign.js';
 import { requiredPowerKw, sizeStoveForPower, evaluateRoom, PURPOSES } from '../js/room.js';
@@ -163,6 +163,24 @@ const staleLog = [
 ];
 const desyncResult = detectJournalDesync(staleLog);
 ok(desyncResult.count === 1 && desyncResult.samples === 1, 'desynced journal detected', JSON.stringify(desyncResult));
+
+// 11f. Major #1: шлях UI (calibrateModel) — повторне калібрування зі знятим
+// excludeStartUp дає ті самі фактори, прапорець не злітає назад у true.
+{
+  let c = normalizeConfig(clone(defaultConfig));
+  c.calibration.excludeStartUp = false;
+  const uiCalibrate = () => {
+    const r = calibrateFromLog(withStartup, { excludeStartUp: !!c.calibration.excludeStartUp });
+    c = normalizeConfig({ ...c, calibration: mergeCalibration(r, c.calibration) });
+    return c.calibration;
+  };
+  const first = uiCalibrate();
+  const second = uiCalibrate();
+  ok(first.excludeStartUp === false && second.excludeStartUp === false, 'UI calibration keeps excludeStartUp=false', JSON.stringify({ first: first.excludeStartUp, second: second.excludeStartUp }));
+  ok(first.globalScale === second.globalScale && first.samples === second.samples && first.samples === 2, 'UI calibration is idempotent', JSON.stringify({ first, second }));
+  c = normalizeConfig({ ...c, calibration: mergeCalibration(emptyCalibration(), c.calibration) });
+  ok(c.calibration.excludeStartUp === false && c.calibration.enabled === false, 'reset keeps excludeStartUp', JSON.stringify(c.calibration));
+}
 
 // 12. BOM: стабільні числа, маса/різ/шви, без NaN на всіх пресетах
 for (const name of Object.keys(MODEL_PRESETS)) {

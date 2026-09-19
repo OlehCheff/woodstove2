@@ -53,6 +53,14 @@ export function calibrateFromLog(entries, options = {}) {
   };
 }
 
+// Злиття нового результату калібрування з попереднім станом: результат
+// calibrateFromLog/emptyCalibration не знає про налаштування користувача
+// (excludeStartUp), тож без злиття прапорець мовчки повертався до дефолту.
+export function mergeCalibration(cal, previous) {
+  const prev = previous || {};
+  return { ...cal, excludeStartUp: prev.excludeStartUp !== false };
+}
+
 function applyFactor(predictedKw, mode, calibration) {
   if (!calibration || calibration.enabled === false || !calibration.globalScale) return predictedKw;
   const modeFactor = (calibration.modeScale && calibration.modeScale[mode]) || 1;

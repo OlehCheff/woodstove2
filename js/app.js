@@ -6,7 +6,7 @@ import { PhysicsModel } from './physics-model.js';
 import { buildStove, disposeGroup } from './stove-builder.js';
 import { exportGLTF, exportSTL } from './exporters.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from './bom.js';
-import { calibrateFromLog, evaluateCalibration, detectJournalDesync, emptyCalibration } from './calibration.js';
+import { calibrateFromLog, evaluateCalibration, detectJournalDesync, emptyCalibration, mergeCalibration } from './calibration.js';
 import { designInternals } from './autodesign.js';
 import { PURPOSES, requiredPowerKw, roomVolume, sizeStoveForPower, evaluateRoom } from './room.js';
 import { STR, WARN_TXT, VALIDATION_TXT, TOUR, getLang, setLang } from './i18n.js';
@@ -352,7 +352,7 @@ function calibrateModel() {
   const log = getTestLog();
   const cal = calibrateFromLog(log, { excludeStartUp: !!config.calibration.excludeStartUp });
   if (!cal) { renderCalibrationSummary(); return false; }
-  config.calibration = normalizeConfig({ ...config, calibration: cal }).calibration;
+  config.calibration = normalizeConfig({ ...config, calibration: mergeCalibration(cal, config.calibration) }).calibration;
   saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
   return true;
 }
@@ -399,7 +399,7 @@ function renderCalibrationSummary() {
 }
 
 function resetCalibration() {
-  config.calibration = emptyCalibration();
+  config.calibration = mergeCalibration(emptyCalibration(), config.calibration);
   saveConfig(config);
   renderPhysics();
 }
