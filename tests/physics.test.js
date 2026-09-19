@@ -455,4 +455,30 @@ for (const p of Object.keys(PURPOSES)) ok(PURPOSES[p].kwPerM3 > 0 && PURPOSES[p]
   ok(c2.door.widthCm === 25, 'manual door choice survives growing the stove', JSON.stringify({ w: c2.door.widthCm }));
 }
 
+// 29. ККД залежить від надлишку повітря: зайве повітря → втрати в трубі
+// (Зігерт, ∝ λ), нестача → недопал. Пік — біля Φ ≈ 0.5, спад в обидва боки.
+{
+  const at = (p, s, wash) => {
+    const c = designInternals(normalizeConfig(clone(defaultConfig)));
+    c.primaryAir.openPct = p; c.operation.secondaryAirPct = s; c.airWash.intakePct = wash;
+    return PhysicsModel.evaluate(c).metrics;
+  };
+  const starved = at(0, 0, 0), peak = at(0, 100, 60), std = at(52, 55, 60), open = at(100, 100, 100);
+  ok(open.flueLossPct > std.flueLossPct && std.flueLossPct > peak.flueLossPct, 'flue loss grows with excess air', JSON.stringify([peak.flueLossPct, std.flueLossPct, open.flueLossPct]));
+  ok(open.efficiencyPct < std.efficiencyPct && std.efficiencyPct < peak.efficiencyPct, 'lean side: efficiency falls with excess air', JSON.stringify([peak.efficiencyPct, std.efficiencyPct, open.efficiencyPct]));
+  ok(starved.incompleteCombustionLossPct > 0 && starved.efficiencyPct < peak.efficiencyPct, 'rich side: starved air loses efficiency to unburnt gas', JSON.stringify({ starved: starved.efficiencyPct, peak: peak.efficiencyPct }));
+  ok(std.incompleteCombustionLossPct === 0, 'no unburnt loss inside target band Φ 0.4–0.5', JSON.stringify({ phi: std.equivalenceRatio }));
+}
+
+// 30. Автопроєктування ідемпотентне для всіх пресетів і режимів: повторний
+// виклик не змінює бафль/трубу (раніше залежало від діаметра з минулого виклику).
+for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low', 'medium', 'high', 'overnight']) {
+  const c = applyModelPreset(normalizeConfig(clone(defaultConfig)), name);
+  applyModePreset(c, m);
+  const once = designInternals(c);
+  const twice = designInternals(clone(once));
+  const key = (c) => JSON.stringify([c.baffle, c.chimney.diameterCm]);
+  ok(key(once) === key(twice), `autodesign idempotent ${name}/${m}`, key(once) === key(twice) ? '' : JSON.stringify({ once: key(once), twice: key(twice) }));
+}
+
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);process.exit(fails === 0 ? 0 : 1);

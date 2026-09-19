@@ -20,6 +20,15 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const round = (v, d) => Math.round(v * 10 ** d) / 10 ** d;
 const safeMode = (m) => (MODE_COEFF[m] ? m : 'medium');
 const circleArea = (diameterCm) => PI * (diameterCm / 2) ** 2;
+// Втрати з димом за Зігертом: q ≈ ΔT·(A/CO2 + B), для деревини CO2 ≈ 20.3%/λ,
+// A ≈ 0.65, B ≈ 0.008 → q ∝ 0.032·λ + 0.008. Базова формула втрат у трубі
+// відкалібрована при λ ≈ 2.2 (medium), тож масштабуємо її відносно цієї точки.
+const siegertAirTerm = (lambda) => 0.032 * lambda + 0.008;
+const LAMBDA_REF = 2.2;
+// Нижче λ = 2.0 (Φ > 0.5, верхня межа цільового діапазону Φ 0.4–0.5) повітря
+// вже не вистачає, щоб допалити всі гази: частина енергії йде в трубу як CO і дим.
+// Так пік ККД припадає на межу цільового діапазону, а не в зону MIX_RICH (Φ > 0.55).
+const LAMBDA_RICH = 2.0;
 
 export const PhysicsModel = {
   evaluate(config) {
@@ -115,6 +124,9 @@ export const PhysicsModel = {
     const airWashPreheatC = clamp(20 + (+airWash.preheatLengthCm || 45) * 1.7 + flame * 65, 50, 340);
     const washEffPct = clamp((washGap / 3) * (washIntake / 100) * 100, 0, 100);
     const airMix = (primaryPct * 0.55 + secondaryPct * 0.35 + washEffPct * 0.10) / 100;
+    // Коефіцієнт надлишку повітря λ та Φ=1/λ (ціль Φ 0.4–0.5).
+    const lambda = clamp(1.4 + airMix * 1.6, 1.1, 4);
+    const equivalenceRatio = 1 / lambda;
     const staging = clamp((secondaryPct - 20) * 0.06 + (baffleFlow - 50) * 0.04, -4, +5);
     const draftBonus = (clamp(flueH / 5, 0.7, 1.4) - 1) * 6;
 
@@ -145,17 +157,21 @@ export const PhysicsModel = {
     );
     const modeledFlueTempC = clamp(combustionTempC - heatExchangePasses * 110 - insulationCm * 18 - baffleRefractoryCm * 12, 120, 650);
     const baffleExitTempC = clamp(modeledFlueTempC + (combustionTempC - modeledFlueTempC) * 0.55, 130, 900);
-    const flueLossPct = clamp(7 + (modeledFlueTempC - 150) * 0.025 + (1 - thermalRetention) * 8 - heatExchangePasses * 1.5 + moistureFlueLossPenalty, 8, 28);
-    const efficiencyPct = clamp(combustionEfficiencyPct - flueLossPct + catalystBonus, 35, 88);
+    // Зайве повітря нагрівається й несе тепло в трубу: відчутні втрати ∝ λ (Зігерт).
+    // Прихована теплота вологи від λ не залежить, тому додається окремо.
+    const excessAirLossFactor = siegertAirTerm(lambda) / siegertAirTerm(LAMBDA_REF);
+    const sensibleFlueLossPct = Math.max(0, 7 + (modeledFlueTempC - 150) * 0.025 + (1 - thermalRetention) * 8 - heatExchangePasses * 1.5);
+    const flueLossPct = clamp(sensibleFlueLossPct * excessAirLossFactor + moistureFlueLossPenalty, 8, 28);
+    // Недопал при нестачі повітря рахуємо ПІСЛЯ стелі 92, як і каталізатор:
+    // «сирий» ККД згоряння в робочих режимах ~100, і стеля поглинула б поправку.
+    const incompleteCombustionLossPct = clamp((LAMBDA_RICH - lambda) * 15, 0, 8);
+    const efficiencyPct = clamp(combustionEfficiencyPct - incompleteCombustionLossPct - flueLossPct + catalystBonus, 35, 88);
     // Температура димових газів на ВИХОДІ з труби: експоненційне охолодження вздовж
     // каналу (наближення до температури довкілля), а не лінійне — лінійна форма
     // перетинала нуль і давала однакові 40°C для будь-якої печі на довгих трубах.
     const ambientC = 20;
     const flueCoolingFactor = Math.exp(-0.12 * flueH);
     const exitFlueTempC = clamp(ambientC + (modeledFlueTempC - ambientC) * flueCoolingFactor - flueBends * 6, 40, 600);
-    // Коефіцієнт надлишку повітря λ та Φ=1/λ (ціль Φ 0.4–0.5).
-    const lambda = clamp(1.4 + airMix * 1.6, 1.1, 4);
-    const equivalenceRatio = 1 / lambda;
     const bodyTempC = clamp(110 + (1 - thermalRetention) * 520 + flame * 120 - (steelMm - 5) * 9, 40, 480);
     const bodyHeatSharePct = clamp((1 - thermalRetention) * 26 + 8, 8, 30);
 
@@ -237,6 +253,7 @@ export const PhysicsModel = {
         baffleExitTempC: round(baffleExitTempC, 0), bodyTempC: round(bodyTempC, 0), bodyHeatSharePct: round(bodyHeatSharePct, 1),
         woodEnergyKwhKg: round(woodEnergyKwhKg, 2), moisturePenaltyC: round(moistureTempPenaltyC, 0), moisturePct,
         combustionEfficiencyPct: round(combustionEfficiencyPct, 1), flueLossPct: round(flueLossPct, 1),
+        incompleteCombustionLossPct: round(incompleteCombustionLossPct, 1), excessAirLossFactor: round(excessAirLossFactor, 3),
         thermalRetentionPct: round(thermalRetention * 100, 1), gasPathCm: round(gasPathCm, 1),
         gasResidenceSeconds: round(gasResidenceSeconds, 2), grossHeatOutputKw: round(grossHeatOutputKw, 2),
         inputEnergyKwh: round(inputEnergyKwh, 1), usefulEnergyKwh: round(usefulEnergyKwh, 1),
@@ -259,7 +276,9 @@ export const PhysicsModel = {
   },
 };
 
-export function optimizeConfig(config) {
+// prepare(candidate) — необовʼязковий хук, що доводить залежні від бафла поля
+// (напр. діаметр труби в autodesign) до узгодженого стану перед оцінкою.
+export function optimizeConfig(config, prepare) {
   let best = null;
   const h = config.dimensions.heightCm;
   const heightStart = Math.max(24, Math.round(h * 0.55));
@@ -276,6 +295,7 @@ export function optimizeConfig(config) {
     candidate.baffle.angleDeg = angleDeg;
     candidate.baffle.frontGapCm = frontGapCm;
     candidate.baffle.airflowPct = airflowPct;
+    if (prepare) prepare(candidate);
     const result = PhysicsModel.evaluate(candidate);
     const penalty = result.warnings.reduce((total, warning) => total + (warning.level === 'danger' ? 20 : warning.level === 'warn' ? 6 : 1), 0);
     const comfortBonus = result.metrics.heatOutputKw >= 2.5 && result.metrics.heatOutputKw <= 12 ? 2 : 0;

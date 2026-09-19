@@ -71,7 +71,10 @@ export function designInternals(cfg) {
   normalizeConfig(cfg);
 
   // Бафль підбираємо оптимізатором (висота/кут/зазор/приток) під поточний режим.
-  const best = optimizeConfig(cfg);
+  // Кожен кандидат оцінюється з тим діаметром труби, який для нього й буде
+  // розраховано нижче: інакше результат залежав від діаметра з ПОПЕРЕДНЬОГО
+  // виклику, і повторне автопроєктування тієї ж печі давало інший бафль.
+  const best = optimizeConfig(cfg, (candidate) => { candidate.chimney.diameterCm = chimneyDiameterFor(candidate); });
   if (best) {
     cfg.baffle.heightCm = best.config.baffle.heightCm;
     cfg.baffle.angleDeg = best.config.baffle.angleDeg;
@@ -85,6 +88,14 @@ export function designInternals(cfg) {
   // висоти бафля (topка вище бафля вже не рахується як об'єм топки), і без
   // цього автопідбір діаметра й валідатор регулярно сперечались одне з одним
   // (CHIMNEY_NARROW/CHIMNEY_LARGE навіть на «нормальних» печах).
+  cfg.chimney.diameterCm = chimneyDiameterFor(cfg);
+
+  return normalizeConfig(cfg);
+}
+
+function chimneyDiameterFor(cfg) {
+  const w = +cfg.dimensions.widthCm, d = +cfg.dimensions.depthCm, h = +cfg.dimensions.heightCm;
+  const steelCm = (+cfg.materials.steelThicknessMm || 5) / 10;
   const linerFlue = cfg.materials.firebrickThicknessCm + cfg.thermal.insulationThicknessCm;
   const fbW = Math.max(10, w - steelCm * 2 - linerFlue * 2);
   const fbD = Math.max(10, d - steelCm * 2 - linerFlue * 2);
@@ -92,7 +103,5 @@ export function designInternals(cfg) {
   const flueLiters = (fbW * fbD * fbH) / 1000;
   const flueMinCm = Math.max(10, Math.min(18, 11 + flueLiters * 0.03));
   const flueMaxCm = Math.max(14, Math.min(25, 17 + flueLiters * 0.05));
-  cfg.chimney.diameterCm = clamp(Math.round(((flueMinCm + flueMaxCm) / 2 - steelCm) * 2) / 2, 10, 25);
-
-  return normalizeConfig(cfg);
+  return clamp(Math.round(((flueMinCm + flueMaxCm) / 2 - steelCm) * 2) / 2, 10, 25);
 }
