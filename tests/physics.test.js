@@ -935,7 +935,10 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
     const c = normalizeConfig(clone(defaultConfig));
     c.dimensions = { widthCm: w, depthCm: d, heightCm: 95, legHeightCm: legH };
     c.materials.steelThicknessMm = steel;
-    designInternals(c);
+    // keepBaffle: геометрія каналу від бафля не залежить, а повний перебір
+    // бафля на 450 випадках займав ~5 с (38 % усього прогону). Результат
+    // перевірено — байт-у-байт той самий.
+    designInternals(c, { keepBaffle: true });
     cases++;
     const issues = bottomIntakeCollisions(c);
     if (issues.length) { collisions++; if (firstBad.length < 3) firstBad.push({ w, d, legH, steel, issues }); }
