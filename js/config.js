@@ -10,54 +10,136 @@ export const OPERATION_PRESETS = {
   'overnight': { primaryAirOpenPct: 15, secondaryAirPct: 24, airWashGapCm: 0.8, airWashIntakePct: 30, baffleAirflowPct: 25, flameIntensity: 0.22, flameColor: 0xff6a33, fillFactor: 0.7 },
 };
 
+// Серія WS-1…WS-10 — градація готових моделей за ПОТУЖНІСТЮ в режимі medium
+// (після designInternals), а не за «розміром на око», як у старих
+// compact/standard/wide/workshop. Крок між сусідніми моделями ≈ +30…40 %
+// (рішення власника), перерахований на поточній фізиці (v5, без штучних
+// затискачів потужності й без comfortBonus в optimizeConfig — див.
+// physics-model.js). WS-6 навмисно дорівнює defaultConfig (габарити/матеріали/
+// дверцята нижче — ті самі числа, що й у defaultConfig): це те, чим раніше
+// був пресет 'standard'.
+// Нижню межу серії (WS-1) задають ПРАКТИЧНІ межі, а не ККД (він від розміру
+// печі майже не залежить, ~75-77 % на medium для будь-якого кроку серії):
+// поліно 25 см має влізти в топку, дверцята ≥ 20×20 см, зона горіння під
+// бафлем ≥ 15 см, а «чесна» (без колишньої штучної підлоги 1.5 кВт) потужність
+// ≥ ~1 кВт. Бафль/димохід у кожному patch — готовий результат designInternals
+// для цієї геометрії (як і в старих пресетах), щоб applyModelPreset САМ ПО
+// СОБІ (без наступного виклику designInternals) давав валідну піч.
 export const MODEL_PRESETS = {
-  compact: {
-    labelKey: 'presetCompact',
+  ws1: {
+    labelKey: 'presetWs1', nominalKw: 1.19,
     patch: {
-      dimensions: { widthCm: 58, depthCm: 46, heightCm: 78, legHeightCm: 12 },
-      materials: { steelThicknessMm: 4, firebrickThicknessCm: 3 },
-      chimney: { diameterCm: 13, heightCm: 120 },
-      door: { widthCm: 34, heightCm: 32 },
-      baffle: { heightCm: 48, frontGapCm: 5 },
+      dimensions: { widthCm: 50, depthCm: 45, heightCm: 49, legHeightCm: 18 },
+      materials: { steelThicknessMm: 3, firebrickThicknessCm: 2.5 },
+      chimney: { diameterCm: 15, heightCm: 105 },
+      door: { widthCm: 22, heightCm: 22 },
+      baffle: { heightCm: 27, angleDeg: -2, frontGapCm: 4, airflowPct: 45 },
       operation: { mode: 'medium' },
     },
   },
-  standard: {
-    labelKey: 'presetStandard',
+  ws2: {
+    labelKey: 'presetWs2', nominalKw: 1.65,
+    patch: {
+      dimensions: { widthCm: 54, depthCm: 47, heightCm: 57, legHeightCm: 17 },
+      materials: { steelThicknessMm: 3, firebrickThicknessCm: 2.5 },
+      chimney: { diameterCm: 15, heightCm: 110 },
+      door: { widthCm: 26, heightCm: 25 },
+      baffle: { heightCm: 31, angleDeg: -2, frontGapCm: 4, airflowPct: 45 },
+      operation: { mode: 'medium' },
+    },
+  },
+  ws3: {
+    labelKey: 'presetWs3', nominalKw: 2.23,
+    patch: {
+      dimensions: { widthCm: 59, depthCm: 49, heightCm: 68, legHeightCm: 17 },
+      materials: { steelThicknessMm: 4, firebrickThicknessCm: 3 },
+      chimney: { diameterCm: 15.5, heightCm: 115 },
+      door: { widthCm: 31, heightCm: 29 },
+      baffle: { heightCm: 37, angleDeg: -2, frontGapCm: 4, airflowPct: 45 },
+      operation: { mode: 'medium' },
+    },
+  },
+  ws4: {
+    labelKey: 'presetWs4', nominalKw: 3.13,
+    patch: {
+      dimensions: { widthCm: 63, depthCm: 52, heightCm: 79, legHeightCm: 16 },
+      materials: { steelThicknessMm: 4, firebrickThicknessCm: 3 },
+      chimney: { diameterCm: 16.5, heightCm: 120 },
+      door: { widthCm: 35, heightCm: 32 },
+      baffle: { heightCm: 43, angleDeg: -2, frontGapCm: 4, airflowPct: 45 },
+      operation: { mode: 'medium' },
+    },
+  },
+  ws5: {
+    labelKey: 'presetWs5', nominalKw: 4.19,
+    patch: {
+      dimensions: { widthCm: 67, depthCm: 54, heightCm: 88, legHeightCm: 15 },
+      materials: { steelThicknessMm: 5, firebrickThicknessCm: 4 },
+      chimney: { diameterCm: 17, heightCm: 125 },
+      door: { widthCm: 39, heightCm: 36 },
+      baffle: { heightCm: 48, angleDeg: -2, frontGapCm: 4, airflowPct: 45 },
+      operation: { mode: 'medium' },
+    },
+  },
+  // = defaultConfig (колишній 'standard'): ті самі габарити/матеріали/дверцята.
+  ws6: {
+    labelKey: 'presetWs6', nominalKw: 5.73,
     patch: {
       dimensions: { widthCm: 70, depthCm: 55, heightCm: 95, legHeightCm: 15 },
       materials: { steelThicknessMm: 5, firebrickThicknessCm: 4 },
-  chimney: { diameterCm: 15, heightCm: 120, totalHeightM: 5, bends: 1 },
-  combustion: {
-    washAsSecondary: true,
-    tertiary: { enabled: false, holeCount: 8, holeDiameterCm: 0.5 },
-    catalyst: { enabled: false, lightoffC: 260, areaCm2: 120 },
-  },
+      chimney: { diameterCm: 17.5, heightCm: 130, totalHeightM: 5, bends: 1 },
+      combustion: {
+        washAsSecondary: true,
+        tertiary: { enabled: false, holeCount: 8, holeDiameterCm: 0.5 },
+        catalyst: { enabled: false, lightoffC: 260, areaCm2: 120 },
+      },
       door: { widthCm: 42, heightCm: 38 },
-      baffle: { heightCm: 58, frontGapCm: 6 },
+      baffle: { heightCm: 52, angleDeg: -2, frontGapCm: 4, airflowPct: 45 },
       operation: { mode: 'medium' },
     },
   },
-  wide: {
-    labelKey: 'presetWide',
+  ws7: {
+    labelKey: 'presetWs7', nominalKw: 7.85,
     patch: {
-      dimensions: { widthCm: 96, depthCm: 62, heightCm: 105, legHeightCm: 18 },
+      dimensions: { widthCm: 75, depthCm: 57, heightCm: 98, legHeightCm: 15 },
+      materials: { steelThicknessMm: 5, firebrickThicknessCm: 4 },
+      chimney: { diameterCm: 18, heightCm: 130 },
+      door: { widthCm: 44, heightCm: 39 },
+      baffle: { heightCm: 54, angleDeg: -2, frontGapCm: 4, airflowPct: 45 },
+      operation: { mode: 'medium' },
+    },
+  },
+  ws8: {
+    labelKey: 'presetWs8', nominalKw: 10.41,
+    patch: {
+      dimensions: { widthCm: 84, depthCm: 62, heightCm: 104, legHeightCm: 14 },
       materials: { steelThicknessMm: 6, firebrickThicknessCm: 5 },
-      chimney: { diameterCm: 18, heightCm: 135 },
-      door: { widthCm: 58, heightCm: 45 },
-      baffle: { heightCm: 64, frontGapCm: 7 },
+      chimney: { diameterCm: 19, heightCm: 130 },
+      door: { widthCm: 48, heightCm: 42 },
+      baffle: { heightCm: 57, angleDeg: -2, frontGapCm: 4, airflowPct: 45 },
       operation: { mode: 'medium' },
     },
   },
-  workshop: {
-    labelKey: 'presetWorkshop',
+  ws9: {
+    labelKey: 'presetWs9', nominalKw: 14.2,
     patch: {
-      dimensions: { widthCm: 118, depthCm: 82, heightCm: 128, legHeightCm: 10 },
+      dimensions: { widthCm: 93, depthCm: 67, heightCm: 110, legHeightCm: 14 },
+      materials: { steelThicknessMm: 6, firebrickThicknessCm: 5 },
+      chimney: { diameterCm: 20.5, heightCm: 135 },
+      door: { widthCm: 51, heightCm: 45 },
+      baffle: { heightCm: 61, angleDeg: -2, frontGapCm: 4, airflowPct: 45 },
+      operation: { mode: 'medium' },
+    },
+  },
+  ws10: {
+    labelKey: 'presetWs10', nominalKw: 19.15,
+    patch: {
+      dimensions: { widthCm: 107, depthCm: 75, heightCm: 119, legHeightCm: 13 },
       materials: { steelThicknessMm: 8, firebrickThicknessCm: 6 },
-      chimney: { diameterCm: 22, heightCm: 150 },
-      door: { widthCm: 64, heightCm: 54 },
-      baffle: { heightCm: 78, frontGapCm: 9 },
-      operation: { mode: 'high' },
+      chimney: { diameterCm: 20.5, heightCm: 140 },
+      door: { widthCm: 57, heightCm: 49 },
+      baffle: { heightCm: 65, angleDeg: -2, frontGapCm: 4, airflowPct: 45 },
+      operation: { mode: 'medium' },
     },
   },
 };
@@ -292,6 +374,20 @@ export function doorOpening(cfg, steelCm) {
   const openingTop = Math.min(h - steelCm, openingBottom + openingH);
   const sideW = Math.max(steelCm, (w - openingW) / 2);
   return { doorW, doorH, openingW, openingH, openingBottom, openingTop, sideW };
+}
+
+// Кутник опори бафля — рівнобокий профіль, а НЕ смужка завтовшки з лист.
+// Полиця (leg) мусить дати опору ≥ 2×тепловий зазір + 10 мм (buildFitPlan/F2
+// у production.js), інакше бафль провалюється при нагріві. L25×25×3 — типовий
+// ряд для топок до ~120 см; на найбільших печах (140×120×180 і подібні) беремо
+// L30×30×3, бо тепловий зазор там більший. Єдине джерело для 3D
+// (stove-builder.js) і BOM (bom.js), щоб полиця в 3D і опора в кресленні збігались.
+export function baffleAngleSizeCm(cfg) {
+  const w = +cfg?.dimensions?.widthCm || 70;
+  const d = +cfg?.dimensions?.depthCm || 55;
+  const h = +cfg?.dimensions?.heightCm || 95;
+  const big = w >= 120 || d >= 100 || h >= 150;
+  return { legCm: big ? 3 : 2.5, tCm: 0.3 };
 }
 
 // Геометрія ЗАДНЬОГО виходу — єдине джерело для 3D (stove-builder.js), BOM і

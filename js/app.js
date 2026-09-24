@@ -62,6 +62,11 @@ key.shadow.camera.left = -250; key.shadow.camera.right = 250;
 key.shadow.camera.top = 300; key.shadow.camera.bottom = -100;
 scene.add(key);
 const rim = new THREE.DirectionalLight(0x88aaff, 0.5); rim.position.set(-140, 120, -160); scene.add(rim);
+// P1: підсвітка для розрізу — світить із камери, щоб «фальш-кришки» зрізу
+// (onBeforeCompile у applySection) не тонули в чорному ambient 0.55 на фоні
+// 0x0f1115 (виміряно на скрінах дослідження internals-3d).
+const sectionFill = new THREE.PointLight(0xfff1e0, 0.9, 0, 0);
+camera.add(sectionFill); scene.add(camera);
 
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400),
   new THREE.MeshStandardMaterial({ color: config.colors.floor, roughness: 0.92 }));
@@ -99,12 +104,44 @@ function applyVisibility() {
   if (refs.flow) refs.flow.visible = config.flow.visible;
 }
 const sectionPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
+// P1: фальш-кришки розрізу. Замість порожнистих зрізаних боксів (просто
+// clippingPlanes на FrontSide) непрозорі матеріали при розрізі стають
+// DoubleSide + shadowSide BackSide (без цього — shadow acne на шамоті,
+// перевірено скріном у дослідженні) і отримують один патч onBeforeCompile,
+// що фарбує «зворотні» грані суцільним світлим кольором — тоді видно
+// перетин стінки/полиці/труби, а не дірку. Прозорі й MeshBasicMaterial
+// (скло, innerChamber, зони, дим, стрілки потоків) пропускаємо: інакше
+// напівпрозора зона innerChamber заливається кольором зрізу.
+function patchSectionCap(m) {
+  if (m.userData.sectionCapPatched) return;
+  m.userData.sectionCapPatched = true;
+  const prevCompile = m.onBeforeCompile;
+  m.onBeforeCompile = (shader, renderer_) => {
+    if (prevCompile) prevCompile(shader, renderer_);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <dithering_fragment>',
+      '#include <dithering_fragment>\n#ifdef DOUBLE_SIDED\nif (!gl_FrontFacing) gl_FragColor = vec4(mix(diffuse, vec3(1.0), 0.35) * 0.85, 1.0);\n#endif',
+    );
+  };
+  m.customProgramCacheKey = () => 'section-cap';
+}
 function applySection() {
-  const planes = config.visibility.section ? [sectionPlane] : [];
+  const on = config.visibility.section;
+  const planes = on ? [sectionPlane] : [];
+  sectionFill.visible = on;
   if (!stove) return;
   stove.traverse((n) => {
     const mats = Array.isArray(n.material) ? n.material : (n.material ? [n.material] : []);
-    for (const m of mats) { m.clippingPlanes = planes; m.clipShadows = true; m.needsUpdate = true; }
+    for (const m of mats) {
+      m.clippingPlanes = planes; m.clipShadows = true;
+      const capable = !m.transparent && m.type !== 'MeshBasicMaterial';
+      if (capable) {
+        patchSectionCap(m);
+        m.side = on ? THREE.DoubleSide : THREE.FrontSide;
+        m.shadowSide = on ? THREE.BackSide : null;
+      }
+      m.needsUpdate = true;
+    }
   });
 }
 function applyGrid() {
@@ -163,12 +200,22 @@ function applyViewMode() {
   const overlay = document.getElementById('drawing-overlay');
   const m = config.viewMode;
   document.getElementById('viewMode').value = m;
-  if (m === '3d') { overlay.style.display = 'none'; controls.enabled = true; camera.up.set(0, 1, 0); syncCamera(true); return; }
+  if (m === '3d') { overlay.style.display = 'none'; controls.enabled = true; camera.up.set(0, 1, 0); syncCamera(true); applyGrid(); return; }
   const def = DRAW_DEFS[m]; if (!def) return;
   controls.enabled = false;
+  // Сітка/осі — орієнтир для 3D-виду; на технічному кресленні вони не мають
+  // сенсу і, гірше, дають діагональ через увесь кадр поверх виносок. Ховаємо
+  // незалежно від чекбокса «Сітка/осі» (config.visibility.grid) і повертаємо
+  // applyGrid() при поверненні в 3D — вище.
+  grid.visible = false; axes.visible = false;
   camera.position.set(...def.pos); camera.up.set(...def.up);
   controls.target.set(0, config.dimensions.legHeightCm + config.dimensions.heightCm * 0.5, 0);
-  camera.lookAt(controls.target); camera.updateProjectionMatrix();
+  camera.lookAt(controls.target);
+  // updateProjectionMatrix() оновлює лише проєкцію; project() у renderOverlaySVG
+  // читає ще й СВІТОВУ матрицю (position/lookAt), яка інакше лишається
+  // застарілою на один кадр — виноски малювались з NaN-координатами одразу
+  // після зміни пресета/габаритів у режимі креслення.
+  camera.updateMatrixWorld(true); camera.updateProjectionMatrix();
   overlay.style.display = 'block'; renderOverlaySVG();
 }
 function project(v3) {
@@ -436,10 +483,10 @@ function exportTestLogCsv() {  const log = getTestLog();
 function syncModelOptions() {
   const select = document.getElementById('modelPreset');
   if (!select) return;
-  const selected = select.value || 'standard';
+  const selected = select.value || 'ws6';
   select.innerHTML = Object.entries(MODEL_PRESETS)
     .map(([id, preset]) => `<option value="${id}">${t(preset.labelKey)}</option>`).join('');
-  select.value = MODEL_PRESETS[selected] ? selected : 'standard';
+  select.value = MODEL_PRESETS[selected] ? selected : 'ws6';
 }
 
 function getSavedCompare() {
@@ -568,7 +615,7 @@ function renderBomSummary(physicsResult = null) {  const target = document.getEl
   if (!target) return;
   const bom = buildBOM(config, physicsResult, lang);
   target.innerHTML = `${t('bomSteel')}: <b>${bom.totals.steelMassKg} kg</b> · ${t('bomArea')}: <b>${bom.totals.steelAreaM2} m²</b> · ${t('bomBrick')}: <b>${bom.totals.brickMassKg} kg</b> · ${t('bomInsulation')}: <b>${bom.totals.insulationMassKg} kg</b> · ${t('bomTotal')}: <b>${bom.totals.totalMassKg} kg</b><br>
-    ${t('bomCut')}: <b>${bom.totals.cutAreaM2} m²</b> · ${t('bomWeld')}: <b>${bom.totals.weldMeters} m</b> · ${t('bomPurchased')}: <b>${bom.totals.purchasedCount}</b> · <span class="est">${t('bomEstimate')}</span>`;
+    ${t('bomCut')}: <b>${bom.totals.cutAreaM2} m²</b> · ${t('bomWeld')}: <b>${bom.totals.weldMeters} m</b> · ${t('bomPurchased')}: <b>${bom.totals.purchasedCount}</b> · <span class="est">${t('bomEstimate')}</span>${bom.fitIssues > 0 ? `<br><span class="bad">${t('bomFitIssues').replace('${count}', bom.fitIssues)}</span>` : ''}`;
 }
 
 function shareConfig() {
@@ -599,13 +646,21 @@ function printReport() {
     try { report.opener = null; } catch { /* ignore */ }
     const metrics = getCompareMetrics(config);
     const rows = Object.entries(metrics).map(([key, value]) => `<tr><td>${key}</td><td>${value}</td></tr>`).join('');
-    report.document.write(`<!doctype html><html lang="${lang}"><head><title>${t('title')}</title><style>body{font:14px Arial;color:#172033;padding:24px}h1{font-size:22px}img{max-width:100%;background:#101318;border-radius:10px}table{border-collapse:collapse;margin-top:14px}td{border-bottom:1px solid #ddd;padding:7px 14px 7px 0}</style></head><body><h1>🔥 Woodstove 2</h1><p>${new Date().toLocaleString()}</p><img id="repImg" src="${dataUrl}"><table>${rows}</table><script>document.getElementById('repImg').onload=function(){window.print()}<\/script></body></html>`);
+    report.document.write(`<!doctype html><html lang="${lang}"><head><title>${t('title')}</title><style>body{font:14px Arial;color:#172033;padding:24px}h1{font-size:22px}img{max-width:100%;background:#101318;border-radius:10px}table{border-collapse:collapse;margin-top:14px}td{border-bottom:1px solid #ddd;padding:7px 14px 7px 0}</style></head><body><h1>🔥 Woodstove 2</h1><p>${new Date().toLocaleString()}</p><img id="repImg" src="${dataUrl}"><table>${rows}</table><p style="font-size:12px;color:#8a4b00;max-width:760px">${t('transitionDisclaimer')}</p><p style="font-size:12px;color:#555">${t('bomProdNote')}</p><script>document.getElementById('repImg').onload=function(){window.print()}<\/script></body></html>`);
     report.document.close();
   } catch(e) { console.error('Print report failed:', e); alert(lang === 'en' ? 'Print failed' : 'Друк не вдався'); }
 }
 
 function buildExportModel() {
+  // P1: Object3D.clone НЕ клонує матеріали — клон ділить ті самі інстанси з
+  // живою сценою. Якщо розріз увімкнено, DOUBLE_SIDED і його onBeforeCompile
+  // потраплять у GLTF/STL. Тимчасово вимикаємо розріз (FrontSide) ПЕРЕД
+  // clone і повертаємо назад одразу після — оригінальні матеріали сцени від
+  // цього лише на мить міняють side, глядач цього не бачить (синхронний код).
+  const wasSection = config.visibility.section;
+  if (wasSection) { config.visibility.section = false; applySection(); }
   const model = stove.clone(true);
+  if (wasSection) { config.visibility.section = true; applySection(); }
   const strip = (root) => {
     for (const child of root.children.slice()) {
       if (['flowVisualization', 'aeroFlow', 'innerChamber', 'doorSeal', 'thermalZones', 'smoke'].includes(child.name)) root.remove(child);

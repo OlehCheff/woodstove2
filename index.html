@@ -61,6 +61,7 @@
       <select id="modelPreset"></select></div>
     <div class="btns"><button id="applyPreset" class="green" data-i18n="applyPreset">Застосувати</button></div>
     <div id="bomSummary" class="bom-summary"></div>
+    <div class="hint" data-i18n="bomProdNote">Креслення SVG: допуски ISO 2768-mK / ISO 13920-BF, шви ISO 2553, теплові зазори (EN 1993-1-2). Розміри вільних деталей у BOM — уже з зазорами.</div>
     <div class="btns"><button id="exportBom" class="ghost" data-i18n="exportBom">BOM CSV ⤓</button>
       <button id="exportDrawing" class="ghost" data-i18n="exportDrawing">Креслення SVG ⤓</button>
       <button id="exportDxf" class="ghost" data-i18n="exportDxf">Розгортка DXF ⤓</button></div>
@@ -153,6 +154,7 @@
       <div class="card"><span data-i18n="kBurn">Горіння</span><b id="m-burn">—</b></div>
       <div class="card"><span data-i18n="kDraft">Тяга / топка</span><b id="m-draft">—</b></div>
     </div>
+    <div class="hint disclaimer" data-i18n="transitionDisclaimer">Модель стаціонарна: рахує лише усталений режим горіння, без часової осі. Розпал і прогрів, дозавантаження та догоряння вугілля не моделюються — у цих фазах фактичні ККД, потужність, температури й димність інші. Режим «start-up» — той самий усталений розрахунок з іншими заслінками, а не модель прогріву.</div>
     <ul id="warnings"></ul>
   </div></details>
 
@@ -196,6 +198,7 @@
     <div class="row"><label><span data-i18n="glassTemp">Температура скла</span> <output id="glassTempC-v"></output></label><input type="range" id="glassTempC" min="20" max="600" step="5"></div>
     <div class="row"><label><span data-i18n="smokeOpacity">Непрозорість диму</span> <output id="smokeOpacityPct-v"></output></label><input type="range" id="smokeOpacityPct" min="0" max="100" step="1"><div class="hint" data-i18n="smokeHint">Оціночна непрозорість видимого диму після прогріву: 0% — майже невидимий, 100% — густий дим. Це не лабораторний PM/CO вимір.</div></div>
     <div class="row check"><input type="checkbox" id="excludeStartUp"><label for="excludeStartUp" data-i18n="calExcludeStartUp">Не калібрувати start-up (перехідний процес)</label></div>
+    <div class="hint" data-i18n="calStartUpHint">Start-up — перехідний процес: модель його не описує, тому за замовчуванням його записи не входять у калібрування.</div>
     <div class="btns"><button id="saveTestBurn" class="green" data-i18n="saveTest">Зберегти тест</button></div>
     <div id="testBurnResult" class="test-result"></div>
     <ul id="testLog" class="test-log"></ul>

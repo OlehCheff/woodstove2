@@ -2,7 +2,12 @@
 // Розміри деталей рахуються за тими ж формулами, що й у stove-builder.js,
 // щоб специфікація збігалася з 3D-моделлю 1:1.
 import { PhysicsModel } from './physics-model.js';
-import { doorOpening, rearOutletLayout, bottomIntakeGeometry, secondaryHolePattern, INTAKE_MIN_STOP_PCT, LEG_SIZE_CM } from './config.js';
+import { doorOpening, rearOutletLayout, bottomIntakeGeometry, secondaryHolePattern, baffleAngleSizeCm, INTAKE_MIN_STOP_PCT, LEG_SIZE_CM } from './config.js';
+import {
+  ISO2768_M, ISO13920_B, tolFor, steelStrain, stainlessStrain, fireclayStrain,
+  DESIGN_TEMP_C, FIT_MM, gapPerSideMm, filletA, stitch, weldSymbolSVG, ceilTo,
+} from './production.js';
+import { PROD_TXT, STR } from './i18n.js';
 
 const round = (v, d = 1) => Math.round(v * 10 ** d) / 10 ** d;
 const clampBom = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -20,7 +25,7 @@ const NAME_EN = {
   'Скло дверцят': 'Door glass', 'Петля дверцят (кріплення + втулка)': 'Door hinge (mount + bushing)',
   'Пружинна ручка-спіраль': 'Spring coil handle', 'Засувка дверцят (клямка)': 'Door latch',
   'Бафль (пластина)': 'Baffle plate', 'Refractory плита над бафлем': 'Refractory plate above baffle',
-  'Засувка бафля': 'Baffle damper', 'Димова полиця': 'Smoke shelf', 'Бічні напрямні верхнього ходу (Л/П)': 'Upper gas-path guides (L/R)',
+  'Засувка вторинного повітря': 'Secondary air damper', 'Димова полиця': 'Smoke shelf',
   'Задня перепускна стінка': 'Rear bypass wall', 'Внутрішня димова труба (flue bell)': 'Internal flue bell',
   'Люк чистки + кришка': 'Cleaning port + cap', 'Панель primary + задвижка': 'Primary panel + gate',
   'Secondary стояки (Л/П)': 'Secondary risers (L/R)', 'Secondary manifold': 'Secondary manifold',
@@ -34,7 +39,6 @@ const NAME_EN = {
   'Air-wash щілина + флоп': 'Air-wash slit + flap',
   'Air-wash бокова ручка + тяга': 'Air-wash side lever + rod',
   'Уголки бафля (Л/П, 2 шт)': 'Baffle angle supports (L/R, 2 pcs)',
-  'Передній дефлектор': 'Front deflector',
   'Третинна труба (tertiary)': 'Tertiary tube', 'Каталітичний стільник': 'Catalytic honeycomb',
   'Нижній вхід — канал поздовжній': 'Bottom intake — longitudinal duct',
   'Нижній вхід — колектор поперечний': 'Bottom intake — cross collector',
@@ -55,6 +59,7 @@ function translateNote(s, lang) {
     .replace(/гориз\./g, 'horiz.').replace(/верт\./g, 'vert.').replace(/профільна труба/g, 'profile tube')
     .replace(/опора дефлекторів/g, 'deflector support').replace(/отвори в передній плиті під дверцятами/g, 'holes in front plate, under the door')
     .replace(/на всю ширину/g, 'full width').replace(/права стінка/g, 'right wall').replace(/звʼязок з флопом/g, 'linked to the flap')
+    .replace(/у корпусі перед трубою/g, 'in housing, ahead of the tube')
     .replace(/см/g, 'cm').replace(/мм/g, 'mm');
 }
 function translateMat(s, lang) {
@@ -64,35 +69,193 @@ function translateMat(s, lang) {
     .replace(/профіль/g, 'profile').replace(/покупна/g, 'purchased').replace(/мм/g, 'mm');
 }
 
-export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
-  const trName = (s) => (lang === 'en' ? (NAME_EN[s] || s.replace('Димохід', 'Flue').replace(/ см/g, ' cm').replace('підйом', 'rise').replace('вертикаль', 'vertical').replace('підйом', 'rise').replace('вертикаль', 'vertical')) : s);
-  const w = cfg.dimensions.widthCm;
-  const d = cfg.dimensions.depthCm;
-  const h = cfg.dimensions.heightCm;
-  const legH = cfg.dimensions.legHeightCm;
-  const steelMm = cfg.materials.steelThicknessMm;
-  const steelCm = steelMm / 10;
+// Похідна геометрія корпусу — винесена з buildBOM без зміни формул, щоб її
+// могли використати і buildWeldPlan/buildFitPlan (виробничий шар G), і сам
+// buildBOM, не дублюючи вирази.
+export function bomGeometry(cfg) {
+  const w = cfg.dimensions.widthCm, d = cfg.dimensions.depthCm, h = cfg.dimensions.heightCm, legH = cfg.dimensions.legHeightCm;
+  const steelMm = cfg.materials.steelThicknessMm, steelCm = steelMm / 10;
   const brickT = Math.min(cfg.materials.firebrickThicknessCm, 12);
   const thermal = cfg.thermal || {};
   const insT = Math.min(Math.max(thermal.insulationThicknessCm == null ? 3 : +thermal.insulationThicknessCm, 0), 8);
   const refrT = Math.min(Math.max(thermal.baffleRefractoryThicknessCm == null ? 3 : +thermal.baffleRefractoryThicknessCm, 0), 8);
-
-  const innerW = Math.max(10, w - steelCm * 2);
-  const innerD = Math.max(10, d - steelCm * 2);
-  // Отвір/дверцята — спільна формула з 3D (config.js:doorOpening):
-  // стулка перекриває отвір на 1.5 см з кожного боку під ущільнювач.
-  const { doorW, doorH, openingW, openingBottom, openingTop, sideW } = doorOpening(cfg, steelCm);
+  const innerW = Math.max(10, w - steelCm * 2), innerD = Math.max(10, d - steelCm * 2);
+  const { doorW, doorH, openingW, openingH, openingBottom, openingTop, sideW } = doorOpening(cfg, steelCm);
   const frameT = cfg.door.frameThicknessCm;
   const baffleGap = Math.min(cfg.baffle.frontGapCm, innerD * 0.45);
   const baffleDepth = Math.max(8, innerD - baffleGap);
-  const chimR = cfg.chimney.diameterCm / 2;
-  const chimZ = -d * 0.2;
-  const collarR = chimR * 1.08;
+  const chimR = cfg.chimney.diameterCm / 2, chimZ = -d * 0.2, collarR = chimR * 1.08;
   const flueBellBottom = Math.min(h - steelCm * 2, Math.max(cfg.baffle.heightCm + steelCm * 4, h * 0.55));
   const flueBellH = Math.max(6, (h - steelCm) - flueBellBottom);
-  // Задній вихід: ті самі числа, що й у 3D (config.js:rearOutletLayout).
+  const frontStrip = (d / 2 - chimZ) - collarR - steelCm;
+  const rearStrip = Math.max(1, (chimZ + d / 2) - collarR);
+  const midW = Math.max(1, w / 2 - collarR);
+  const hoodY = Math.min(h - steelCm * 2, Math.max(cfg.baffle.heightCm + steelCm * 6, h * 0.82));
+  const hoodDepth = Math.max(8, (d / 2 - steelCm) - (chimZ + collarR) - 1.5);
+  const rearHgt = Math.max(6, (hoodY - cfg.baffle.heightCm) * 0.55);
+  const angleLen = clampBom(innerD * 0.5, 6, 24);
+  const { legCm: angleLegCm, tCm: angleTCm } = baffleAngleSizeCm(cfg);
+  const tubeLen = secondaryHolePattern(cfg).tubeLenCm;
+  const tertLen = Math.max(14, innerW * 0.8);
+  const washW = Math.max(12, Math.min(w - steelCm * 3, doorW + 6));
+  const cw = Math.max(10, w - steelCm * 2), cd = Math.max(10, d - steelCm * 2);
+  const linerTopY = Math.max(steelCm * 4, Math.min(h - steelCm * 2 - insT, cfg.baffle.heightCm - steelCm));
+  const brickH = Math.max(10, linerTopY - steelCm - insT - brickT);
   const isRear = cfg.chimney.outlet === 'rear';
   const rl = rearOutletLayout(cfg);
+  return {
+    w, d, h, legH, steelMm, steelCm, brickT, insT, refrT, innerW, innerD, doorW, doorH, openingW, openingH, openingBottom, openingTop, sideW, frameT,
+    baffleGap, baffleDepth, chimR, chimZ, collarR, flueBellBottom, flueBellH, frontStrip, rearStrip, midW, hoodY, hoodDepth, rearHgt,
+    angleLen, angleLegCm, angleTCm, tubeLen, tertLen, washW, cw, cd, linerTopY, brickH, isRear, rl,
+  };
+}
+
+// План швів (виробничий шар G): 12 фіксованих груп ISO 2553, ID не
+// перенумеровуються, коли групи немає (наприклад, немає ніжок). byPart —
+// довжина шва на 1 деталь (укр. ключ назви, як у buildBOM) — джерело
+// поля weldCm у BOM замість старого хардкоду "повний периметр панелі"
+// (кожне спільне ребро рахувалось двічі, завищення ~2.1×).
+export function buildWeldPlan(cfg) {
+  const g = bomGeometry(cfg);
+  const t = g.steelMm;
+  const aShell = filletA(t);
+  const rows = [];
+  const byPart = {};
+  const partRef = {}; // укр. назва деталі → id групи шва (W#), для weldRef у BOM
+  // own() викликається ПЕРЕД add() для тієї самої групи, тож id наступного
+  // рядка (rows.length + 1) — це якраз id групи, якій належить ця деталь.
+  const own = (part, cm) => { byPart[part] = round((byPart[part] || 0) + cm, 1); partRef[part] = 'W' + (rows.length + 1); };
+  const add = (row) => { rows.push({ id: 'W' + (rows.length + 1), process: '135', quality: 'C', sides: 'arrow', ...row, lengthCm: round(row.lengthCm, 1) }); };
+  // W1 — оболонка: кожне ребро коробки один раз
+  own('Днище', 2 * (g.w + g.d));
+  own('Бічна панель (Л/П)', 2 * g.h);
+  if (g.isRear) own('Задня панель (виріз під задній вихід)', 2 * (g.w + g.h) + Math.PI * g.rl.collarR * 2);
+  else own('Задня панель', 2 * (g.w + g.h));
+  if (g.isRear) own('Верх (суцільний)', 2 * (g.w + g.d));
+  else {
+    own('Верх — передня смуга', g.w + 2 * g.frontStrip);
+    own('Верх — задня смуга', g.w + 2 * g.rearStrip);
+    own('Верх — бічні смуги (Л/П)', g.collarR * 2);
+  }
+  add({ key: 'shell', type: 'fillet', a: aShell, lengthCm: 4 * (g.w + g.d + g.h) });
+  // W2 — стикові шви смуг фасаду й верху (лицьові — зачистити врівень)
+  const frontSeams = 2 * g.openingBottom + 2 * (g.h - g.openingTop);
+  own('Передня панель — бічна (Л/П)', frontSeams / 2);
+  const seamsAll = g.isRear ? frontSeams : frontSeams + 4 * g.midW;
+  if (!g.isRear) own('Верх — бічні смуги (Л/П)', (byPart['Верх — бічні смуги (Л/П)'] || 0) + 2 * g.midW);
+  add({ key: 'seams', type: t <= 4 ? 'butt-I' : 'butt-V', s: t, flush: true, lengthCm: seamsAll });
+  // W3 — комір ↔ верх, кругом
+  const collarPart = g.isRear ? 'Комір заднього виходу' : 'Комір димоходу';
+  own(collarPart, Math.PI * g.collarR * 2);
+  add({ key: 'collar', type: 'fillet', a: filletA(Math.min(t, 4)), allAround: true, lengthCm: Math.PI * g.collarR * 2 });
+  // W4 — внутрішня труба ↔ верх (зсередини), кругом; лише у верхнього виходу
+  // (у заднього кришка суцільна — внутрішньої труби немає, group.lengthCm=0).
+  if (!g.isRear) own('Внутрішня димова труба (flue bell)', Math.PI * g.chimR * 2.12 + g.flueBellH);
+  add({ key: 'bell', type: 'fillet', a: 3, allAround: true, lengthCm: g.isRear ? 0 : Math.PI * g.chimR * 2.12 });
+  // W5 — поздовжній шов вальцьованої труби (flue bell + димохід)
+  add({ key: 'tubeSeam', type: 'butt-I', s: 3, lengthCm: (g.isRear ? 0 : g.flueBellH) + cfg.chimney.heightCm });
+  // W6 — ніжки 50×50 ↔ днище, кругом
+  if (g.legH > 0) { own('Ніжки 50×50', 20); add({ key: 'legs', type: 'fillet', a: 3, allAround: true, lengthCm: 4 * 20 }); }
+  // W7 — кути рами дверцят, з двох боків
+  own('Дверцята — планки рами верт. (Л/П)', 4 * g.frameT);
+  add({ key: 'doorFrame', type: 'fillet', a: 3, sides: 'both', lengthCm: 8 * g.frameT });
+  // W8 — петлі ↔ корпус і рама
+  own('Петля дверцят (кріплення + втулка)', 4 * 6);
+  add({ key: 'hinges', type: 'fillet', a: 3, sides: 'both', lengthCm: 2 * 4 * 6 });
+  // W9 — уголки бафля ↔ бічні стінки, переривчасто
+  const st9 = stitch(g.angleLen * 10);
+  own('Уголки бафля (Л/П, 2 шт)', st9.weldMm / 10);
+  add({ key: 'rails', type: 'fillet', a: 3, stitch: st9, lengthCm: 2 * st9.weldMm / 10 });
+  // W10 — газоходи ↔ корпус, переривчасто 50 (100)
+  const e10 = (L) => stitch(L * 10, 50, 100);
+  const shelf = e10(g.innerW + 2 * g.hoodDepth), rear = e10(g.innerW + 2 * g.rearHgt);
+  own('Димова полиця', shelf.weldMm / 10);
+  own('Задня перепускна стінка', rear.weldMm / 10);
+  add({ key: 'gasPath', type: 'fillet', a: 3, stitch: shelf, lengthCm: (shelf.weldMm + rear.weldMm) / 10 });
+  // W11 — повітряні канали (secondary стояки, air-wash корпус) — суцільно, герметично
+  const riserL = Math.max(12, cfg.secondaryAir.preheatLengthCm);
+  own('Secondary стояки (Л/П)', 2 * riserL);
+  own('Air-wash щілина + флоп', 2 * g.washW);
+  add({ key: 'airDucts', type: 'fillet', a: 3, lengthCm: 2 * 2 * riserL + 2 * g.washW });
+  // W12 — люк чистки ↔ корпус, кругом
+  own('Люк чистки + кришка', Math.PI * 8.2);
+  add({ key: 'cleanout', type: 'fillet', a: 3, allAround: true, lengthCm: Math.PI * 8.2 });
+  const totalCm = rows.reduce((s, r) => s + r.lengthCm, 0);
+  return { rows, byPart, partRef, aShell, totalM: round(totalCm / 100, 1) };
+}
+
+// План посадок (виробничий шар G): теплові зазори за EN 1993-1-2, розрахунковий
+// випадок — гаряча деталь у холодному корпусі (розпал). ID фіксовані за
+// ключем. status:'fix' відзначає ДЕФЕКТИ поточної геометрії (полиця
+// кутника/перекриття дверцят), а не косметичні зазори — навмисно НЕ маскуємо.
+export function buildFitPlan(cfg) {
+  const g = bomGeometry(cfg);
+  const tBaffle = DESIGN_TEMP_C.baffle;
+  const epsB = steelStrain(tBaffle), epsSS = stainlessStrain(DESIGN_TEMP_C.stainless), epsBr = fireclayStrain(DESIGN_TEMP_C.firebrick);
+  const ID = { baffle: 'F1', rail: 'F2', baffleRear: 'F3', board: 'F4', tube: 'F5', tertiary: 'F6', brick: 'F7', glass: 'F8', door: 'F9', flue: 'F10' };
+  const rows = [];
+  const add = (r) => rows.push({ id: ID[r.key], status: 'ok', ...r });
+  const Lb = round(g.innerW * 10, 0);
+  const gB = gapPerSideMm(Lb, epsB);
+  add({ key: 'baffle', lengthMm: Lb, tempC: tBaffle, growthMm: round(Lb * epsB, 1), gapMm: gB, cutMm: round(Lb - 2 * gB, 0) });
+  // Найгірший випадок: бафль зсунутий до однієї стінки — опора з іншого боку = полиця − 2·зазор.
+  const railLegMm = g.angleLegCm * 10; // L25×25×3 / L30×30×3 (config.js:baffleAngleSizeCm)
+  const bearing = railLegMm - 2 * gB;
+  const need = 2 * gB + FIT_MM.railBearingMin;
+  const legNeed = [25, 30, 40, 50].find((s) => s >= need) || 50;
+  add({ key: 'rail', lengthMm: round(g.angleLen * 10, 0), legMm: railLegMm, bearingMm: round(bearing, 1), legNeedMm: legNeed, status: bearing >= FIT_MM.railBearingMin ? 'ok' : 'fix' });
+  const Ld = round(g.baffleDepth * 10, 0);
+  // Передній упор (рішення власника): гарячий бафль росте НАЗАД, передній
+  // прохід (frontGap) лишається таким, як у моделі; холодна задня щілина
+  // працює як байпас на розпалі.
+  const rearGap = ceilTo(Ld * epsB + FIT_MM.assembly, 0.5);
+  add({ key: 'baffleRear', lengthMm: Ld, tempC: tBaffle, growthMm: round(Ld * epsB, 1), gapMm: rearGap, hotGapMm: round(rearGap - Ld * epsB, 1), frontGapMm: round(g.baffleGap * 10, 0), cutMm: round(Ld - rearGap, 0) });
+  if (g.refrT > 0) add({ key: 'board', lengthMm: Lb, gapMm: FIT_MM.board, cutMm: round(Lb - 2 * FIT_MM.board, 0) });
+  const Lt = round(g.tubeLen * 10, 0);
+  add({ key: 'tube', lengthMm: Lt, tempC: DESIGN_TEMP_C.stainless, growthMm: round(Lt * epsSS, 1), floatMm: ceilTo(Lt * epsSS + FIT_MM.tubeAxialExtra, 0.5), holeMm: 32 + FIT_MM.tubeHoleClear });
+  if (cfg.combustion && cfg.combustion.tertiary && cfg.combustion.tertiary.enabled) {
+    const L3 = round(g.tertLen * 10, 0);
+    add({ key: 'tertiary', lengthMm: L3, tempC: DESIGN_TEMP_C.stainless, growthMm: round(L3 * epsSS, 1), floatMm: ceilTo(L3 * epsSS + FIT_MM.tubeAxialExtra, 0.5), holeMm: 16 + FIT_MM.tubeHoleClear });
+  }
+  const Lbr = round(Math.max(g.cw - 2 * g.insT, g.cd - 2 * g.insT) * 10, 0);
+  add({ key: 'brick', lengthMm: Lbr, tempC: DESIGN_TEMP_C.firebrick, growthMm: round(Lbr * epsBr, 1), gapMm: Math.max(FIT_MM.brickMin, gapPerSideMm(Lbr, epsBr, 0.5)) });
+  add({ key: 'glass', gapMm: FIT_MM.glassSide, tolMm: FIT_MM.glassCutTol });
+  // Дверцята: перекриття отвору вже 15 мм/бік (config.js:DOOR_OVERLAP_CM,
+  // doorOpening) — дефект відкритих питань дослідження зачинено в геометрії,
+  // тут лише підтверджуємо це числом на кресленні.
+  const overlap = round((g.doorW - g.openingW) / 2 * 10, 1);
+  add({ key: 'door', overlapMm: overlap, needMm: FIT_MM.doorOverlapMin, status: overlap >= FIT_MM.doorOverlapMin ? 'ok' : 'fix' });
+  const pipeMm = cfg.chimney.diameterCm * 10;
+  add({ key: 'flue', pipeMm, collarIdMm: pipeMm + FIT_MM.flueSlip, insertMm: FIT_MM.flueInsertMin });
+  return { tBaffle, rows };
+}
+
+// Допуск ISO 2768-mK для різаної деталі (лист/планка/розгортка): за
+// найбільшим лінійним розміром (мм). Покупні деталі допуску не отримують —
+// їх виготовляє постачальник, а не цех.
+function partTolMm(kind, wCm, hCm) {
+  if (kind === 'purchased') return null;
+  return tolFor(ISO2768_M, Math.max(wCm, hCm) * 10);
+}
+
+export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
+  const trName = (s) => (lang === 'en' ? (NAME_EN[s] || s.replace('Димохід', 'Flue').replace(/ см/g, ' cm').replace('підйом', 'rise').replace('вертикаль', 'vertical').replace('підйом', 'rise').replace('вертикаль', 'vertical')) : s);
+  const g = bomGeometry(cfg);
+  const {
+    w, d, h, legH, steelMm, steelCm, brickT, insT, refrT, innerW, doorW, doorH,
+    openingW, openingBottom, openingTop, sideW, frameT, baffleDepth,
+    chimR, chimZ, collarR, flueBellBottom, flueBellH, isRear, rl,
+  } = g;
+  void flueBellBottom; void doorH;
+  // Виробничий шар (блок G): план швів (ISO 2553, 12 груп) і план посадок
+  // (теплові зазори EN 1993-1-2, розрахунковий випадок — розпал) — єдине
+  // джерело weldCm/weldRef і виробничих розмірів вільних деталей нижче.
+  // Номінальна геометрія тут і в 3D (stove-builder.js) лишається 1:1;
+  // вільні деталі (бафль, refractory-плита, шамот) отримують виробничий
+  // розмір = номінал − теплові зазори (buildFitPlan).
+  const weldPlan = buildWeldPlan(cfg);
+  const fitPlan = buildFitPlan(cfg);
+  const fitByKey = Object.fromEntries(fitPlan.rows.map(r => [r.key, r]));
 
   const parts = [];
   const densityOf = (mat) => {
@@ -101,14 +264,27 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
     if (mat.includes('vermiculite') || mat.includes('CFB')) return 0.0005; // вермикуліт/CFB ~0.5 г/см³
     return 0.00785;                                     // сталь 7.85 г/см³
   };
-  // kind: sheet | bar | tube | purchased. weldCm — довжина зварного шва на одну деталь.
-  const add = (name, qty, wCm, hCm, tCm, mat, note = '', kind = 'sheet', weldCm = 0) => {
+  // kind: sheet | bar | tube | purchased. weldCm деталі береться з плану
+  // швів (weldPlan.byPart за укр. назвою) — раніше тут був хардкод "повний
+  // периметр панелі", що для спільних ребер рахував кожен шов двічі (2.1×).
+  const add = (name, qty, wCm, hCm, tCm, mat, note = '', kind = 'sheet', ownWeldCm = 0) => {
     const areaCm2 = round(wCm * hCm, 1);
     const massKg = round(areaCm2 * tCm * densityOf(mat), 2);
-    parts.push({
+    // Деталі з 12-групового плану швів (W1–W12) отримують перелічену довжину
+    // звідти (раніше тут був хардкод "повний периметр панелі", 2.1× завищення).
+    // Деталі поза планом (напр. канали нижнього входу) лишають свою власну
+    // оцінку ownWeldCm — вона не входить в офіційний totals.weldMeters
+    // (=weldPlan.totalM), лишається лише довідково в рядку деталі.
+    const inPlan = Object.prototype.hasOwnProperty.call(weldPlan.byPart, name);
+    const weldCm = inPlan ? weldPlan.byPart[name] : ownWeldCm;
+    const weldRef = weldPlan.partRef[name] || null;
+    const part = {
       name: trName(name), qty, wCm: round(wCm, 1), hCm: round(hCm, 1), tCm: round(tCm, 1),
-      areaCm2, massKg, mat: translateMat(mat, lang), note: translateNote(note, lang), kind, weldCm: round(weldCm, 1), estimate: true,
-    });
+      areaCm2, massKg, mat: translateMat(mat, lang), note: translateNote(note, lang), kind,
+      weldCm: round(weldCm, 1), weldRef, tolMm: partTolMm(kind, wCm, hCm), fitRef: null, estimate: true,
+    };
+    parts.push(part);
+    return part;
   };
 
   // Корпус — сталь (шви: контур днища + вертикальні стики + верх)
@@ -143,22 +319,50 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
   const frameSide = Math.max(2, doorH - frameT * 2);
   add('Дверцята — планки рами гориз. (верх/низ)', 2, doorW, frameT, frameT, 'сталь', '', 'bar');
   add('Дверцята — планки рами верт. (Л/П)', 2, frameSide, frameT, frameT, 'сталь', '', 'bar');
-  add('Скло дверцят', 1, doorW - cfg.door.glassInsetCm * 2, doorH - cfg.door.glassInsetCm * 2, 0.7, 'скло 7 мм', 'термостійке', 'purchased');
+  const fGlass = fitByKey.glass;
+  const glassNote = fGlass
+    ? (lang === 'en' ? `heat-resistant; gap ${fGlass.gapMm} mm/side, cut tol +-${fGlass.tolMm} mm` : `термостійке; зазор ${fGlass.gapMm} мм/бік, допуск різу ±${fGlass.tolMm} мм`)
+    : 'термостійке';
+  const glassP = add('Скло дверцят', 1, doorW - cfg.door.glassInsetCm * 2, doorH - cfg.door.glassInsetCm * 2, 0.7, 'скло 7 мм', glassNote, 'purchased');
+  glassP.fitRef = fGlass?.id || null;
+  glassP.tolMm = fGlass ? fGlass.tolMm : null;
   add('Петля дверцят (кріплення + втулка)', 2, 2.4, 6, 2.4, 'сталь', 'Ø12 мм, покупна/токарка', 'purchased');
   add('Пружинна ручка-спіраль', 1, 14, 2.2, 2.2, 'сталь Ø8', 'кручена, Ø8 мм', 'purchased');
   add('Засувка дверцят (клямка)', 1, 8, 3, 0.6, 'сталь', 'з зачепом', 'purchased');
-  // Бафль + уголки + дефлектор + refractory
-  add('Бафль (пластина)', 1, innerW, baffleDepth, steelCm, `сталь ${steelMm} мм`, 'кут ' + cfg.baffle.angleDeg + '°, знімний');
-  add('Уголки бафля (Л/П, 2 шт)', 2, clampBom(innerD * 0.5, 6, 24), steelCm, steelCm, `сталь ${steelMm} мм`, 'опора дефлекторів', 'bar');
-  add('Передній дефлектор', 1, innerW, clampBom(innerD * 0.22, 5, 14), steelCm, `сталь ${steelMm} мм`);
-  if (refrT > 0) add('Refractory плита над бафлем', 1, innerW, baffleDepth, refrT, 'vermiculite/CFB');
-  // Регулювання бафля
-  add('Засувка бафля', 1, Math.max(12, w * 0.35), 1.2, 2, 'сталь', 'з ручкою Ø32');
-  // Газові канали
+  // Бафль + уголки + refractory. Передній дефлектор прибрано з 3D і BOM
+  // (рішення власника): у геометрії він на 100% похований у refractory-плиті,
+  // не над проходом газів, і фізика його не враховує — дублює smokeHood/
+  // rearBaffleWall нижче.
+  // Виробничі розміри бафля — номінал мінус тепловий зазор (F1 ширина, F3
+  // глибина; передній упор на уголках, задня щілина — байпас на розпалі).
+  const fF1 = fitByKey.baffle, fF3 = fitByKey.baffleRear, fF2 = fitByKey.rail;
+  const baffleWCm = fF1 ? fF1.cutMm / 10 : innerW;
+  const baffleHCm = fF3 ? fF3.cutMm / 10 : baffleDepth;
+  const baffleNote = lang === 'en'
+    ? `angle ${cfg.baffle.angleDeg} deg, removable; gap ${fF1 ? fF1.gapMm : 0}/side, rear ${fF3 ? fF3.gapMm : 0} mm (front stop)`
+    : `кут ${cfg.baffle.angleDeg}°, знімний; зазор ${fF1 ? fF1.gapMm : 0} мм/бік, задній ${fF3 ? fF3.gapMm : 0} мм (передній упор)`;
+  const baffleP = add('Бафль (пластина)', 1, baffleWCm, baffleHCm, steelCm, `сталь ${steelMm} мм`, baffleNote);
+  baffleP.fitRef = fF3 ? `${fF1.id}/${fF3.id}` : fF1?.id || null;
+  const angleNote = lang === 'en'
+    ? `baffle support, L${round(g.angleLegCm * 10, 0)}x${round(g.angleLegCm * 10, 0)}x${round(g.angleTCm * 10, 0)}${fF2 && fF2.status === 'fix' ? ` — bearing ${fF2.bearingMm} mm, needs L${fF2.legNeedMm}` : ''}`
+    : `опора бафля, L${round(g.angleLegCm * 10, 0)}×${round(g.angleLegCm * 10, 0)}×${round(g.angleTCm * 10, 0)}${fF2 && fF2.status === 'fix' ? ` — опора ${fF2.bearingMm} мм, потрібен L${fF2.legNeedMm}` : ''}`;
+  const angleP = add('Уголки бафля (Л/П, 2 шт)', 2, g.angleLen, g.angleLegCm, g.angleTCm, `сталь ${round(g.angleTCm * 10, 0)} мм`, angleNote, 'bar');
+  angleP.fitRef = fF2?.id || null;
+  if (refrT > 0) {
+    const fBoard = fitByKey.board;
+    const boardWCm = fBoard ? fBoard.cutMm / 10 : innerW;
+    const boardP = add('Refractory плита над бафлем', 1, boardWCm, baffleHCm, refrT, 'vermiculite/CFB', fBoard ? `${lang === 'en' ? 'gap' : 'зазор'} ${fBoard.gapMm} мм/${lang === 'en' ? 'side' : 'бік'}` : '');
+    boardP.fitRef = fBoard?.id || null;
+  }
+  // Засувка вторинного повітря (колишня «Засувка бафля»): фізично airflowPct
+  // масштабує площу вторинних отворів (physics-model.js), тож деталь стоїть
+  // у стовп-builder перед трубою вторинного повітря, не під бафлем.
+  add('Засувка вторинного повітря', 1, Math.max(12, w * 0.35) * 0.85, Math.max(12, w * 0.35) * 0.85, 0.3, 'сталь', 'у корпусі перед трубою Ø32');
+  // Газові канали. Бічні напрямні верхнього ходу прибрано (рішення власника):
+  // за 2.5 мм від бічних стінок — невидимий дубль без функції.
   const hoodY = Math.min(h - steelCm * 2, Math.max(cfg.baffle.heightCm + steelCm * 6, h * 0.82));
   const hoodDepth = Math.max(8, (d / 2 - steelCm) - (chimZ + collarR) - 1.5);
   add('Димова полиця', 1, innerW, hoodDepth, steelCm, `сталь ${steelMm} мм`);
-  add('Бічні напрямні верхнього ходу (Л/П)', 2, hoodDepth, hoodY - cfg.baffle.heightCm - steelCm, steelCm, `сталь ${steelMm} мм`);
   add('Задня перепускна стінка', 1, innerW, Math.max(6, (hoodY - cfg.baffle.heightCm) * 0.55), steelCm, `сталь ${steelMm} мм`);
   // Внутрішня димова труба закриває комірний отвір у КРИШЦІ; у заднього
   // виходу кришка суцільна, тож ця деталь не потрібна.
@@ -175,10 +379,12 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
   // З нижнім входом стояк опускається до днища (на 8 см нижче, мінус лист).
   const riserLen = Math.max(12, cfg.secondaryAir.preheatLengthCm) + (intake.buildable ? 8 - steelCm : 0);
   add('Secondary стояки (Л/П)', 2, secRiserDev, riserLen, wallT, 'сталь 3 мм', 'розгортка короба', 'tube');
+  const fTube = fitByKey.tube;
   const holeNote = lang === 'en'
-    ? `Ø32×1.5, ${pattern.count}×Ø${round(pattern.diaCm * 10, 0)} mm in ${pattern.rows} row(s), pitch ${round(pattern.pitchCm, 1)} cm`
-    : `Ø32×1.5, ${pattern.count}×Ø${round(pattern.diaCm * 10, 0)} мм у ${pattern.rows} ряд(и), крок ${round(pattern.pitchCm, 1)} см`;
-  add('Secondary труба впоперек (SS)', 1, Math.PI * 3.2, pattern.tubeLenCm, 0.15, 'нерж. 1.5 мм', holeNote, 'tube');
+    ? `D32x1.5, ${pattern.count}xD${round(pattern.diaCm * 10, 0)} mm in ${pattern.rows} row(s), pitch ${round(pattern.pitchCm, 1)} cm${fTube ? `; axial float ${fTube.floatMm} mm, hole D${fTube.holeMm} mm` : ''}`
+    : `Ø32×1.5, ${pattern.count}×Ø${round(pattern.diaCm * 10, 0)} мм у ${pattern.rows} ряд(и), крок ${round(pattern.pitchCm, 1)} см${fTube ? `; осьовий хід ${fTube.floatMm} мм, отвір Ø${fTube.holeMm} мм` : ''}`;
+  const tubeP = add('Secondary труба впоперек (SS)', 1, Math.PI * 3.2, pattern.tubeLenCm, 0.15, 'нерж. 1.5 мм', holeNote, 'tube');
+  tubeP.fitRef = fTube?.id || null;
   // Нижній вхід secondary: профільний канал під днищем + щілина з повзуном.
   // Маса профілю рахується як розгортка стінки (kind 'tube'), а не як суцільний
   // брусок — інакше труба 60×40×2 «важила» б як пруток.
@@ -204,7 +410,10 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
     add('Нижній вхід — повзун + ручка', 1, intake.slotW + 1.6, intake.slotH + 1.2, 0.3, 'сталь 3 мм', sliderNote, 'sheet');
   }
   if (cfg.combustion && cfg.combustion.tertiary && cfg.combustion.tertiary.enabled) {
-    add('Третинна труба (tertiary)', 1, Math.PI * 1.6, Math.max(14, innerW * 0.8), 0.15, 'нерж. 1.5 мм', `${cfg.combustion.tertiary.holeCount}×Ø${cfg.combustion.tertiary.holeDiameterCm} см`, 'tube');
+    const fTert = fitByKey.tertiary;
+    const tertNote = `${cfg.combustion.tertiary.holeCount}×Ø${cfg.combustion.tertiary.holeDiameterCm} см` + (fTert ? (lang === 'en' ? `; axial float ${fTert.floatMm} mm, hole D${fTert.holeMm} mm` : `; осьовий хід ${fTert.floatMm} мм, отвір Ø${fTert.holeMm} мм`) : '');
+    const tertP = add('Третинна труба (tertiary)', 1, Math.PI * 1.6, Math.max(14, innerW * 0.8), 0.15, 'нерж. 1.5 мм', tertNote, 'tube');
+    tertP.fitRef = fTert?.id || null;
   }
   if (cfg.combustion && cfg.combustion.catalyst && cfg.combustion.catalyst.enabled) {
     add('Каталітичний стільник', 1, cfg.chimney.diameterCm, cfg.chimney.diameterCm, 2.5, 'каталізатор', `${cfg.combustion.catalyst.cellsPerCm2 || 62} cell/cm²`, 'purchased');
@@ -218,8 +427,12 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
   const cd = Math.max(10, d - steelCm * 2);
   const linerTopY = Math.max(steelCm * 4, Math.min(h - steelCm * 2 - insT, cfg.baffle.heightCm - steelCm));
   const brickH = Math.max(10, linerTopY - steelCm - insT - brickT);
-  add('Шамот — дно', 1, cw - insT * 2, cd - insT * 2, brickT, 'шамот');
-  add('Шамот — стіни (Л/П/З)', 3, brickH, Math.max(10, cd - insT * 2), brickT, 'шамот', 'Л + П + задня');
+  const fBrick = fitByKey.brick;
+  const brickGapNote = fBrick ? (lang === 'en' ? `gap ${fBrick.gapMm} mm/side` : `зазор ${fBrick.gapMm} мм/бік`) : '';
+  const brickFloorP = add('Шамот — дно', 1, cw - insT * 2 - (fBrick ? fBrick.gapMm / 5 : 0), cd - insT * 2 - (fBrick ? fBrick.gapMm / 5 : 0), brickT, 'шамот', brickGapNote);
+  brickFloorP.fitRef = fBrick?.id || null; brickFloorP.tolMm = fBrick ? 2 : null;
+  const brickWallP = add('Шамот — стіни (Л/П/З)', 3, brickH, Math.max(10, cd - insT * 2) - (fBrick ? fBrick.gapMm / 5 : 0), brickT, 'шамот', ['Л + П + задня', brickGapNote].filter(Boolean).join('; '));
+  brickWallP.fitRef = fBrick?.id || null; brickWallP.tolMm = fBrick ? 2 : null;
   if (insT > 0) add('Ізоляція топки (4 сторони)', 4, cw, linerTopY - steelCm, insT, 'vermiculite/CFB');
   // Димохід
   if (isRear) {
@@ -284,12 +497,16 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
   const insMass = parts.filter(p => /vermiculite|CFB|вермикуліт/.test(p.mat)).reduce((s, p) => s + p.massKg * p.qty, 0);
   const cutParts = parts.filter(p => METAL_RX.test(p.mat) && (p.kind === 'sheet' || p.kind === 'bar' || p.kind === 'tube'));
   const cutAreaCm2 = cutParts.reduce((s, p) => s + p.areaCm2 * p.qty, 0);
-  const weldCm = parts.reduce((s, p) => s + p.weldCm * p.qty, 0);
   const physics = physicsResult || PhysicsModel.evaluate(cfg);
+  const fitIssues = fitPlan.rows.filter(r => r.status === 'fix').length;
 
   return {
     estimate: true,
+    stationary: true, // фізика — стаціонарна модель (transitionDisclaimer), не розпал/дозавантаження
     parts,
+    weldPlan,
+    fitPlan,
+    fitIssues,
     totals: {
       steelMassKg: round(steelMass, 1),
       brickMassKg: round(brickMass, 1),
@@ -298,7 +515,9 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
       totalMassKg: round(steelMass + brickMass + glassMass + insMass, 1),
       steelAreaM2: round(cutAreaCm2 / 10000, 2),
       cutAreaM2: round((cutAreaCm2 * 1.12) / 10000, 2), // +12% на розкладку металу (nesting)
-      weldMeters: round(weldCm / 100, 1),
+      // Джерело — план швів (12 груп ISO 2553), а не сума per-деталь weldCm:
+      // деталі поза планом (напр. нижній вхід) у офіційний підсумок не входять.
+      weldMeters: weldPlan.totalM,
       purchasedCount: parts.filter(p => p.kind === 'purchased').reduce((s, p) => s + p.qty, 0),
       partCount: parts.reduce((s, p) => s + p.qty, 0),
     },
@@ -318,9 +537,14 @@ export function bomToCsv(bom, lang = 'uk') {
     ? { sheet: 'sheet', bar: 'bar', tube: 'developed', purchased: 'purchased' }
     : { sheet: 'лист', bar: 'планка', tube: 'розгортка', purchased: 'покупна' };
   const esc = (v) => { const s = String(v == null ? '' : v); return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const tx = PROD_TXT[lang] || PROD_TXT.uk;
+  const noteOf = (p) => {
+    const tol = p.tolMm != null ? `±${p.tolMm} ${tx.tolUnit}` : '';
+    return [p.note, p.weldRef, p.fitRef, tol].filter(Boolean).join('; ');
+  };
   const rows = bom.parts.map((p) => [
     p.name, p.qty, p.wCm, p.hCm, p.tCm, kindTxt[p.kind] || p.kind,
-    (p.kind === 'purchased' ? '' : p.areaCm2), p.massKg, p.mat, p.weldCm, p.note,
+    (p.kind === 'purchased' ? '' : p.areaCm2), p.massKg, p.mat, p.weldCm, noteOf(p),
   ].map(esc).join(','));
   // Підсумок — теж рівно 11 полів (як заголовок і кожен рядок деталі): решта
   // колонок порожні, а зведення тексту йде в останню (Примітка/Note), інакше
@@ -330,7 +554,13 @@ export function bomToCsv(bom, lang = 'uk') {
     ? `steel ${bom.totals.steelMassKg} kg, brick ${bom.totals.brickMassKg} kg, glass ${bom.totals.glassMassKg} kg, cut ${bom.totals.cutAreaM2} m2, weld ${bom.totals.weldMeters} m, purchased ${bom.totals.purchasedCount} pcs, total ${bom.totals.totalMassKg} kg (estimate)`
     : `сталь ${bom.totals.steelMassKg} кг, шамот ${bom.totals.brickMassKg} кг, скло ${bom.totals.glassMassKg} кг, різ ${bom.totals.cutAreaM2} м2, шов ${bom.totals.weldMeters} м, покупних ${bom.totals.purchasedCount} шт, загалом ${bom.totals.totalMassKg} кг (оцінка)`;
   const totalsRow = [lang === 'en' ? 'TOTAL' : 'РАЗОМ', '', '', '', '', '', '', '', '', '', summary].map(esc).join(',');
-  return [head, ...rows, totalsRow].join('\n');
+  // Виробничий шар (блок G): ще 2 рядки по 11 полів — довідка про допуски й
+  // дисклеймер стаціонарної моделі. Ті самі 11 колонок, решта полів порожні
+  // (як і в рядку РАЗОМ), текст — в останньому полі (Примітка/Note).
+  const S = STR[lang] || STR.uk;
+  const tolRow = [tx.csvTolLabel, '', '', '', '', '', '', '', '', '', tx.csvTolerances].map(esc).join(',');
+  const noteRow = [tx.csvNoteLabel, '', '', '', '', '', '', '', '', '', S.transitionDisclaimerShort].map(esc).join(',');
+  return [head, ...rows, totalsRow, tolRow, noteRow].join('\n');
 }
 
 // DXF R12 (LINE + TEXT) — розкладка плоских деталей для плазми/лазера.
@@ -389,6 +619,13 @@ export function buildDrawingSVG(cfg, lang = 'uk') {
   const lbIntake = lang === 'en' ? 'bottom intake' : 'нижній вхід';
   const isRearView = cfg.chimney?.outlet === 'rear';
   const rl = rearOutletLayout(cfg);
+  // Виробничий шар (блок G): план швів/посадок — джерело виносок ISO 2553,
+  // таблиці посадок і технічних вимог на кресленні.
+  const weldPlan = buildWeldPlan(cfg);
+  const fitPlan = buildFitPlan(cfg);
+  const tx = PROD_TXT[lang] || PROD_TXT.uk;
+  const bomForMass = buildBOM(cfg, null, lang);
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   // Нижній канал secondary малюємо на всіх видах: інакше креслення й BOM
   // розійшлися б на цілий вузол під днищем (і монтажник приварив би ніжки
   // там, де має проходити канал).
@@ -431,10 +668,10 @@ export function buildDrawingSVG(cfg, lang = 'uk') {
     ${bi.buildable ? `<rect x="${fx0 + fw / 2 - px(bi.ductW / 2)}" y="${sy(L)}" width="${px(bi.ductW)}" height="${px(bi.ductH)}" fill="#eafaf0" stroke="#22c55e" stroke-width="1"/>
     <rect x="${fx0 + fw / 2 - px(bi.slotW / 2)}" y="${sy(L - (bi.ductH - bi.slotH) / 2)}" width="${px(bi.slotW)}" height="${px(bi.slotH)}" fill="#fff" stroke="#22c55e" stroke-width="1" stroke-dasharray="3 2"/>
     <text x="${fx0 + fw / 2 + px(bi.ductW / 2) + 4}" y="${sy(L - bi.ductH / 2) + 3}" font-size="9" fill="#22c55e">${lbIntake} ${bi.slotW}×${bi.slotH} ${u}</text>` : ''}
-    ${dimLine(fx0, floorY + 20, fx0 + fw, floorY + 20, `W ${W} ${u}`, 'top')}
-    ${dimLine(fx0 + fw + 20, sy(L), fx0 + fw + 20, sy(L + H), `${lbBody} ${H} ${u}`, 'side')}
-    ${L > 0 ? dimLine(fx0 + fw + 48, sy(0), fx0 + fw + 48, sy(L + H), `${lbTotal} ${H + L} ${u}`, 'side') : ''}
-    ${L > 0 ? dimLine(fx0 - 22, sy(0), fx0 - 22, sy(L), `${lbLegs} ${L} ${u}`, 'side') : ''}
+    ${dimLine(fx0, floorY + 20, fx0 + fw, floorY + 20, `W ${W} ${u} ±${tolFor(ISO13920_B, W * 10)}`, 'top')}
+    ${dimLine(fx0 + fw + 20, sy(L), fx0 + fw + 20, sy(L + H), `${lbBody} ${H} ${u} ±${tolFor(ISO13920_B, H * 10)}`, 'side')}
+    ${L > 0 ? dimLine(fx0 + fw + 48, sy(0), fx0 + fw + 48, sy(L + H), `${lbTotal} ${H + L} ${u} ±${tolFor(ISO13920_B, (H + L) * 10)}`, 'side') : ''}
+    ${L > 0 ? dimLine(fx0 - 22, sy(0), fx0 - 22, sy(L), `${lbLegs} ${L} ${u} ±${tolFor(ISO13920_B, L * 10)}`, 'side') : ''}
   `;
   // ---- SIDE VIEW ---- (лівий край = ЗАД печі, як і верхній край виду зверху)
   // Задній патрубок малюється ліворуч від виду, тож зсуваємо вид і на ту саму
@@ -463,7 +700,7 @@ export function buildDrawingSVG(cfg, lang = 'uk') {
     ${bi.buildable ? `<rect x="${sx0}" y="${sy(L)}" width="${sw}" height="${px(bi.ductH)}" fill="#eafaf0" stroke="#22c55e" stroke-width="1"/>
     <text x="${sx0 + sw - 3}" y="${sy(L - bi.ductH) - 3}" text-anchor="end" font-size="9" fill="#22c55e">${lbIntake} ${bi.ductW}×${bi.ductH} ${u}</text>` : ''}
     ${rearSide}
-    ${dimLine(sx0, floorY + 20, sx0 + sw, floorY + 20, `D ${D} ${u}`, 'top')}
+    ${dimLine(sx0, floorY + 20, sx0 + sw, floorY + 20, `D ${D} ${u} ±${tolFor(ISO13920_B, D * 10)}`, 'top')}
   `;
   // ---- TOP VIEW ---- (перед унизу, зад/димохід — вище)
   // Той самий зсув по вертикалі: патрубок заднього виходу виходить ЗА задній
@@ -491,10 +728,58 @@ export function buildDrawingSVG(cfg, lang = 'uk') {
     ${dimLine(fx0, ty0 + sw + 20, fx0 + fw, ty0 + sw + 20, `W ${W} ${u}`, 'top')}
   `;
 
-  // +30 px праворуч для заднього виходу: розмірна лінія «Y виходу …» довша за
-  // стандартну плашку й інакше вилазила б за межі viewBox.
-  const totalW = margin * 2 + fw + 150 + sw + sideShift + (isRearView ? 30 : 0);
-  const totalH = ty0 + sw + 90;
+  // ---- ВИНОСКИ ЗВАРНИХ ШВІВ (ISO 2553) — компактний гліф на виді ----
+  // Колонка виносок ліворуч від фронтального виду: кожен W# зʼявляється тут
+  // (виноска) і ще раз у повній таблиці швів праворуч (тест: data-weld
+  // кожної групи трапляється щонайменше двічі).
+  const calloutX = fx0 - 18;
+  const calloutY0 = fy0 + 14;
+  const callouts = weldPlan.rows.map((r, i) => {
+    const ky = calloutY0 + i * 16;
+    return weldSymbolSVG(calloutX + 20, ky, calloutX, ky, { ...r, tail: r.id }, { refLen: 20, compact: true });
+  }).join('');
+
+  // ---- ПАНЕЛЬ ПРАВОРУЧ: таблиця швів + посадки + технічні вимоги ----
+  const panelX = sx0 + sw + 100;
+  const panelW = 500;
+  let py = fy0;
+  const weldRowsSvg = weldPlan.rows.map((r) => {
+    const y = py; py += 24;
+    const full = weldSymbolSVG(panelX + 96, y, panelX + 8, y, { ...r, tail: r.process }, { refLen: 88, compact: false });
+    const nm = tx.weld[r.key] || r.key;
+    return `${full}<text x="${panelX + 200}" y="${y + 3}" font-size="10" fill="#172033">${nm}</text><text x="${panelX + panelW}" y="${y + 3}" text-anchor="end" font-size="10" fill="#555">${round(r.lengthCm / 100, 2)} ${tx.unitM}</text>`;
+  }).join('');
+  const weldsTop = fy0 - 18;
+  py += 6;
+  const totalRowY = py; py += 22;
+  const fitsTop = py;
+  py += 20;
+  const fitRowsSvg = fitPlan.rows.map((r) => {
+    const y = py; py += 14;
+    const fn = tx.fit[r.key];
+    const txt = fn ? fn(r) : r.key;
+    const color = r.status === 'fix' ? '#b42318' : '#172033';
+    const mark = r.status === 'fix' ? '⚠ ' : '';
+    return `<text x="${panelX}" y="${y}" font-size="8.6" fill="${color}">${mark}${esc(txt)}</text>`;
+  }).join('');
+  py += 10;
+  const notesTop = py;
+  py += 20;
+  const notesSvg = tx.notes.map((n) => { const y = py; py += 13; return `<text x="${panelX}" y="${y}" font-size="8.6" fill="#333">${esc(n)}</text>`; }).join('');
+  const panelBottom = py + 8;
+
+  // ---- ШТАМП (title block) — на всю ширину, з дисклеймером стаціонарної моделі ----
+  const massKg = bomForMass.totals.totalMassKg;
+  const tbY = Math.max(panelBottom, ty0 + sw + 20) + 30;
+  const totalW = Math.max(margin * 2 + fw + 150 + sw + sideShift + (isRearView ? 30 : 0), panelX + panelW + margin);
+  const titleBlock = `
+    <line x1="${margin}" y1="${tbY}" x2="${totalW - margin}" y2="${tbY}" stroke="#172033" stroke-width="1"/>
+    <text x="${margin}" y="${tbY + 16}" font-size="11" font-weight="bold" fill="#172033">${tx.tb.title}</text>
+    <text x="${margin}" y="${tbY + 32}" font-size="9" fill="#555">${tx.tb.steel} ${steelMm} mm · ${tx.tb.mass} ${massKg} kg · ${tx.tb.scale} · ${tx.tb.date} ${new Date().toLocaleDateString()}</text>
+    <text x="${margin}" y="${tbY + 48}" font-size="9.5" font-style="italic" fill="#8a4b00">${esc((STR[lang] || STR.uk).transitionDisclaimerShort)}</text>
+  `;
+  const totalH = tbY + 60;
+
   const title = lang === 'en' ? 'Woodstove 2 — technical drawing (cm)' : 'Woodstove 2 — технічне креслення (см)';
   const sub = lang === 'en'
     ? `steel ${steelMm} mm · firebrick ${brickT} cm · ${new Date().toLocaleDateString()}`
@@ -509,5 +794,14 @@ export function buildDrawingSVG(cfg, lang = 'uk') {
     <text x="${margin}" y="${30}" font-size="14" font-weight="bold" fill="#172033">${title}</text>
     <text x="${margin}" y="${48}" font-size="10" fill="#666">${sub}</text>
     ${front}${side}${top}
+    ${callouts}
+    <text x="${panelX}" y="${weldsTop}" font-size="11" font-weight="bold" fill="#172033">${tx.weldsTitle}</text>
+    ${weldRowsSvg}
+    <text x="${panelX}" y="${totalRowY}" font-size="10" font-weight="bold" fill="#172033">${tx.total}: ${weldPlan.totalM} ${tx.unitM}</text>
+    <text x="${panelX}" y="${fitsTop}" font-size="11" font-weight="bold" fill="#172033">${tx.fitsTitle}</text>
+    ${fitRowsSvg}
+    <text x="${panelX}" y="${notesTop}" font-size="11" font-weight="bold" fill="#172033">${tx.notesTitle}</text>
+    ${notesSvg}
+    ${titleBlock}
   </svg>`;
 }

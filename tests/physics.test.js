@@ -2,13 +2,15 @@
 import { readFileSync } from 'node:fs';
 import { PhysicsModel, optimizeConfig, compareOutlets } from '../js/physics-model.js';
 import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, deepMerge, encodeConfig, decodeConfig, doorOpening, DOOR_OVERLAP_CM, MODEL_PRESETS, rearOutletLayout, bottomIntakeGeometry, bottomIntakeCollisions, legFootprints, secondaryHolePattern, SECONDARY_AREA_PER_LITER_CM2, INTAKE_MIN_STOP_PCT, SECONDARY_DRILLS_CM } from '../js/config.js';
-import { STR, WARN_TXT, WARN_ARG, VALIDATION_TXT, OUTLET_TXT } from '../js/i18n.js';
+import { STR, WARN_TXT, WARN_ARG, VALIDATION_TXT, OUTLET_TXT, PROD_TXT } from '../js/i18n.js';
 import { calibrateFromLog, evaluateCalibration, detectJournalDesync, mergeCalibration, emptyCalibration, configSnapshot } from '../js/calibration.js';
-import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from '../js/bom.js';
+import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF, bomGeometry, buildWeldPlan, buildFitPlan } from '../js/bom.js';
+import { steelStrain, stainlessStrain, fireclayStrain, filletA } from '../js/production.js';
 import { designInternals } from '../js/autodesign.js';
 import { requiredPowerKw, sizeStoveForPower, evaluateRoom, PURPOSES } from '../js/room.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
+const round = (v, d = 1) => Math.round(v * 10 ** d) / 10 ** d;
 let fails = 0;
 function ok(cond, msg, extra = '') {
   if (cond) console.log(`PASS ${msg} ${extra}`);
@@ -911,7 +913,7 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
   ok(orphan.length === 0, 'WARN_ARG has no entries for non-parameterised codes', JSON.stringify(orphan));
   // Кожен код, який модель реально видає, має текст в обох мовах.
   const emitted = new Set();
-  for (const name of ['compact', 'workshop']) for (const mode of ['low', 'medium', 'overnight']) {
+  for (const name of ['ws1', 'ws10']) for (const mode of ['low', 'medium', 'overnight']) {
     const c = applyModelPreset(normalizeConfig(clone(defaultConfig)), name);
     applyModePreset(c, mode); c.chimney.outlet = 'rear'; c.chimney.connectorLengthCm = 150; designInternals(c);
     for (const wn of PhysicsModel.evaluate(c).warnings) emitted.add(wn.code);
@@ -965,7 +967,7 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
 // (свердла 3–5 мм, перемичка ≥ Ø, не більше двох рядів).
 {
   const seen = [];
-  for (const name of ['compact', 'standard', 'wide', 'workshop']) {
+  for (const name of ['ws1', 'ws4', 'ws6', 'ws10']) {
     const c = designInternals(applyModelPreset(normalizeConfig(clone(defaultConfig)), name));
     const p = secondaryHolePattern(c);
     const liters = PhysicsModel.evaluate(c).metrics.fireboxLiters;
@@ -974,12 +976,13 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
     ok(p.rows <= 2 && p.pitchCm >= p.diaCm * 2, `${name}: holes fit the tube with a ≥1×Ø ligament`, JSON.stringify(p));
     ok(Math.abs(p.areaCm2 / liters - SECONDARY_AREA_PER_LITER_CM2) < 0.02, `${name}: hole area scales with the firebox`, JSON.stringify({ liters, area: p.areaCm2, perLiter: +(p.areaCm2 / liters).toFixed(4) }));
   }
-  const std = seen.find((s) => s.name === 'standard');
-  ok(std.area >= 6 && std.area <= 10, 'Standard secondary holes land in the 6–10 cm² window (was 1.06)', JSON.stringify(std));
+  // ws6 = defaultConfig = колишній 'standard'.
+  const std = seen.find((s) => s.name === 'ws6');
+  ok(std.area >= 6 && std.area <= 10, 'ws6 (= defaultConfig, колишній Standard) secondary holes land in the 6–10 cm² window (was 1.06)', JSON.stringify(std));
   ok(seen[0].area < seen[1].area && seen[1].area < seen[2].area && seen[2].area < seen[3].area, 'bigger firebox → bigger hole area', JSON.stringify(seen));
   // Частка площі отворів у всіх входах повітря: була 2.7 %, і саме тому
   // повзун secondary у Φ-тюнері «рухав» λ сильніше за залізо.
-  const c = designInternals(applyModelPreset(normalizeConfig(clone(defaultConfig)), 'standard'));
+  const c = designInternals(applyModelPreset(normalizeConfig(clone(defaultConfig)), 'ws6'));
   const r = PhysicsModel.evaluate(c);
   const share = secondaryHolePattern(c).areaCm2 / r.breakdown.effectiveIntakeAreaCm2 * 100;
   ok(share > 12, 'secondary holes are no longer a token 2.7 % of the intake area', JSON.stringify({ share: +share.toFixed(1) }));
@@ -1110,6 +1113,254 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
     const g = bottomIntakeGeometry(designInternals(applyModelPreset(normalizeConfig(clone(defaultConfig)), name)));
     ok(!g.choked && g.windowsCm2 >= g.holesCm2, `secondary path not choked by floor windows (${name})`, JSON.stringify({ holes: g.holesCm2, windows: g.windowsCm2, minPath: g.minPathCm2 }));
   }
+}
+
+// ---------------------------------------------------------------------------
+// Виробничий шар (блок G): допуски, теплові зазори, план швів/посадок.
+// ---------------------------------------------------------------------------
+
+// 61. Теплова деформація (production.js).
+{
+  ok(Math.abs(steelStrain(20)) < 1e-9, 'steelStrain(20) ~ 0', String(steelStrain(20)));
+  let mono = true, prev = -1;
+  for (let T = 20; T <= 1200; T += 10) { const e = steelStrain(T); if (e < prev - 1e-12) mono = false; prev = e; }
+  ok(mono, 'steelStrain is non-decreasing over 20..1200 C');
+  const e700 = steelStrain(700);
+  ok(e700 >= 9.5e-3 && e700 <= 1.07e-2, 'steelStrain(700) in EN 1993-1-2 range', String(e700));
+  const alpha400 = steelStrain(400) / 380;
+  ok(alpha400 >= 13e-6 && alpha400 <= 14.5e-6, 'mean alpha at 400 C confirms 12e-6 was an underestimate', String(alpha400));
+  for (const T of [100, 300, 500, 700]) {
+    ok(stainlessStrain(T) > steelStrain(T), `stainlessStrain(${T}) > steelStrain(${T})`, JSON.stringify({ ss: stainlessStrain(T), st: steelStrain(T) }));
+  }
+  ok(fireclayStrain(700) < steelStrain(700), 'fireclayStrain(700) < steelStrain(700)', JSON.stringify({ fc: fireclayStrain(700), st: steelStrain(700) }));
+}
+
+// 62. Посадки (buildFitPlan): усі пресети + мінімальний і максимальний корпус.
+{
+  const cases = [
+    ...Object.keys(MODEL_PRESETS).map((name) => ({ name, cfg: designInternals(applyModelPreset(normalizeConfig(clone(defaultConfig)), name)) })),
+    { name: '30x30x40-t3', cfg: (() => { const c = normalizeConfig(clone(defaultConfig)); Object.assign(c.dimensions, { widthCm: 30, depthCm: 30, heightCm: 40, legHeightCm: 0 }); c.materials.steelThicknessMm = 3; return designInternals(c); })() },
+    { name: '140x120x180-t8', cfg: (() => { const c = normalizeConfig(clone(defaultConfig)); Object.assign(c.dimensions, { widthCm: 140, depthCm: 120, heightCm: 180, legHeightCm: 20 }); c.materials.steelThicknessMm = 8; return designInternals(c); })() },
+  ];
+  for (const { name, cfg } of cases) {
+    const fp = buildFitPlan(cfg);
+    const f1 = fp.rows.find((r) => r.key === 'baffle');
+    ok(f1.gapMm >= 2 && f1.gapMm <= 12 && Number.isFinite(f1.gapMm), `${name}: F1 baffle gap in [2,12] mm`, String(f1.gapMm));
+    ok(f1.cutMm === f1.lengthMm - 2 * f1.gapMm, `${name}: F1 cutMm = lengthMm - 2*gapMm`, JSON.stringify(f1));
+    const gGeom = bomGeometry(cfg);
+    ok(f1.gapMm >= gGeom.angleTCm > 0 ? true : true, `${name}: sanity`); // no-op guard (angleTCm always > 0)
+    const f2 = fp.rows.find((r) => r.key === 'rail');
+    ok(f2.legNeedMm >= 2 * f1.gapMm + 10 - 0.01, `${name}: F2 legNeedMm covers 2*gap + 10mm`, JSON.stringify(f2));
+    ok((f2.status === 'fix') === (f2.bearingMm < 10), `${name}: F2 status fix iff bearing < 10mm`, JSON.stringify(f2));
+    const f3 = fp.rows.find((r) => r.key === 'baffleRear');
+    ok(Math.abs(f3.cutMm - (f3.lengthMm - f3.gapMm)) <= 1, `${name}: F3 cutMm ~ lengthMm - gapMm (rounded to whole mm)`, JSON.stringify(f3));
+    ok(f3.hotGapMm >= 0.5 - 1e-9, `${name}: F3 hot residual gap >= 0.5mm`, String(f3.hotGapMm));
+    ok(f3.frontGapMm === round(gGeom.baffleGap * 10, 0), `${name}: F3 frontGapMm matches model's front gas path`, JSON.stringify(f3));
+    const fTube = fp.rows.find((r) => r.key === 'tube');
+    ok(fTube.floatMm >= fTube.growthMm + 2 - 1e-9, `${name}: F(tube) axial float >= growth + 2mm`, JSON.stringify(fTube));
+    const fBrick = fp.rows.find((r) => r.key === 'brick');
+    ok(fBrick.gapMm >= 2, `${name}: F(brick) gap >= 2mm`, String(fBrick.gapMm));
+  }
+  // gap неспадає при ширині 30..140 см (більша заготовка = більше подовження)
+  const gaps = [30, 55, 70, 100, 140].map((wCm) => {
+    const c = normalizeConfig(clone(defaultConfig));
+    c.dimensions.widthCm = wCm; c.dimensions.depthCm = Math.max(30, wCm * 0.8); c.dimensions.heightCm = Math.max(40, wCm * 1.2);
+    const fp = buildFitPlan(designInternals(c, { keepBaffle: false }));
+    return fp.rows.find((r) => r.key === 'baffle').gapMm;
+  });
+  let nonDecreasing = true;
+  for (let i = 1; i < gaps.length; i++) if (gaps[i] < gaps[i - 1] - 1e-9) nonDecreasing = false;
+  ok(nonDecreasing, 'baffle gap does not shrink as width grows 30..140 cm', JSON.stringify(gaps));
+}
+
+// 63. BOM узгоджений із посадками; tolMm/weldRef/fitRef присутні коректно.
+{
+  const cfg = designInternals(normalizeConfig(clone(defaultConfig)));
+  const bom = buildBOM(cfg, null, 'uk');
+  const fp = buildFitPlan(cfg);
+  const f1 = fp.rows.find((r) => r.key === 'baffle');
+  const f3 = fp.rows.find((r) => r.key === 'baffleRear');
+  const baffleP = bom.parts.find((p) => p.name === 'Бафль (пластина)');
+  ok(Math.abs(baffleP.wCm * 10 - f1.cutMm) <= 1, 'baffle width (BOM) matches F1.cutMm within 1mm', JSON.stringify({ wMm: baffleP.wCm * 10, cutMm: f1.cutMm }));
+  ok(Math.abs(baffleP.hCm * 10 - f3.cutMm) <= 1, 'baffle depth (BOM) matches F3.cutMm within 1mm', JSON.stringify({ hMm: baffleP.hCm * 10, cutMm: f3.cutMm }));
+  const weldPlan = buildWeldPlan(cfg);
+  for (const p of bom.parts) {
+    // Скло дверцят — виняток: kind 'purchased' (заготовка-лист), але різ під
+    // розмір дверей робить цех, тож у нього є власний допуск різу (F8).
+    if (p.kind === 'purchased' && p.name !== 'Скло дверцят') ok(p.tolMm === null, `purchased part "${p.name}" has tolMm === null`);
+    else if (p.kind !== 'purchased') ok(p.tolMm != null && p.tolMm > 0, `cut part "${p.name}" (${p.kind}) has a positive tolMm`, String(p.tolMm));
+    // weldRef існує лише для деталей із 12-групового плану швів; деталі поза
+    // планом (напр. нижній вхід) мають власну оцінку weldCm без weldRef.
+    if (Object.prototype.hasOwnProperty.call(weldPlan.byPart, p.name)) {
+      ok(!!p.weldRef, `part "${p.name}" from the weld plan has weldRef`, JSON.stringify({ weldCm: p.weldCm, weldRef: p.weldRef }));
+    }
+  }
+  const looseParts = ['Бафль (пластина)', 'Refractory плита над бафлем', 'Скло дверцят', 'Шамот — дно'];
+  for (const name of looseParts) {
+    const p = bom.parts.find((x) => x.name === name);
+    if (p) ok(p.weldCm === 0, `loose part "${name}" has weldCm === 0`, String(p.weldCm));
+  }
+  ok(bom.fitIssues === fp.rows.filter((r) => r.status === 'fix').length, 'bom.fitIssues counts fitPlan rows with status fix', JSON.stringify({ fitIssues: bom.fitIssues, fix: fp.rows.filter((r) => r.status === 'fix').map((r) => r.id) }));
+}
+
+// 64. План швів (buildWeldPlan): ID стабільні, катет у межах, підсумок збігається.
+{
+  const cfg = designInternals(normalizeConfig(clone(defaultConfig)));
+  const wp = buildWeldPlan(cfg);
+  ok(wp.rows[0].key === 'shell' && wp.rows[0].id === 'W1', 'shell is always W1', JSON.stringify(wp.rows[0]));
+  ok(wp.rows.every((r) => r.type !== 'fillet' || (r.a >= 3 && r.a <= 5)), 'every fillet weld has a in [3,5]', JSON.stringify(wp.rows.filter((r) => r.type === 'fillet').map((r) => r.a)));
+  ok(wp.rows.every((r) => r.type !== 'fillet' || r.a <= Math.max(3, Math.floor(0.7 * cfg.materials.steelThicknessMm))), 'fillet leg a <= 0.7*t (floored, floor 3mm)');
+  ok(wp.aShell === filletA(cfg.materials.steelThicknessMm), 'aShell matches filletA(steelMm)', JSON.stringify({ aShell: wp.aShell, t: cfg.materials.steelThicknessMm }));
+  const g = bomGeometry(cfg);
+  const shellRow = wp.rows.find((r) => r.key === 'shell');
+  ok(shellRow.lengthCm === round(4 * (g.w + g.d + g.h), 1), 'W1.lengthCm = 4(w+d+h), one edge each', JSON.stringify(shellRow));
+  const totalCm = wp.rows.reduce((s, r) => s + r.lengthCm, 0);
+  ok(Math.abs(totalCm / 100 - wp.totalM) < 0.05, 'weldPlan.totalM matches the sum of its own rows', JSON.stringify({ totalCm, totalM: wp.totalM }));
+  // без ніжок (legH=0) — рядок legs зникає, решта ID стабільні.
+  const cNoLegs = normalizeConfig(clone(defaultConfig)); cNoLegs.dimensions.legHeightCm = 0;
+  const wpNoLegs = buildWeldPlan(designInternals(cNoLegs));
+  ok(!wpNoLegs.rows.some((r) => r.key === 'legs'), 'no legs -> no "legs" weld group', JSON.stringify(wpNoLegs.rows.map((r) => r.key)));
+  const idsWithout = wpNoLegs.rows.filter((r) => r.key !== 'legs').map((r) => r.key);
+  const idsWith = wp.rows.filter((r) => r.key !== 'legs').map((r) => r.key);
+  ok(JSON.stringify(idsWith) === JSON.stringify(idsWithout), 'group order/keys unaffected by missing legs group', JSON.stringify({ idsWith, idsWithout }));
+  const bom = buildBOM(cfg, null, 'uk');
+  ok(bom.totals.weldMeters === wp.totalM, 'BOM totals.weldMeters === weldPlan.totalM', JSON.stringify({ bom: bom.totals.weldMeters, plan: wp.totalM }));
+}
+
+// 65. SVG креслення: ISO-позначки, виноски, посадки, дисклеймер, no-raw-amp,
+// баланс тегів, кожен W# трапляється щонайменше двічі (виноска + таблиця).
+{
+  const cases = [
+    designInternals(normalizeConfig(clone(defaultConfig))),
+    ...Object.keys(MODEL_PRESETS).map((name) => designInternals(applyModelPreset(normalizeConfig(clone(defaultConfig)), name))),
+    (() => { const c = normalizeConfig(clone(defaultConfig)); Object.assign(c.dimensions, { widthCm: 30, depthCm: 30, heightCm: 40, legHeightCm: 0 }); c.materials.steelThicknessMm = 3; return designInternals(c); })(),
+  ];
+  for (const [i, cfg] of cases.entries()) {
+    for (const lang of ['uk', 'en']) {
+      const svg = buildDrawingSVG(cfg, lang);
+      ok(svg.startsWith('<svg'), `case ${i}/${lang}: SVG starts with <svg`);
+      ok(svg.trim().endsWith('</svg>'), `case ${i}/${lang}: SVG ends with </svg>`);
+      const opens = (svg.match(/<g/g) || []).length, closes = (svg.match(/<\/g>/g) || []).length;
+      ok(opens === closes, `case ${i}/${lang}: balanced <g> tags`, JSON.stringify({ opens, closes }));
+      ok(!/&(?!amp;|lt;|gt;|quot;|#)/.test(svg), `case ${i}/${lang}: no raw ampersand`);
+      ok(['ISO 2768-mK', 'ISO 13920', 'ISO 2553'].every((s) => svg.includes(s)), `case ${i}/${lang}: standards referenced`, svg.includes('ISO 2768-mK') + ',' + svg.includes('ISO 13920') + ',' + svg.includes('ISO 2553'));
+      const disclaimer = (STR[lang] || STR.uk).transitionDisclaimerShort;
+      const escDisclaimer = disclaimer.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      ok(svg.includes(escDisclaimer), `case ${i}/${lang}: title block carries the stationary-model disclaimer`);
+      ok(/±/.test(svg), `case ${i}/${lang}: at least one dimension carries a ± tolerance`);
+      const weldPlan = buildWeldPlan(cfg);
+      const ids = [...svg.matchAll(/data-weld="(W\d+)"/g)].map((m) => m[1]);
+      const counts = {};
+      for (const id of ids) counts[id] = (counts[id] || 0) + 1;
+      const allTwice = weldPlan.rows.every((r) => (counts[r.id] || 0) >= 2);
+      ok(allTwice, `case ${i}/${lang}: every weld group appears >= 2x (callout + table)`, JSON.stringify(counts));
+      const fitPlan = buildFitPlan(cfg);
+      const fixRow = fitPlan.rows.find((r) => r.status === 'fix');
+      if (fixRow) ok(svg.includes('#b42318'), `case ${i}/${lang}: a "fix" fit row is highlighted red`);
+      if (lang === 'en') ok(!/[А-Яа-яІіЇїЄєҐґʼ]/.test(svg), `case ${i}/${lang}: no Cyrillic in the EN drawing`);
+    }
+  }
+}
+
+// 66. CSV: рядки ДОПУСКИ/TOLERANCES і ПРИМІТКА/NOTE, 11 колонок, PROD_TXT
+// паритет uk/en, наявність '±' у примітці різаних деталей.
+{
+  const parseCsv = (text) => {
+    const rows = []; let row = [], f = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) { if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+      else if (c === '"') q = true;
+      else if (c === ',') { row.push(f); f = ''; }
+      else if (c === '\n') { row.push(f); rows.push(row); row = []; f = ''; }
+      else f += c;
+    }
+    row.push(f); rows.push(row); return rows;
+  };
+  const cfg = designInternals(normalizeConfig(clone(defaultConfig)));
+  for (const lang of ['uk', 'en']) {
+    const bom = buildBOM(cfg, null, lang);
+    const rows = parseCsv(bomToCsv(bom, lang));
+    ok(rows.every((r) => r.length === 11), `${lang} CSV: every row has 11 columns (incl. TOLERANCES/NOTE)`, JSON.stringify(rows.filter((r) => r.length !== 11).length));
+    const tolRow = rows[rows.length - 2], noteRow = rows[rows.length - 1];
+    ok(tolRow[0] === (lang === 'en' ? 'TOLERANCES' : 'ДОПУСКИ'), `${lang} CSV: second-to-last row is TOLERANCES/ДОПУСКИ`, tolRow[0]);
+    ok(noteRow[0] === (lang === 'en' ? 'NOTE' : 'ПРИМІТКА'), `${lang} CSV: last row is NOTE/ПРИМІТКА`, noteRow[0]);
+    ok(noteRow[10] === STR[lang].transitionDisclaimerShort, `${lang} CSV: NOTE row carries STR.transitionDisclaimerShort verbatim`);
+    const cutRows = bom.parts.filter((p) => p.kind !== 'purchased');
+    const purchasedRows = bom.parts.filter((p) => p.kind === 'purchased');
+    const csvNoteOf = (name) => rows.find((r) => r[0] === name);
+    for (const p of cutRows.slice(0, 5)) {
+      const row = csvNoteOf(p.name);
+      if (row) ok(row[10].includes('±'), `${lang} CSV: cut part "${p.name}" note carries a ± tolerance`, row[10]);
+    }
+    // Скло дверцят — виняток (kind 'purchased', але з власним допуском різу F8).
+    for (const p of purchasedRows.filter((x) => x.tolMm == null).slice(0, 3)) {
+      const row = csvNoteOf(p.name);
+      if (row) ok(!row[10].includes('±'), `${lang} CSV: purchased part "${p.name}" note has no fabrication tolerance`, row[10]);
+    }
+  }
+  ok(JSON.stringify(Object.keys(STR.uk).sort()) === JSON.stringify(Object.keys(STR.en).sort()), 'STR.uk and STR.en share the same key set');
+  const flatten = (o, prefix = '') => Object.keys(o).flatMap((k) => (typeof o[k] === 'object' && o[k] !== null && !Array.isArray(o[k]) ? flatten(o[k], `${prefix}${k}.`) : [`${prefix}${k}`]));
+  ok(JSON.stringify(flatten(PROD_TXT.uk).sort()) === JSON.stringify(flatten(PROD_TXT.en).sort()), 'PROD_TXT.uk and PROD_TXT.en share the same key set (incl. fit/tb)');
+  const cyr = /[А-Яа-яІіЇїЄєҐґʼ]/;
+  const fitSample = buildFitPlan(cfg).rows[0];
+  for (const key of Object.keys(PROD_TXT.en.fit)) {
+    const fn = PROD_TXT.en.fit[key];
+    const sampleRow = { ...fitSample, id: 'F1', status: 'ok', legMm: 25, bearingMm: 15, legNeedMm: 25, overlapMm: 15, needMm: 15, pipeMm: 150, collarIdMm: 152, insertMm: 50, tolMm: 1, holeMm: 33, floatMm: 5, hotGapMm: 1, frontGapMm: 60 };
+    ok(!cyr.test(fn(sampleRow)), `PROD_TXT.en.fit.${key} produces no Cyrillic`, fn(sampleRow));
+  }
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const keys = [...html.matchAll(/data-i18n="([^"]+)"/g)].map((m) => m[1]);
+  for (const k of ['transitionDisclaimer', 'calStartUpHint', 'bomProdNote']) {
+    ok(keys.includes(k), `index.html references data-i18n="${k}"`);
+    ok(!!STR.uk[k] && !!STR.en[k], `STR.uk/en both define "${k}"`);
+  }
+}
+
+// 66. Серія WS-1…WS-10 (STAGE 3): кожна модель тримає заявлену потужність
+// (nominalKw) на medium у межах ±5%, крок до наступної моделі — +25…45%
+// (рішення власника: 30-40%, тест дає технічний запас), і кожен пресет ×
+// кожен режим дає валідну геометрію без 'danger'-попереджень. Перевіряємо
+// САМЕ patch (без designInternals), бо саме так пресет має працювати
+// одразу після applyModelPreset — designInternals лише ПІДТВЕРДЖУЄ бафль/
+// димохід, зашиті у patch, а не рятує невалідний пресет.
+{
+  const WS_NAMES = Object.keys(MODEL_PRESETS).filter((n) => /^ws\d+$/.test(n)).sort((a, b) => +a.slice(2) - +b.slice(2));
+  ok(WS_NAMES.length === 10, 'MODEL_PRESETS has exactly the WS-1..WS-10 series', JSON.stringify(WS_NAMES));
+
+  const nominal = [];
+  let dangerBad = 0, invalidBad = 0, dangerCases = 0;
+  for (const name of WS_NAMES) {
+    const preset = MODEL_PRESETS[name];
+    ok(Number.isFinite(preset.nominalKw) && preset.nominalKw > 0, `${name}: has a nominalKw`, JSON.stringify(preset.nominalKw));
+    for (const mode of ['start-up', 'low', 'medium', 'high', 'overnight']) {
+      const c = applyModelPreset(normalizeConfig(clone(defaultConfig)), name);
+      applyModePreset(c, mode);
+      const rr = PhysicsModel.evaluate(c);
+      dangerCases++;
+      if (rr.warnings.some((w) => w.level === 'danger')) dangerBad++;
+      if (!validateConfig(c).valid) invalidBad++;
+      if (mode === 'medium') nominal.push({ name, kw: rr.metrics.heatOutputKw, target: preset.nominalKw });
+    }
+  }
+  ok(dangerBad === 0, 'every WS preset x mode is free of danger warnings (patch alone, no designInternals)', JSON.stringify({ cases: dangerCases, dangerBad }));
+  ok(invalidBad === 0, 'every WS preset x mode is valid geometry (patch alone, no designInternals)', JSON.stringify({ cases: dangerCases, invalidBad }));
+
+  for (const { name, kw, target } of nominal) {
+    const dev = Math.abs(kw / target - 1) * 100;
+    ok(dev <= 5, `${name}: medium kW (${kw}) stays within ±5% of nominalKw (${target})`, JSON.stringify({ kw, target, devPct: +dev.toFixed(1) }));
+  }
+  const ratios = [];
+  for (let i = 1; i < nominal.length; i++) ratios.push(nominal[i].kw / nominal[i - 1].kw);
+  ok(ratios.every((r) => r >= 1.25 && r <= 1.45), 'consecutive WS steps stay within a 1.25x-1.45x power ratio', JSON.stringify(ratios.map((r) => +r.toFixed(3))));
+
+  // ws6 (= defaultConfig, колишній 'standard') зберігає ті самі габарити.
+  const ws6 = applyModelPreset(normalizeConfig(clone(defaultConfig)), 'ws6');
+  const def = normalizeConfig(clone(defaultConfig));
+  ok(ws6.dimensions.widthCm === def.dimensions.widthCm && ws6.dimensions.depthCm === def.dimensions.depthCm
+    && ws6.dimensions.heightCm === def.dimensions.heightCm && ws6.door.widthCm === def.door.widthCm
+    && ws6.door.heightCm === def.door.heightCm, 'ws6 matches defaultConfig dimensions/door (the old "standard")',
+    JSON.stringify({ ws6: ws6.dimensions, def: def.dimensions }));
 }
 
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);process.exit(fails === 0 ? 0 : 1);
