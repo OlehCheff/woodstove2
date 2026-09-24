@@ -99,13 +99,27 @@
     <div class="row"><label><span data-i18n="phiSecondary">Secondary повітря (%)</span> <output id="operationSecondaryAirPct-v"></output></label><input type="range" id="operationSecondaryAirPct" min="10" max="95" step="1"></div>
     <div class="phi-gauge"><div class="phi-track"><div class="phi-band"></div><div class="phi-marker" id="phiMarker"></div></div><div class="phi-label" id="phiLabel">Φ —</div></div>
     <div class="phi-status" id="phiStatus">—</div>
+    <div class="hint" data-i18n="intakeNote">Повзун нижнього входу = слайдер «Secondary повітря». Відсоток повзуна — це ПОЛОЖЕННЯ, а не частка витрати: щілина й отвори стоять послідовно (опір ∝ 1/A²). Вплив слайдера на λ — припущення моделі (вага 0.35 у airMix проти ~20 % площі входів). Механічний упор на печі — 20 %.</div>
     <div class="btns"><button id="phiAuto" class="accent" data-i18n="phiAuto">Авто в зону (Φ≈0.45)</button></div>
   </div></details>
 
   <details open><summary data-i18n="secCombustion">Димохід / горіння</summary><div class="body">
     <div class="row"><label><span data-i18n="flueHeight">Висота димоходу (повна)</span> <output id="chimneyTotalHeightM-v"></output></label><input type="range" id="chimneyTotalHeightM" min="2" max="12" step="0.5"></div>
     <div class="row"><label><span data-i18n="flueBends">Вигинів димоходу</span> <output id="chimneyBends-v"></output></label><input type="range" id="chimneyBends" min="0" max="4" step="1"></div>
+    <div class="row"><label data-i18n="flueOutlet">Вихід труби</label>
+      <select id="chimneyOutlet">
+        <option value="top" data-i18n="outletTop">Верхній (прямий підйом)</option>
+        <option value="rear" data-i18n="outletRear">Задній (коліно / трійник)</option>
+      </select></div>
+    <div class="row"><label data-i18n="flueRoute">Куди йде димохід</label>
+      <select id="chimneyRoute">
+        <option value="up" data-i18n="routeUp">Над піччю (через стелю)</option>
+        <option value="wall" data-i18n="routeWall">У стінний димохід позаду</option>
+      </select></div>
+    <div class="row" id="connectorRow"><label><span data-i18n="connectorLength">Горизонтальний патрубок</span> <output id="chimneyConnectorLengthCm-v"></output></label><input type="range" id="chimneyConnectorLengthCm" min="15" max="150" step="5"></div>
+    <div class="hint" id="outletVerdict"></div>
     <div class="row check"><input type="checkbox" id="washAsSecondary"><label for="washAsSecondary" data-i18n="washAsSecondary">Air-wash як вторинне повітря</label></div>
+    <div class="row check"><input type="checkbox" id="bottomIntake"><label for="bottomIntake" data-i18n="bottomIntake">Нижній вхід secondary (повзун спереду)</label></div>
     <div class="row check"><input type="checkbox" id="tertiaryEnabled"><label for="tertiaryEnabled" data-i18n="tertiaryEnabled">Третинне повітря (tertiary)</label></div>
     <div class="row"><label><span data-i18n="tertiaryHoles">Отворів tertiary</span> <output id="tertiaryHoleCount-v"></output></label><input type="range" id="tertiaryHoleCount" min="2" max="30" step="1"></div>
     <div class="row check"><input type="checkbox" id="catalystEnabled"><label for="catalystEnabled" data-i18n="catalystEnabled">Каталізатор (honeycomb)</label></div>
@@ -163,6 +177,9 @@
       <div><span data-i18n="equivRatio">Надлишок повітря Φ</span><b id="m-equiv-ratio">—</b></div>
       <div><span data-i18n="exitFlueTemp">T димових газів (вихід)</span><b id="m-exit-flue">—</b></div>
       <div><span data-i18n="tertiaryAreaLbl">Площа tertiary</span><b id="m-tertiary-area">—</b></div>
+      <div><span data-i18n="intakeAreaLbl">Нижній вхід: відкрито / повна</span><b id="m-intake-area">—</b></div>
+      <div><span data-i18n="intakePathLbl">Secondary: шлях (послідовно)</span><b id="m-intake-path">—</b></div>
+      <div><span data-i18n="roomPipeGain">Тепло патрубка в кімнату</span><b id="m-room-pipe">—</b></div>
     </div>
   </div></details>
 

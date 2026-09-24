@@ -65,12 +65,23 @@ export const MODEL_PRESETS = {
 export const defaultConfig = {
   dimensions: { widthCm: 70, depthCm: 55, heightCm: 95, legHeightCm: 15 },
   materials: { steelThicknessMm: 5, firebrickThicknessCm: 4 },
-  chimney: { diameterCm: 15, heightCm: 120 },
+  // outlet/route/connectorLengthCm — див. rearOutletLayout нижче й
+  // OUTLET_TURNS у physics-model.js. Значення за замовчуванням дорівнює
+  // переможцю compareOutlets на цій самій печі (закріплено тестом 40):
+  // маршрут «над піччю» → верхній вихід без зайвих поворотів.
+  chimney: { diameterCm: 15, heightCm: 120, outlet: 'top', route: 'up', connectorLengthCm: 30 },
   baffle: { heightCm: 58, angleDeg: 6, frontGapCm: 6, airflowPct: 55 },
   primaryAir: { holeCount: 8, holeDiameterCm: 1.2, holeSpacingCm: 4, openPct: 52 },
+  // holeCount/holeDiameterCm — підібрані під топку ЦІЄЇ Ж печі тим самим
+  // правилом, що й autodesign (sizeSecondaryHoles): 46×Ø5 мм ≈ 9.0 см².
+  // Було 10×Ø7 мм, а autodesign ставив 15×Ø3 мм ≈ 1.06 см² — 2.7 % площі всіх
+  // входів повітря (див. SECONDARY_AREA_PER_LITER_CM2 нижче).
+  // bottomIntake — нижній вхід secondary (канал під днищем + повзун спереду);
+  // manifoldHeightCm — висота профілю цього каналу.
   secondaryAir: {
-    holeCount: 10, holeDiameterCm: 0.7, holeSpacingCm: 2.4,
+    holeCount: 46, holeDiameterCm: 0.5, holeSpacingCm: 2.4,
     channelWidthCm: 5, channelDepthCm: 4, preheatLengthCm: 55, manifoldHeightCm: 4,
+    bottomIntake: true,
   },
   airWash: {
     gapCm: 1.4, intakePct: 60, slotWidthPct: 94,
@@ -129,6 +140,9 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 // `+"abc"` дає NaN, а `??`/`== null` перевіряють лише null/undefined, не
 // NaN. safeNum ловить це явно й повертає безпечне значення за замовчуванням.
 const safeNum = (v, def) => { const n = +v; return Number.isFinite(n) ? n : def; };
+const PI_C = Math.PI;
+const round1 = (v) => Math.round(v * 10) / 10;
+const round2 = (v) => Math.round(v * 100) / 100;
 
 export function normalizeConfig(cfg) {
   cfg.dimensions.widthCm = clamp(+cfg.dimensions.widthCm || 70, 30, 140);
@@ -147,6 +161,15 @@ export function normalizeConfig(cfg) {
   cfg.chimney.heightCm = clamp(+cfg.chimney.heightCm || 120, 100, 150);
   cfg.chimney.totalHeightM = clamp(+cfg.chimney.totalHeightM || 5, 2, 12);
   cfg.chimney.bends = clamp(Math.round(+cfg.chimney.bends || 0), 0, 4);
+  // Вихід труби: 'top' (крізь кришку) або 'rear' (комір у задній панелі).
+  // Маршрут: 'up' (вертикаль над піччю крізь стелю) або 'wall' (у стінний
+  // димохід позаду). Будь-яке інше/пошкоджене значення — безпечний дефолт.
+  cfg.chimney.outlet = cfg.chimney.outlet === 'rear' ? 'rear' : 'top';
+  cfg.chimney.route = cfg.chimney.route === 'wall' ? 'wall' : 'up';
+  // Горизонтальний одностінний патрубок від печі до вертикалі. 15–150 см —
+  // фізичні межі UI; норма (СНиП 41-01/ДБН, NFPA 211) радить ≤40 см, тому
+  // довший патрубок дає попередження CONNECTOR_LONG, а не мовчазний клемп.
+  cfg.chimney.connectorLengthCm = clamp(Math.round(safeNum(cfg.chimney.connectorLengthCm, 30)), 15, 150);
 
   cfg.combustion ??= {};
   cfg.combustion.washAsSecondary = cfg.combustion.washAsSecondary !== false;
@@ -169,13 +192,19 @@ export function normalizeConfig(cfg) {
   cfg.primaryAir.holeSpacingCm = clamp(+cfg.primaryAir.holeSpacingCm || 4, 2, 8);
   cfg.primaryAir.openPct = clamp(safeNum(cfg.primaryAir.openPct, 52), 0, 100);
 
-  cfg.secondaryAir.holeCount = clamp(Math.round(+cfg.secondaryAir.holeCount || 10), 8, 60);
+  // Стеля 60 отворів була штучною: під топку 370 л (workshop) чесно потрібно
+  // ~30 см², тобто 154×Ø5 мм у два ряди. 240 — це межа від дурниці, а не
+  // «робочий діапазон» (крок і кількість рядів рахує secondaryHolePattern).
+  cfg.secondaryAir.holeCount = clamp(Math.round(+cfg.secondaryAir.holeCount || 10), 8, 240);
   cfg.secondaryAir.holeDiameterCm = clamp(+cfg.secondaryAir.holeDiameterCm || 0.7, 0.25, 5);
   cfg.secondaryAir.holeSpacingCm = clamp(+cfg.secondaryAir.holeSpacingCm || 2.4, 0.6, 6);
   cfg.secondaryAir.channelWidthCm = clamp(+cfg.secondaryAir.channelWidthCm || 5, 2, 12);
   cfg.secondaryAir.channelDepthCm = clamp(+cfg.secondaryAir.channelDepthCm || 4, 2, 10);
   cfg.secondaryAir.preheatLengthCm = clamp(+cfg.secondaryAir.preheatLengthCm || 55, 15, 140);
   cfg.secondaryAir.manifoldHeightCm = clamp(+cfg.secondaryAir.manifoldHeightCm || 4, 2, 10);
+  // Нижній вхід secondary (канал під днищем): типово увімкнений, вимикається
+  // лише явним false — пошкоджений конфіг не має мовчки лишати піч без нього.
+  cfg.secondaryAir.bottomIntake = cfg.secondaryAir.bottomIntake !== false;
 
   cfg.airWash.gapCm = clamp(+cfg.airWash.gapCm || 1.4, 0.5, 3);
   cfg.airWash.intakePct = clamp(safeNum(cfg.airWash.intakePct, 60), 0, 100);
@@ -241,6 +270,270 @@ export function normalizeConfig(cfg) {
   cfg.room.areaM2 = clamp(+cfg.room.areaM2 || 30, 2, 500);
   cfg.room.ceilingM = clamp(+cfg.room.ceilingM || 2.7, 2, 5);
   return cfg;
+}
+
+// Дверцята ПЕРЕКРИВАЮТЬ отвір на DOOR_OVERLAP_CM з кожного боку — інакше
+// ущільнювальному шнуру нема до чого притискатись. Раніше було навпаки:
+// openingW = doorW + 0.8, тобто отвір на 4 мм БІЛЬШИЙ за дверцята з кожного
+// боку — стулка провалювалась усередину, а шнур по периметру отвору не
+// затискався взагалі. Єдине джерело для 3D (stove-builder.js) і BOM (bom.js):
+// обидва мають будувати той самий отвір.
+export const DOOR_OVERLAP_CM = 1.5;
+
+// steelCm передає викликач: у 3D товщина листа додатково обмежена габаритами.
+export function doorOpening(cfg, steelCm) {
+  const w = +cfg.dimensions.widthCm;
+  const h = +cfg.dimensions.heightCm;
+  const doorW = Math.max(20, Math.min(+cfg.door.widthCm, w - steelCm * 4));
+  const doorH = Math.max(20, Math.min(+cfg.door.heightCm, h - steelCm * 4));
+  const openingW = clamp(doorW - DOOR_OVERLAP_CM * 2, 10, Math.max(10, w - steelCm * 2));
+  const openingH = clamp(doorH - DOOR_OVERLAP_CM * 2, 10, Math.max(10, h - steelCm * 2));
+  const openingBottom = Math.max(steelCm, h * 0.48 - openingH / 2);
+  const openingTop = Math.min(h - steelCm, openingBottom + openingH);
+  const sideW = Math.max(steelCm, (w - openingW) / 2);
+  return { doorW, doorH, openingW, openingH, openingBottom, openingTop, sideW };
+}
+
+// Геометрія ЗАДНЬОГО виходу — єдине джерело для 3D (stove-builder.js), BOM і
+// креслення (bom.js), валідатора (validateConfig) та оптимізатора
+// (physics-model.js:optimizeConfig). Комір мусить стояти ВИЩЕ поверненого
+// бафля разом із refractory-плитою над ним і нижче кришки; якщо ці дві умови
+// несумісні — fits === false, і задній вихід фізично неможливий (на корпусі
+// 40 см — завжди, на 50 см — приблизно в половині випадків).
+// Одиниці — сантиметри, початок координат — низ корпусу (без ніжок).
+export function rearOutletLayout(cfg) {
+  const w = +cfg?.dimensions?.widthCm || 70;
+  const d = +cfg?.dimensions?.depthCm || 55;
+  const h = +cfg?.dimensions?.heightCm || 95;
+  const steelMm = +cfg?.materials?.steelThicknessMm || 5;
+  // Та сама формула товщини листа, що й у stove-builder.js: на малій печі
+  // лист «підрізається» габаритами, інакше 8 мм у корпусі 30 см — це стіна.
+  const steelT = Math.min(steelMm / 10, w / 6, d / 6, h / 8);
+  const refrT = clamp(safeNum(cfg?.thermal?.baffleRefractoryThicknessCm, 3), 0, 8);
+  const chimR = (+cfg?.chimney?.diameterCm || 15) / 2;
+  const collarR = chimR * 1.08;
+  const innerD = Math.max(10, d - steelT * 2);
+  const gap = Math.min(+cfg?.baffle?.frontGapCm || 6, innerD * 0.45);
+  const baffleY = Math.max(steelT * 4, Math.min(h - steelT * 2, +cfg?.baffle?.heightCm || 58));
+  // Повернутий бафль піднімає свій ЗАДНІЙ край — саме він і заважає коміру.
+  const tilt = Math.max(0, Math.sin((+cfg?.baffle?.angleDeg || 0) * Math.PI / 180)) * Math.max(8, innerD - gap) / 2;
+  const minY = baffleY + tilt + steelT / 2 + refrT + collarR + 1;
+  const yCm = Math.max(minY, h - steelT - collarR - 2);
+  const connectorCm = clamp(Math.round(safeNum(cfg?.chimney?.connectorLengthCm, 30)), 15, 150);
+  const teeH = chimR * 2.6;
+  return {
+    yCm, chimR, collarR, steelT, connectorCm, teeH,
+    zBack: -d / 2,
+    teeZ: -d / 2 - connectorCm,
+    fits: yCm + collarR <= h - steelT,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// SECONDARY: отвори поперечної труби під бафлем
+// ---------------------------------------------------------------------------
+// Площа вторинних отворів масштабується від ОБСЯГУ ТОПКИ: від нього ж залежить
+// швидкість горіння, а отже й витрата повітря. 0.082 см²/л дає на Standard
+// (топка ≈98 л) 8.0 см² — середина оцінки 6–10 см², яку дає баланс повітря:
+// ≈2 кг/год дров × 6 кг повітря/кг × λ 2.2 ≈ 26 кг/год ≈ 22 м³/год, з них
+// ~20 % крізь трубу secondary при ~1.6 м/с у отворі (решта — primary і
+// air-wash, який у моделі теж рахується як вторинне повітря).
+// Старе правило (1 % обсягу, стеля 4 см²) давало 15×Ø3 мм = 1.06 см², тобто
+// 2.7 % площі ВСІХ входів повітря. Через це повзун secondary у Φ-тюнері рухав
+// у моделі λ 2.01→2.46 — залізо з такими отворами цього дати не могло.
+export const SECONDARY_AREA_PER_LITER_CM2 = 0.082;
+// Свердла, якими це реально свердлять. Беремо НАЙМЕНШЕ, яким потрібна
+// кількість отворів ще влазить в один ряд: багато дрібних струменів
+// перемішують газ краще за кілька великих.
+export const SECONDARY_DRILLS_CM = [0.3, 0.4, 0.5];
+// Перемичка між отворами ≥ 1.2×Ø (крок ≥ 2.2×Ø): інакше труба Ø32×1.5 рветься
+// по ряду отворів. Понад два ряди не робимо — це вже не труба, а решето.
+const HOLE_PITCH_FACTOR = 2.2;
+const MAX_HOLE_ROWS = 2;
+
+// Довжина поперечної труби — та сама формула, що в 3D (stove-builder.js),
+// щоб BOM, 3D і підбір отворів рахували один і той самий ряд.
+export function secondaryTubeLengthCm(cfg) {
+  const w = +cfg?.dimensions?.widthCm || 70;
+  const d = +cfg?.dimensions?.depthCm || 55;
+  const h = +cfg?.dimensions?.heightCm || 95;
+  const steelT = Math.min((+cfg?.materials?.steelThicknessMm || 5) / 10, w / 6, d / 6, h / 8);
+  return clamp(Math.max(10, w - steelT * 2) * 0.9, 16, 120);
+}
+
+// Підбір отворів під топку: найменше свердло, яким потрібна площа ще влазить
+// в один ряд; якщо не влазить і найбільшим — два ряди.
+export function sizeSecondaryHoles(fireboxLiters, tubeLenCm) {
+  const target = clamp(safeNum(fireboxLiters, 40) * SECONDARY_AREA_PER_LITER_CM2, 0.8, 60);
+  const len = clamp(safeNum(tubeLenCm, 60), 16, 120);
+  const last = SECONDARY_DRILLS_CM[SECONDARY_DRILLS_CM.length - 1];
+  let pick = { holeCount: 8, holeDiameterCm: last };
+  for (const dia of SECONDARY_DRILLS_CM) {
+    const perRow = Math.max(4, Math.floor(len / (dia * HOLE_PITCH_FACTOR)));
+    const count = Math.max(8, Math.round(target / (PI_C * (dia / 2) ** 2)));
+    pick = { holeCount: Math.min(count, perRow * MAX_HOLE_ROWS), holeDiameterCm: dia };
+    if (count <= perRow || dia === last) break;
+  }
+  return pick;
+}
+
+// Розкладка отворів для 3D і BOM (скільки рядів, який крок).
+export function secondaryHolePattern(cfg) {
+  const diaCm = clamp(safeNum(cfg?.secondaryAir?.holeDiameterCm, 0.4), 0.25, 5);
+  const count = clamp(Math.round(safeNum(cfg?.secondaryAir?.holeCount, 10)), 8, 240);
+  const tubeLenCm = secondaryTubeLengthCm(cfg);
+  const perRowMax = Math.max(4, Math.floor(tubeLenCm / (diaCm * HOLE_PITCH_FACTOR)));
+  const rows = Math.min(MAX_HOLE_ROWS, Math.max(1, Math.ceil(count / perRowMax)));
+  const perRow = Math.ceil(count / rows);
+  return {
+    count, diaCm, rows, perRow, tubeLenCm,
+    pitchCm: tubeLenCm / Math.max(1, perRow),
+    areaCm2: PI_C * (diaCm / 2) ** 2 * count,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// НИЖНІЙ ВХІД SECONDARY — канал під днищем (варіант «канал», не лоток)
+// ---------------------------------------------------------------------------
+// Ніжки лишаються привареними до 5-мм ДНИЩА: канал проходить МІЖ ними, а не
+// під ними. Суцільний лоток на весь слід печі відкинуто свідомо — ніжка,
+// приварена до 2-мм листа лотка, дає під ~780 Н (маса печі /4) згинні
+// ~170–290 МПа в листі, тобто межу текучості S235 ще до нагріву й динаміки.
+// Канал: поздовжній профіль по осі печі від передньої щілини назад +
+// поперечний колектор уздовж задньої кромки, з якого повітря йде крізь два
+// отвори в днищі в наявні стояки і далі в наявну поперечну трубу під бафлем.
+// ПІДІГРІВ у каналі (оцінка +20…90 °C) НЕ моделюється: нових коефіцієнтів
+// для нього немає, а на стелі combustionEff = 92 він лише підняв би втрати
+// в трубі. Див. REPORT §7.
+export const LEG_SIZE_CM = 5;   // профільна труба 50×50 (stove-builder + BOM)
+export const LEG_INSET_CM = 6;  // центр ніжки від краю корпусу
+// Механічний упор повзуна: нижче 20 % вторинне горіння задихається.
+export const INTAKE_MIN_STOP_PCT = 20;
+// Щілина = сталий множник від площі отворів. Мінімальної ширини НЕМАЄ
+// навмисно: у попередній специфікації поріг 1.5 см давав співвідношення
+// щілина/отвори 3.0 на compact і 1.5 на workshop, тобто однакові відсотки
+// повзуна означали різне на різних печах. При 1.5× щілина коштує ~17 % витрати
+// на повністю відкритому повзуні (послідовні опори ∝ 1/A²).
+export const INTAKE_SLOT_RATIO = 1.5;
+
+const rectOf = (cx, cz, sx, sz) => ({ x0: cx - sx / 2, x1: cx + sx / 2, z0: cz - sz / 2, z1: cz + sz / 2 });
+const rectsOverlap = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.z0 < b.z1 && b.z0 < a.z1;
+const rectInside = (outer, inner, tol = 0.01) =>
+  inner.x0 >= outer.x0 - tol && inner.x1 <= outer.x1 + tol && inner.z0 >= outer.z0 - tol && inner.z1 <= outer.z1 + tol;
+
+// Слід ніжок у плані (початок координат — центр печі, як у stove-builder).
+export function legFootprints(cfg) {
+  const w = +cfg?.dimensions?.widthCm || 70;
+  const d = +cfg?.dimensions?.depthCm || 55;
+  if (!(+cfg?.dimensions?.legHeightCm > 0)) return [];
+  return [[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([sx, sz]) =>
+    rectOf(sx * (w / 2 - LEG_INSET_CM), sz * (d / 2 - LEG_INSET_CM), LEG_SIZE_CM, LEG_SIZE_CM));
+}
+
+// Єдине джерело геометрії нижнього входу для 3D, BOM, фізики й валідатора.
+export function bottomIntakeGeometry(cfg) {
+  const w = +cfg?.dimensions?.widthCm || 70;
+  const d = +cfg?.dimensions?.depthCm || 55;
+  const h = +cfg?.dimensions?.heightCm || 95;
+  const legH = Math.max(0, safeNum(cfg?.dimensions?.legHeightCm, 0));
+  const steelT = Math.min((+cfg?.materials?.steelThicknessMm || 5) / 10, w / 6, d / 6, h / 8);
+  const chW = clamp(safeNum(cfg?.secondaryAir?.channelWidthCm, 5), 2, 12);
+  const chD = clamp(safeNum(cfg?.secondaryAir?.channelDepthCm, 4), 2, 10);
+  const manifoldH = clamp(safeNum(cfg?.secondaryAir?.manifoldHeightCm, 4), 2, 10);
+  const enabled = cfg?.secondaryAir?.bottomIntake !== false;
+  const holesCm2 = secondaryHolePattern(cfg).areaCm2;
+  const targetSlotCm2 = holesCm2 * INTAKE_SLOT_RATIO;
+
+  // Глибину поперечного колектора задає НІЖКА: він мусить пройти позаду неї.
+  // 6 − 2.5 − 0.5 = 3.0 см вільної смуги вздовж задньої кромки.
+  const ductD = Math.max(1, LEG_INSET_CM - LEG_SIZE_CM / 2 - 0.5);
+  // Під днищем лишаємо ≥2 см просвіту до підлоги (тепловий зазор, чистка).
+  const maxDuctH = Math.min(8, legH - 2);
+  const buildable = enabled && maxDuctH >= 2.5 && ductD > steelT + 0.5 && w > 24;
+  // Два плеча колектора мають разом пропустити щілину, тож висота профілю
+  // рахується від потрібної площі, а не береться «на око».
+  const ductH = buildable ? clamp(Math.max(manifoldH, targetSlotCm2 / (2 * ductD)), 2.5, maxDuctH) : 0;
+  const slotH = buildable ? clamp(ductH - 1, 0.8, 2.5) : 0;
+  const maxDuctW = Math.max(3, w - (LEG_INSET_CM + LEG_SIZE_CM / 2) * 2 - 1);
+  const wantW = buildable ? Math.max(targetSlotCm2 / slotH + 2, targetSlotCm2 * 1.2 / ductH) : 0;
+  const ductW = buildable ? clamp(wantW, 4, maxDuctW) : 0;
+  // Щілина не ширша за передній торець каналу (по 1 см на борт).
+  const slotW = buildable ? Math.max(0.5, Math.min(targetSlotCm2 / slotH, ductW - 2)) : 0;
+  const slotAreaCm2 = buildable ? slotW * slotH : 0;
+  const armAreaCm2 = buildable ? 2 * ductD * ductH : 0;
+  const ductAreaCm2 = buildable ? ductW * ductH : 0;
+
+  const innerW = Math.max(10, w - steelT * 2);
+  const innerD = Math.max(10, d - steelT * 2);
+  const riserX = Math.max(2, innerW / 2 - chW / 2 - 1);
+  const riserZ = -innerD / 2 + chD / 2;
+  // Отвір у днищі під стояком — перетин сліду стояка й сліду колектора.
+  // Саме тому колектор тиснеться до задньої кромки: слід ніжки починається
+  // на 3.5 см від неї, а отвір закінчується на 3.0 см.
+  const holeDepth = Math.max(0, ductD - steelT);
+  const holeZ = -d / 2 + (steelT + ductD) / 2;
+  const holeW = Math.max(1, chW - 1);
+  const armHalfW = riserX + chW / 2;
+  // Вузьке місце шляху. Враховуємо ВСІ перерізи: щілину, канал, колектор,
+  // два вікна в днищі під стояками і самі стояки. Якщо найвужчий менший за
+  // отвори труби — потік задає канал, а не отвори, і «повзун керує вторинним
+  // повітрям» перестає бути правдою.
+  const windowsCm2 = buildable ? 2 * holeW * holeDepth : 0;
+  const risersCm2 = buildable ? 2 * chW * chD : 0;
+  const fixedPathCm2 = buildable ? Math.min(armAreaCm2, ductAreaCm2, windowsCm2, risersCm2) : 0;
+  const minPathCm2 = buildable ? Math.min(slotAreaCm2, fixedPathCm2) : 0;
+
+  return {
+    enabled, buildable,
+    ductW: round1(ductW), ductH: round1(ductH), ductD: round1(ductD),
+    ductLenCm: round1(buildable ? d - ductD : 0),
+    armSpanCm: round1(buildable ? armHalfW * 2 : 0),
+    slotW: round1(slotW), slotH: round1(slotH),
+    slotAreaCm2: round2(slotAreaCm2), targetSlotCm2: round2(targetSlotCm2),
+    holesCm2: round2(holesCm2),
+    armAreaCm2: round2(armAreaCm2), ductAreaCm2: round2(ductAreaCm2), windowsCm2: round2(windowsCm2), risersCm2: round2(risersCm2),
+    fixedPathCm2: round2(fixedPathCm2), minPathCm2: round2(minPathCm2),
+    choked: buildable && minPathCm2 + 0.01 < holesCm2,
+    groundClearCm: round1(Math.max(0, legH - ductH)),
+    riserX, riserZ, holeW, holeDepth, holeZ, armHalfW, steelT,
+  };
+}
+
+// Перевірка колізій у плані: канал проти ніжок, отвори в днищі проти ніжок,
+// отвори всередині слідів стояка й колектора. Порожній масив — усе чисто.
+// Ніжки НЕ рухаємо (вони тримають піч) — рухається канал.
+export function bottomIntakeCollisions(cfg) {
+  const g = bottomIntakeGeometry(cfg);
+  if (!g.buildable) return [];
+  const d = +cfg?.dimensions?.depthCm || 55;
+  const issues = [];
+  const duct = { x0: -g.ductW / 2, x1: g.ductW / 2, z0: -d / 2 + g.ductD, z1: d / 2 };
+  const arm = { x0: -g.armHalfW, x1: g.armHalfW, z0: -d / 2, z1: -d / 2 + g.ductD };
+  const holes = [-g.riserX, g.riserX].map((x) => rectOf(x, g.holeZ, g.holeW, g.holeDepth));
+  const risers = [-g.riserX, g.riserX].map((x) => rectOf(x, g.riserZ,
+    clamp(safeNum(cfg?.secondaryAir?.channelWidthCm, 5), 2, 12),
+    clamp(safeNum(cfg?.secondaryAir?.channelDepthCm, 4), 2, 10)));
+  for (const [i, leg] of legFootprints(cfg).entries()) {
+    if (rectsOverlap(duct, leg)) issues.push(`duct×leg${i}`);
+    if (rectsOverlap(arm, leg)) issues.push(`arm×leg${i}`);
+    for (const [j, hole] of holes.entries()) if (rectsOverlap(hole, leg)) issues.push(`hole${j}×leg${i}`);
+  }
+  for (const [j, hole] of holes.entries()) {
+    if (!rectInside(arm, hole)) issues.push(`hole${j}⊄arm`);
+    if (!rectInside(risers[j], hole)) issues.push(`hole${j}⊄riser`);
+    if (hole.z1 - hole.z0 < 0.8 || hole.x1 - hole.x0 < 0.8) issues.push(`hole${j}_tiny`);
+  }
+  return issues;
+}
+
+// Чи є збережена конфігурація в localStorage. app.js розрізняє «перший запуск»
+// (треба повне автопроєктування) і «збережена/поділена геометрія» (бафль
+// користувача авторитетний, оптимізатор його не рухає).
+export function hasStoredConfig() {
+  for (const key of [STORAGE_KEY, ...LEGACY_KEYS]) {
+    try { if (localStorage.getItem(key)) return true; } catch { /* ignore */ }
+  }
+  return false;
 }
 
 export function loadConfig() {
@@ -333,6 +626,32 @@ export function validateConfig(cfg) {
   }
   const hoodDepth = (cfg.dimensions.depthCm / 2 - steelCm) - (cfg.chimney.diameterCm / 2 * 1.08) - 1.5 - (-cfg.dimensions.depthCm * 0.2);
   if (hoodDepth < 5) warnings.push({ code: 'GAS_HOOD_TIGHT', values: { depth: +hoodDepth.toFixed(1) } });
+
+  // Нижній вхід secondary. Це ПОПЕРЕДЖЕННЯ, а не помилка: піч без каналу
+  // лишається валідною (secondary живиться, як і раніше, з-під днища), просто
+  // повзуна на фасаді не буде.
+  const intake = bottomIntakeGeometry(cfg);
+  if (intake.enabled && !intake.buildable) {
+    warnings.push({ code: 'BOTTOM_INTAKE_NO_ROOM', values: { legs: cfg.dimensions.legHeightCm, need: 4.5 } });
+  }
+  // Канал вужчий за самі отвори: витрату задає канал, а не повзун.
+  if (intake.buildable && intake.choked) {
+    warnings.push({ code: 'BOTTOM_INTAKE_CHOKED', values: { area: intake.minPathCm2, need: intake.holesCm2 } });
+  }
+
+  // Задній вихід: комір мусить фізично влізти між бафлем і кришкою.
+  // Помилка (а не мовчазна підміна на 'top'), щоб користувач бачив причину.
+  const rear = rearOutletLayout(cfg);
+  if (cfg.chimney.outlet === 'rear' && !rear.fits) {
+    errors.push({ code: 'REAR_OUTLET_NO_ROOM', values: { height: cfg.dimensions.heightCm, need: +(rear.yCm + rear.collarR + steelCm).toFixed(1) } });
+  }
+  // Норму патрубка (~0.4 м) перевіряє PhysicsModel (попередження CONNECTOR_LONG);
+  // тут його НЕ дублюємо — інакше панель показувала те саме двічі.
+  // Задній тепловий екран доводиться обрізати під комір — у цьому місці
+  // одностінна труба лишається без екрана, тож потрібен відступ від стіни.
+  if (cfg.chimney.outlet === 'rear' && cfg.visibility && cfg.visibility.shields) {
+    warnings.push({ code: 'REAR_SHIELD_CUT', values: { y: +rear.yCm.toFixed(1) } });
+  }
   return { valid: errors.length === 0, errors, warnings };
 }
 

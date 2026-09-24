@@ -1,6 +1,8 @@
 // Швидкі тести PhysicsModel v5 — запуск: node tests/physics.test.js
-import { PhysicsModel, optimizeConfig } from '../js/physics-model.js';
-import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, deepMerge, encodeConfig, decodeConfig, MODEL_PRESETS } from '../js/config.js';
+import { readFileSync } from 'node:fs';
+import { PhysicsModel, optimizeConfig, compareOutlets } from '../js/physics-model.js';
+import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, deepMerge, encodeConfig, decodeConfig, doorOpening, DOOR_OVERLAP_CM, MODEL_PRESETS, rearOutletLayout, bottomIntakeGeometry, bottomIntakeCollisions, legFootprints, secondaryHolePattern, SECONDARY_AREA_PER_LITER_CM2, INTAKE_MIN_STOP_PCT, SECONDARY_DRILLS_CM } from '../js/config.js';
+import { STR, WARN_TXT, WARN_ARG, VALIDATION_TXT, OUTLET_TXT } from '../js/i18n.js';
 import { calibrateFromLog, evaluateCalibration, detectJournalDesync, mergeCalibration, emptyCalibration, configSnapshot } from '../js/calibration.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from '../js/bom.js';
 import { designInternals } from '../js/autodesign.js';
@@ -340,12 +342,12 @@ for (const p of Object.keys(PURPOSES)) ok(PURPOSES[p].kwPerM3 > 0 && PURPOSES[p]
 
 // 21. Major #5: перемикання режиму в сесії дає ту саму піч, що й
 // завантаження/поділитися-посилання з тим самим збереженим режимом
-// (обидва шляхи мають викликати designInternals після applyModePreset).
+// (зміна режиму перепроєктовує, а завантаження зберігає готову геометрію).
 {
   for (const m of ['low', 'high', 'overnight']) {
     const live = designInternals(normalizeConfig(clone(defaultConfig)));
     applyModePreset(live, m); designInternals(live); // те, що робить app.js у обробнику зміни режиму
-    const reloaded = designInternals(normalizeConfig(deepMerge(clone(defaultConfig), clone(live)))); // те, що робить app.js при завантаженні
+    const reloaded = designInternals(normalizeConfig(deepMerge(clone(defaultConfig), clone(live))), { keepBaffle: true }); // те, що робить app.js при завантаженні
     const a = PhysicsModel.evaluate(live).metrics, b = PhysicsModel.evaluate(reloaded).metrics;
     ok(a.efficiencyPct === b.efficiencyPct && a.heatOutputKw === b.heatOutputKw && live.baffle.heightCm === reloaded.baffle.heightCm,
       `mode switch matches reload for ${m}`, JSON.stringify({ live: { eff: a.efficiencyPct, kw: a.heatOutputKw, baffle: live.baffle.heightCm }, reloaded: { eff: b.efficiencyPct, kw: b.heatOutputKw, baffle: reloaded.baffle.heightCm } }));
@@ -479,6 +481,632 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
   const twice = designInternals(clone(once));
   const key = (c) => JSON.stringify([c.baffle, c.chimney.diameterCm]);
   ok(key(once) === key(twice), `autodesign idempotent ${name}/${m}`, key(once) === key(twice) ? '' : JSON.stringify({ once: key(once), twice: key(twice) }));
+}
+
+// 31. Штучні межі потужності прибрано: модель показує те, що рахує.
+// Раніше gross затискався в 1.5–24 кВт, а net — у 1.0–20 кВт, тож будь-яка
+// мала піч «видавала» 1.15 кВт, а майстерня — 18.05 кВт, причому її high
+// (16.88) був СЛАБШИЙ за medium. Тест поведінковий: перевіряємо напрямки
+// й співвідношення, а не конкретні числа.
+{
+  const kwOf = (w, d, h, mode = 'medium') => {
+    const c = normalizeConfig(clone(defaultConfig));
+    Object.assign(c.dimensions, { widthCm: w, depthCm: d, heightCm: h });
+    applyModePreset(c, mode); designInternals(c);
+    return PhysicsModel.evaluate(c).metrics;
+  };
+  const tiny = kwOf(30, 30, 40);
+  ok(tiny.heatOutputKw > 0 && tiny.heatOutputKw < 0.5, 'tiny stove reports its honest sub-kW output', JSON.stringify({ kw: tiny.heatOutputKw, firebox: tiny.fireboxLiters }));
+  const sizes = [[30, 30, 40], [50, 45, 70], [70, 55, 95], [100, 70, 120], [140, 120, 180]].map((s) => kwOf(...s).heatOutputKw);
+  ok(sizes.every((v, i) => i === 0 || v > sizes[i - 1]), 'power grows monotonically with stove size', JSON.stringify(sizes));
+  const big = normalizeConfig(clone(defaultConfig));
+  Object.assign(big.dimensions, { widthCm: 118, depthCm: 82, heightCm: 128 });
+  const modes = {};
+  for (const m of ['low', 'medium', 'high']) { const c = clone(big); applyModePreset(c, m); designInternals(c); modes[m] = PhysicsModel.evaluate(c).metrics.heatOutputKw; }
+  ok(modes.low < modes.medium && modes.medium < modes.high, 'big stove: high > medium > low (no ceiling inversion)', JSON.stringify(modes));
+  ok(modes.medium > 20, 'big stove is no longer truncated at the old 20 kW net ceiling', JSON.stringify(modes));
+  // Санітарний захист лишається: пошкоджений конфіг дає 0, а не NaN/Infinity.
+  const broken = normalizeConfig(clone(defaultConfig));
+  broken.dimensions.widthCm = Infinity;
+  const bm = PhysicsModel.evaluate(broken).metrics;
+  ok(Number.isFinite(bm.heatOutputKw) && Number.isFinite(bm.grossHeatOutputKw), 'corrupted geometry never yields NaN/Infinity power', JSON.stringify({ gross: bm.grossHeatOutputKw, net: bm.heatOutputKw }));
+}
+
+// 32. optimizeConfig завжди повертає кандидата, а designInternals ніколи не
+// лишає бафль поза корпусом. Раніше корпус нижче 36 см давав порожній список
+// висот → null → мовчки зберігався бафль попередньої печі (58 см у 40-см печі).
+{
+  for (const h of [30, 34, 35, 36, 40, 95]) {
+    const c = normalizeConfig(clone(defaultConfig));
+    c.dimensions.heightCm = h; // повз normalizeConfig: саме такий конфіг ловив null
+    const best = optimizeConfig(c);
+    ok(best && Number.isFinite(best.result.metrics.efficiencyPct), `optimizeConfig returns a candidate for h=${h}`, JSON.stringify(best?.config?.baffle));
+  }
+  const nanCfg = normalizeConfig(clone(defaultConfig));
+  nanCfg.dimensions.heightCm = NaN;
+  ok(optimizeConfig(nanCfg), 'optimizeConfig survives a non-numeric body height');
+  for (const dims of [[30, 30, 40], [40, 40, 50]]) {
+    const c = normalizeConfig(clone(defaultConfig));
+    c.baffle.heightCm = 58; // бафль від попередньої, великої печі
+    Object.assign(c.dimensions, { widthCm: dims[0], depthCm: dims[1], heightCm: dims[2] });
+    designInternals(c);
+    const v = validateConfig(c);
+    ok(v.valid, `small stove ${dims.join('x')} designs into a valid geometry`, JSON.stringify(v.errors.map((e) => e.code)));
+    ok(c.baffle.heightCm < c.dimensions.heightCm, `small stove ${dims.join('x')} baffle stays inside the body`, JSON.stringify({ baffle: c.baffle.heightCm, h: c.dimensions.heightCm }));
+    const fb = PhysicsModel.evaluate(c).metrics.fireboxLiters;
+    ok(fb > 0 && fb < dims[0] * dims[1] * dims[2] / 1000, `small stove ${dims.join('x')} firebox volume is physical`, JSON.stringify({ fb }));
+  }
+}
+
+// 33. Дверцята перекривають отвір, а не провалюються в нього: інакше
+// ущільнювальному шнуру по периметру отвору нема до чого притискатись.
+// Раніше отвір був на 4 мм БІЛЬШИЙ за стулку з кожного боку.
+{
+  for (const dims of [[70, 55, 95], [30, 30, 40], [140, 120, 180]]) {
+    const c = normalizeConfig(clone(defaultConfig));
+    Object.assign(c.dimensions, { widthCm: dims[0], depthCm: dims[1], heightCm: dims[2] });
+    designInternals(c);
+    const steelCm = c.materials.steelThicknessMm / 10;
+    const o = doorOpening(c, steelCm);
+    ok(Math.abs((o.doorW - o.openingW) / 2 - DOOR_OVERLAP_CM) < 1e-9 && Math.abs((o.doorH - o.openingH) / 2 - DOOR_OVERLAP_CM) < 1e-9,
+      `door overlaps the opening by ${DOOR_OVERLAP_CM} cm per side on ${dims.join('x')}`, JSON.stringify(o));
+    ok(o.openingW > 0 && o.openingH > 0 && o.openingW <= dims[0] - steelCm * 2 && o.openingTop <= dims[2], `opening fits the front face on ${dims.join('x')}`, JSON.stringify(o));
+    // BOM будує передню стінку з тих самих чисел: смуги + отвір = ширина печі.
+    const bom = buildBOM(c);
+    const below = bom.parts.find((p) => p.name === 'Передня панель — під дверима');
+    const side = bom.parts.find((p) => p.name === 'Передня панель — бічна (Л/П)');
+    ok(Math.abs(below.wCm - o.openingW) < 0.05, `BOM front panel matches the opening on ${dims.join('x')}`, JSON.stringify({ bom: below.wCm, opening: o.openingW }));
+    ok(Math.abs(side.wCm * 2 + o.openingW - dims[0]) < 0.05, `BOM front strips + opening equal the body width on ${dims.join('x')}`, JSON.stringify({ side: side.wCm, opening: o.openingW, w: dims[0] }));
+  }
+}
+
+// 34. Та сама піч у сесії й після F5. Слайдери повітря/вологості/димоходу
+// не перепроєктовують внутрішню геометрію, тож і завантаження збереженого
+// конфігу не має її перепроєктовувати (keepBaffle). Раніше 212 з 1152
+// перевірених значень давали після перезавантаження інший бафль, інший
+// діаметр труби й інші кВт/ККД, хоча користувач нічого не міняв.
+{
+  const FIELDS = [];
+  for (const v of [0, 15, 28, 52, 82, 100]) FIELDS.push(['primaryAir.openPct', v]);
+  for (const v of [0, 24, 55, 78, 100]) FIELDS.push(['operation.secondaryAirPct', v]);
+  for (const v of [8, 15, 22, 28, 35]) FIELDS.push(['testBurn.woodMoisturePct', v]);
+  for (const v of [2, 5, 9, 12]) FIELDS.push(['chimney.totalHeightM', v]);
+  for (const v of [0, 1, 3, 4]) FIELDS.push(['chimney.bends', v]);
+  const setPath = (o, p, v) => { const k = p.split('.'); const last = k.pop(); k.reduce((a, x) => a[x], o)[last] = v; };
+  let diverged = 0; const sample = [];
+  for (const preset of Object.keys(MODEL_PRESETS)) for (const mode of ['low', 'medium', 'high']) {
+    const seed = applyModelPreset(normalizeConfig(clone(defaultConfig)), preset);
+    applyModePreset(seed, mode); designInternals(seed);
+    for (const [path, v] of FIELDS) {
+      const live = clone(seed);
+      setPath(live, path, v); normalizeConfig(live); // рух слайдера в app.js
+      const reloaded = designInternals(normalizeConfig(deepMerge(clone(defaultConfig), clone(live))), { keepBaffle: true });
+      const a = PhysicsModel.evaluate(live).metrics, b = PhysicsModel.evaluate(reloaded).metrics;
+      if (a.heatOutputKw !== b.heatOutputKw || a.efficiencyPct !== b.efficiencyPct
+        || live.baffle.heightCm !== reloaded.baffle.heightCm || live.chimney.diameterCm !== reloaded.chimney.diameterCm) {
+        diverged++; if (sample.length < 3) sample.push({ preset, mode, path, v, live: [a.heatOutputKw, live.baffle.heightCm], reloaded: [b.heatOutputKw, reloaded.baffle.heightCm] });
+      }
+    }
+  }
+  ok(diverged === 0, 'session and reload agree on every physics-relevant field', JSON.stringify({ diverged, sample }));
+  // А бафль, що не влазить у корпус (пошкоджене посилання), все одно перераховується.
+  const stale = normalizeConfig(clone(defaultConfig));
+  Object.assign(stale.dimensions, { widthCm: 40, depthCm: 40, heightCm: 45 });
+  stale.baffle.heightCm = 58;
+  designInternals(stale, { keepBaffle: true });
+  ok(validateConfig(stale).valid && stale.baffle.heightCm < 45, 'keepBaffle still repairs a baffle taller than the body', JSON.stringify({ baffle: stale.baffle.heightCm, errors: validateConfig(stale).errors.map((e) => e.code) }));
+}
+
+// 35. Підказки Φ-тюнера відповідають фізиці: Φ = 1/λ, високе Φ — багата
+// суміш, тобто повітря МАЛО. Раніше тексти phiRich/phiLean були переставлені
+// в обох словниках і радили рівно протилежне.
+{
+  const dir = (s) => (/Збільш|Increase/.test(s) ? 'more' : /Зменш|Reduce/.test(s) ? 'less' : '?');
+  for (const l of ['uk', 'en']) {
+    ok(STR[l].phiRich && STR[l].phiLean && STR[l].phiInBand, `phi hints exist in ${l}`);
+    ok(dir(STR[l].phiRich) === 'more', `phiRich (Φ>0.5) tells the user to add air in ${l}`, STR[l].phiRich);
+    ok(dir(STR[l].phiLean) === 'less', `phiLean (Φ<0.4) tells the user to cut air in ${l}`, STR[l].phiLean);
+  }
+  // Та сама семантика в моделі: більше повітря → менше Φ; Φ>0.55 → MIX_RICH.
+  const at = (p, s) => {
+    const c = designInternals(normalizeConfig(clone(defaultConfig)));
+    c.primaryAir.openPct = p; c.operation.secondaryAirPct = s;
+    return PhysicsModel.evaluate(c);
+  };
+  const rich = at(0, 0), lean = at(100, 100);
+  ok(rich.metrics.equivalenceRatio > lean.metrics.equivalenceRatio, 'more air lowers Φ', JSON.stringify({ rich: rich.metrics.equivalenceRatio, lean: lean.metrics.equivalenceRatio }));
+  ok(rich.warnings.some((w) => w.code === 'MIX_RICH'), 'closed air gives MIX_RICH (too little air)', JSON.stringify(rich.warnings.map((w) => w.code)));
+  // Порада phiLean (зменшити повітря) має сенс лише якщо відкрите повітря
+  // справді жене Φ до нижнього краю зони, а MIX_RICH там уже не спрацьовує.
+  ok(lean.metrics.equivalenceRatio < 0.4 && !lean.warnings.some((w) => w.code === 'MIX_RICH'), 'wide open air lands below the target band, not in the rich zone', JSON.stringify({ phi: lean.metrics.equivalenceRatio }));
+}
+
+// ---------------------------------------------------------------------
+// 36–45. Вихід труби: верхній / задній × маршрут «над піччю» / «у стінний
+// димохід». Ключові інваріанти — сумісність назад (top/up рахується точно
+// як до появи полів), «нічия» за ККД печі, і головне: задній вихід НІКОЛИ
+// не лишає невалідного бафля, навіть коли комір фізично не влазить.
+// ---------------------------------------------------------------------
+
+// 36. Сумісність назад: конфіг БЕЗ нових полів і конфіг з явними 'top'/'up'
+// дають побітово ті самі метрики. Охорона roomPipeM > 0 у physics-model.js
+// існує саме для цього — інакше exp(0) зсунув би округлені числа й журнали.
+{
+  let diff = 0, n = 0;
+  for (const name of Object.keys(MODEL_PRESETS)) for (const mode of ['start-up', 'low', 'medium', 'high', 'overnight']) {
+    // Проєктуємо ОДИН раз на пресет×режим, далі лише крутимо слайдери труби:
+    // це той самий сценарій, що й у сесії (висота/вигини бафль не рухають).
+    const seed = applyModelPreset(normalizeConfig(clone(defaultConfig)), name);
+    applyModePreset(seed, mode); designInternals(seed);
+    for (const H of [2, 5, 12]) for (const b of [0, 2, 4]) {
+      const c = clone(seed); c.chimney.totalHeightM = H; c.chimney.bends = b;
+      const legacy = clone(c);
+      delete legacy.chimney.outlet; delete legacy.chimney.route; delete legacy.chimney.connectorLengthCm;
+      const a = PhysicsModel.evaluate(c).metrics, l = PhysicsModel.evaluate(legacy).metrics;
+      n++;
+      if (a.efficiencyPct !== l.efficiencyPct || a.draftPa !== l.draftPa || a.exitFlueTempC !== l.exitFlueTempC || a.heatOutputKw !== l.heatOutputKw) diff++;
+      if (a.roomPipeGainPct !== 0 || a.routeBends !== b) diff++;
+    }
+  }
+  ok(diff === 0, 'top/up is bit-for-bit what it was before the outlet fields existed', JSON.stringify({ cases: n, diff }));
+}
+
+// 37. ККД ПЕЧІ від місця виходу не залежить — його задає внутрішній шлях
+// газів (бафль, полиця, перепускна стінка), а не напрямок коміра. Задній
+// платить тягою і температурою на виході, а не ККД.
+{
+  let bad = 0, n = 0, worst = 0;
+  for (const name of Object.keys(MODEL_PRESETS)) for (const mode of ['start-up', 'low', 'medium', 'high', 'overnight']) {
+    const seed = applyModelPreset(normalizeConfig(clone(defaultConfig)), name);
+    applyModePreset(seed, mode); designInternals(seed);
+    for (const H of [2, 3, 5, 8, 12]) {
+    const top = clone(seed); top.chimney.totalHeightM = H;
+    const rear = clone(top); rear.chimney.outlet = 'rear';
+    const a = PhysicsModel.evaluate(top).metrics, b = PhysicsModel.evaluate(rear).metrics;
+    n++; worst = Math.max(worst, Math.abs(b.efficiencyPct - a.efficiencyPct));
+    if (Math.abs(b.efficiencyPct - a.efficiencyPct) >= 0.5) bad++;
+    // draftPa може впертись у стелю 40 Па — тому «не більше», а не «менше».
+    if (b.draftPa > a.draftPa || b.exitFlueTempC > a.exitFlueTempC) bad++;
+    }
+  }
+  ok(bad === 0, 'rear outlet is an efficiency tie, and never beats top on draft/exit T with route=up', JSON.stringify({ cases: n, bad, worstDeltaEff: +worst.toFixed(2) }));
+}
+
+// 38. Монотонність патрубка (задній / «над піччю»): довший патрубок віддає
+// більше тепла в кімнату, але сильніше охолоджує газ і гасить тягу.
+{
+  const c = designInternals(normalizeConfig(clone(defaultConfig)));
+  c.chimney.outlet = 'rear';
+  const at = (L) => { const x = clone(c); x.chimney.connectorLengthCm = L; return PhysicsModel.evaluate(x).metrics; };
+  const seq = [20, 60, 120].map(at);
+  ok(seq.every((m, i) => i === 0 || m.roomPipeGainPct > seq[i - 1].roomPipeGainPct), 'longer connector gives strictly more pipe heat to the room', JSON.stringify(seq.map((m) => m.roomPipeGainPct)));
+  ok(seq.every((m, i) => i === 0 || m.exitFlueTempC < seq[i - 1].exitFlueTempC), 'longer connector strictly cools the exit gas', JSON.stringify(seq.map((m) => m.exitFlueTempC)));
+  ok(seq.every((m, i) => i === 0 || m.draftPa <= seq[i - 1].draftPa), 'longer connector never increases draft', JSON.stringify(seq.map((m) => m.draftPa)));
+  ok(seq.every((m) => m.efficiencyPct === seq[0].efficiencyPct), 'connector length never changes STOVE efficiency', JSON.stringify(seq.map((m) => m.efficiencyPct)));
+  const longRun = clone(c); longRun.chimney.connectorLengthCm = 150;
+  ok(PhysicsModel.evaluate(longRun).warnings.some((wn) => wn.code === 'CONNECTOR_LONG'), 'connector over 40 cm raises CONNECTOR_LONG');
+  ok(!validateConfig(longRun).warnings.some((wn) => wn.code === 'CONNECTOR_LONG'), 'CONNECTOR_LONG is shown once (physics), not duplicated by validateConfig');
+  ok(!PhysicsModel.evaluate(c).warnings.some((wn) => wn.code === 'CONNECTOR_LONG'), 'default 30 cm connector is within the norm', JSON.stringify({ L: c.chimney.connectorLengthCm }));
+  // Верхній вихід прямо вгору взагалі не має горизонталі — попередження не буде.
+  const topLong = clone(longRun); topLong.chimney.outlet = 'top'; topLong.chimney.route = 'up';
+  ok(!PhysicsModel.evaluate(topLong).warnings.some((wn) => wn.code === 'CONNECTOR_LONG'), 'top/up ignores connector length entirely');
+}
+
+// 39. Маршрут дзеркальний: у стінному димоході зайві повороти й зайва труба
+// в кімнаті дістаються ВЕРХНЬОМУ виходу. Тягу порівнюємо через ≤/≥, бо
+// draftPa затиснута в [3, 40] і на потужних печах обидва впираються в стелю.
+{
+  let bad = 0, n = 0, strict = 0;
+  for (const name of Object.keys(MODEL_PRESETS)) for (const mode of ['low', 'medium', 'high']) {
+    const base2 = applyModelPreset(normalizeConfig(clone(defaultConfig)), name);
+    applyModePreset(base2, mode); designInternals(base2);
+    for (const H of [2, 3, 5, 8, 12]) {
+      const seed = clone(base2); seed.chimney.totalHeightM = H;
+      const mk = (outlet, route) => { const x = clone(seed); x.chimney.outlet = outlet; x.chimney.route = route; return PhysicsModel.evaluate(x).metrics; };
+      const tW = mk('top', 'wall'), rW = mk('rear', 'wall');
+      const tU = mk('top', 'up'), rU = mk('rear', 'up');
+      n++;
+      if (tW.draftPa > rW.draftPa || tW.exitFlueTempC >= rW.exitFlueTempC || tW.roomPipeGainPct <= rW.roomPipeGainPct) bad++;
+      if (rU.draftPa > tU.draftPa || rU.exitFlueTempC >= tU.exitFlueTempC || rU.roomPipeGainPct <= tU.roomPipeGainPct) bad++;
+      if (tW.draftPa < rW.draftPa && rU.draftPa < tU.draftPa) strict++;
+    }
+  }
+  ok(bad === 0, 'wall route mirrors up route: whoever needs more turns loses draft and exit T, gains pipe heat', JSON.stringify({ cases: n, bad, strictOnDraft: strict }));
+}
+
+// 40. compareOutlets: за замовчуванням постачається саме переможець, а
+// причина — маршрут, не вигаданий «виграш за ККД» (його не буває).
+{
+  const c = designInternals(normalizeConfig(clone(defaultConfig)));
+  const up = compareOutlets(c);
+  ok(up.winner === defaultConfig.chimney.outlet, 'shipped default outlet equals compareOutlets winner on the default stove', JSON.stringify({ shipped: defaultConfig.chimney.outlet, winner: up.winner, code: up.code }));
+  ok(up.code === 'ROUTE_UP' && up.values.dEff === 0, 'route=up verdict is decided by the route, with a zero efficiency delta', JSON.stringify(up.values));
+  const wall = clone(c); wall.chimney.route = 'wall';
+  const w2 = compareOutlets(wall);
+  ok(w2.winner === 'rear' && w2.code === 'ROUTE_WALL', 'wall chimney behind the stove flips the winner to rear', JSON.stringify(w2.values));
+  ok(w2.values.draftRear > w2.values.draftTop && w2.values.dExitC > 0, 'rear really wins on draft and exit T with a wall chimney', JSON.stringify(w2.values));
+  const tiny = normalizeConfig(clone(defaultConfig));
+  Object.assign(tiny.dimensions, { widthCm: 30, depthCm: 30, heightCm: 40 });
+  tiny.chimney.outlet = 'rear'; designInternals(tiny);
+  const t3 = compareOutlets(tiny);
+  ok(t3.winner === 'top' && t3.code === 'REAR_NO_ROOM', '30x30x40 has no room for a rear collar', JSON.stringify({ winner: t3.winner, code: t3.code, fits: t3.fits }));
+  // Переможець детермінований і не залежить від розміру печі — тільки від
+  // маршруту (і від того, чи влазить комір).
+  let mismatch = 0;
+  for (const name of Object.keys(MODEL_PRESETS)) for (const mode of ['low', 'medium', 'high']) for (const route of ['up', 'wall']) {
+    const x = designInternals(applyModelPreset(normalizeConfig(clone(defaultConfig)), name));
+    applyModePreset(x, mode); x.chimney.route = route;
+    const v = compareOutlets(x);
+    if (v.winner !== (route === 'wall' ? 'rear' : 'top')) mismatch++;
+  }
+  ok(mismatch === 0, 'compareOutlets winner follows the route on every preset x mode', JSON.stringify({ mismatch }));
+}
+
+// 41. ГОЛОВНЕ (виправлення до специфікації): задній вихід НІКОЛИ не лишає
+// невалідного бафля. Фільтр «комір влазить» у optimizeConfig не має права
+// повернути null — інакше на 204 з 1800 печей бафль лишався б від попередньої
+// геометрії (58 см у корпусі 40 см: BAFFLE_TOO_HIGH, топка 10 л замість 3.7).
+{
+  for (const dims of [[30, 30, 40], [40, 40, 50], [58, 46, 60]]) {
+    const c = normalizeConfig(clone(defaultConfig));
+    c.baffle.heightCm = 58; // бафль від попередньої, великої печі
+    Object.assign(c.dimensions, { widthCm: dims[0], depthCm: dims[1], heightCm: dims[2] });
+    c.chimney.outlet = 'rear';
+    designInternals(c);
+    const steelCm = c.materials.steelThicknessMm / 10;
+    const v = validateConfig(c);
+    ok(c.baffle.heightCm < dims[2] - steelCm * 3, `rear ${dims.join('x')}: baffle stays inside the body`, JSON.stringify({ baffle: c.baffle.heightCm, h: dims[2] }));
+    ok(!v.errors.some((e) => e.code === 'BAFFLE_TOO_HIGH' || e.code === 'BAFFLE_REFRACTORY_HIGH'), `rear ${dims.join('x')}: no stale-baffle errors`, JSON.stringify(v.errors.map((e) => e.code)));
+    const fb = PhysicsModel.evaluate(c).metrics.fireboxLiters;
+    ok(fb > 0 && fb < dims[0] * dims[1] * dims[2] / 1000, `rear ${dims.join('x')}: firebox volume is physical`, JSON.stringify({ fb }));
+    // Якщо комір не влазить — це має бути ЯВНА помилка, а не мовчазна поломка.
+    ok(rearOutletLayout(c).fits === v.errors.every((e) => e.code !== 'REAR_OUTLET_NO_ROOM'), `rear ${dims.join('x')}: REAR_OUTLET_NO_ROOM matches the fit test`, JSON.stringify({ fits: rearOutletLayout(c).fits, errors: v.errors.map((e) => e.code) }));
+  }
+  // Свип: бафль лишається валідним для ЗАДНЬОГО виходу на будь-якій печі.
+  let invalid = 0, nofit = 0, n = 0;
+  for (let w = 30; w <= 110; w += 40) for (let d = 30; d <= 90; d += 30) for (let h = 40; h <= 140; h += 20) {
+    const c = normalizeConfig(clone(defaultConfig));
+    c.baffle.heightCm = 58;
+    Object.assign(c.dimensions, { widthCm: w, depthCm: d, heightCm: h });
+    c.chimney.outlet = 'rear'; designInternals(c); n++;
+    if (validateConfig(c).errors.some((e) => e.code === 'BAFFLE_TOO_HIGH' || e.code === 'BAFFLE_REFRACTORY_HIGH')) invalid++;
+    if (!rearOutletLayout(c).fits) nofit++;
+  }
+  ok(invalid === 0, 'rear outlet never leaves an invalid baffle anywhere in the size grid', JSON.stringify({ cases: n, invalid, noRoomForCollar: nofit }));
+  // На всіх готових моделях × режимах задній вихід влазить і конфіг валідний.
+  let presetBad = 0;
+  for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low', 'medium', 'high', 'overnight']) {
+    const c = applyModelPreset(normalizeConfig(clone(defaultConfig)), name);
+    applyModePreset(c, m); c.chimney.outlet = 'rear'; designInternals(c);
+    if (!rearOutletLayout(c).fits || !validateConfig(c).valid) presetBad++;
+  }
+  ok(presetBad === 0, 'every model preset x mode fits a rear collar and stays valid', JSON.stringify({ presetBad }));
+}
+
+// 42. normalizeConfig не пропускає сміття в нових полях (share-лінк або
+// вручну відредагований JSON).
+{
+  const c = normalizeConfig(deepMerge(clone(defaultConfig), { chimney: { outlet: 'abc', route: 5, connectorLengthCm: 'abc' } }));
+  ok(c.chimney.outlet === 'top' && c.chimney.route === 'up', 'garbage outlet/route fall back to top/up', JSON.stringify(c.chimney));
+  ok(Number.isFinite(c.chimney.connectorLengthCm) && c.chimney.connectorLengthCm >= 15 && c.chimney.connectorLengthCm <= 150, 'garbage connector length becomes a finite number in bounds', JSON.stringify(c.chimney));
+  const edge = normalizeConfig(deepMerge(clone(defaultConfig), { chimney: { connectorLengthCm: 9999 } }));
+  ok(edge.chimney.connectorLengthCm === 150, 'connector length is clamped at 150 cm', JSON.stringify(edge.chimney));
+  const broken = clone(defaultConfig); broken.chimney.outlet = 'rear'; broken.chimney.connectorLengthCm = 'abc';
+  const fromLink = designInternals(normalizeConfig(deepMerge(clone(defaultConfig), decodeConfig(encodeConfig(broken)))));
+  ok(Number.isFinite(PhysicsModel.evaluate(fromLink).metrics.draftPa), 'shared link with a corrupted outlet field still evaluates');
+}
+
+// 43. BOM заднього виходу: кришка суцільна (немає flue bell), зʼявились
+// патрубок і трійник з ревізією, CSV лишається з 11 колонками, EN — без кирилиці.
+{
+  const parseCsv = (text) => {
+    const rows = []; let row = [], f = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (q) { if (ch === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += ch; }
+      else if (ch === '"') q = true;
+      else if (ch === ',') { row.push(f); f = ''; }
+      else if (ch === '\n') { row.push(f); rows.push(row); row = []; f = ''; }
+      else f += ch;
+    }
+    row.push(f); rows.push(row); return rows;
+  };
+  const cyr = /[А-Яа-яІіЇїЄєҐґʼ]/;
+  for (const name of Object.keys(MODEL_PRESETS)) {
+    const top = designInternals(applyModelPreset(normalizeConfig(clone(defaultConfig)), name));
+    const rear = clone(top); rear.chimney.outlet = 'rear'; designInternals(rear);
+    const bt = buildBOM(top, null, 'uk'), br = buildBOM(rear, null, 'uk');
+    const names = br.parts.map((p) => p.name);
+    ok(!names.some((s) => /flue bell/.test(s)), `BOM rear ${name}: no internal flue bell (the lid is solid)`, JSON.stringify(names.filter((s) => /bell/.test(s))));
+    ok(names.includes('Горизонтальний патрубок') && names.includes('Трійник 90° з ревізією'), `BOM rear ${name}: connector and cleanout tee are listed`);
+    ok(br.totals.purchasedCount === bt.totals.purchasedCount + 1, `BOM rear ${name}: exactly one more purchased part (the tee)`, JSON.stringify({ top: bt.totals.purchasedCount, rear: br.totals.purchasedCount }));
+    const bad = br.parts.filter((p) => !Number.isFinite(p.massKg) || !Number.isFinite(p.weldCm) || !Number.isFinite(p.areaCm2) || p.wCm <= 0 || p.hCm <= 0 || p.tCm <= 0);
+    ok(bad.length === 0, `BOM rear ${name}: every part is finite and positive`, JSON.stringify(bad.slice(0, 2)));
+    for (const l of ['uk', 'en']) {
+      const rows = parseCsv(bomToCsv(buildBOM(rear, null, l), l));
+      ok(rows.every((row) => row.length === 11), `BOM rear ${name} CSV ${l}: every row has 11 columns`, JSON.stringify({ bad: rows.filter((row) => row.length !== 11).length }));
+    }
+    const enCsv = bomToCsv(buildBOM(rear, null, 'en'), 'en');
+    ok(!enCsv.split('\n').some((l) => cyr.test(l)), `BOM rear ${name}: EN CSV has no Cyrillic`, JSON.stringify(enCsv.split('\n').filter((l) => cyr.test(l)).slice(0, 2)));
+  }
+}
+
+// 44. Креслення заднього виходу: валідний SVG, підпис довжини патрубка,
+// жодного кола виходу на кришці (вид зверху), і полотно, що вміщує патрубок
+// навіть на 150 см — раніше він наїхав би на фронтальний вид.
+{
+  const c = designInternals(normalizeConfig(clone(defaultConfig)));
+  const rear = clone(c); rear.chimney.outlet = 'rear';
+  const box = (svg) => svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/).slice(1).map(Number);
+  for (const l of ['uk', 'en']) {
+    const svg = buildDrawingSVG(rear, l);
+    ok(svg.startsWith('<svg') && svg.endsWith('</svg>') && !/NaN|undefined/.test(svg), `rear drawing svg valid (${l})`);
+    ok(svg.includes(l === 'en' ? 'connector 30 cm' : 'патрубок 30 см'), `rear drawing labels the connector length (${l})`);
+  }
+  const topSvg = buildDrawingSVG(c, 'uk'), rearSvg = buildDrawingSVG(rear, 'uk');
+  const [tw, th] = box(topSvg), [rw, rh] = box(rearSvg);
+  ok(rw > tw && rh > th, 'rear drawing canvas grows to fit the connector', JSON.stringify({ top: [tw, th], rear: [rw, rh] }));
+  const long = clone(rear); long.chimney.connectorLengthCm = 150;
+  const [lw, lh] = box(buildDrawingSVG(long, 'uk'));
+  ok(lw - rw === (150 - 30) * 3 && lh - rh === (150 - 30) * 3, 'canvas grows exactly with the connector (3 px per cm, both axes)', JSON.stringify({ rear: [rw, rh], long: [lw, lh] }));
+  // Вид зверху: у заднього виходу кришка суцільна, тож підпису коміра
+  // «Ø… см» на ній немає (у фронтальному виді підпис інший: «задній вихід Ø…»).
+  const lidLabel = `>Ø${c.chimney.diameterCm} см<`;
+  ok(topSvg.includes(lidLabel), 'top outlet drawing labels the collar on the lid (top view)');
+  ok(!rearSvg.includes(lidLabel), 'rear outlet drawing has no collar on the lid', rearSvg.includes(lidLabel) ? 'found' : '');
+  ok(rearSvg.includes('задній вихід Ø'), 'rear outlet is labelled on the front view instead');
+  // Побічно: у виді збоку коло верхнього виходу стоїть там само, де в 3D і
+  // на виді зверху (0.3·глибини від зада), а не посеред глибини.
+  ok(topSvg.includes(`cx="${70 + 3 * 70 + 150 + 3 * (c.dimensions.depthCm * 0.3)}"`), 'top outlet side view aligns the collar with the 3D position', JSON.stringify({ expected: 70 + 3 * 70 + 150 + 3 * (c.dimensions.depthCm * 0.3) }));
+  ok(buildDXF(rear).includes('LINE') && buildDXF(rear).endsWith('EOF'), 'rear DXF still valid');
+}
+
+// 45. i18n-паритет для нових ключів і текстів вердикту: кожен код, який може
+// повернути compareOutlets, має функцію в обох словниках.
+{
+  const ukKeys = Object.keys(STR.uk).sort(), enKeys = Object.keys(STR.en).sort();
+  ok(JSON.stringify(ukKeys) === JSON.stringify(enKeys), 'STR.uk and STR.en have identical key sets', JSON.stringify({ onlyUk: ukKeys.filter((k) => !enKeys.includes(k)), onlyEn: enKeys.filter((k) => !ukKeys.includes(k)) }));
+  for (const k of ['flueOutlet', 'outletTop', 'outletRear', 'flueRoute', 'routeUp', 'routeWall', 'connectorLength', 'outletRecommended', 'roomPipeGain']) {
+    ok(STR.uk[k] && STR.en[k], `new UI key ${k} exists in both dictionaries`);
+  }
+  for (const dict of [WARN_TXT, VALIDATION_TXT, OUTLET_TXT]) {
+    ok(JSON.stringify(Object.keys(dict.uk).sort()) === JSON.stringify(Object.keys(dict.en).sort()), 'message dictionary keys match across languages', JSON.stringify(Object.keys(dict.uk).sort()));
+  }
+  // Кожен код вердикту рендериться без винятків і без 'undefined' у тексті.
+  const codes = new Set();
+  for (const route of ['up', 'wall']) {
+    const c = designInternals(normalizeConfig(clone(defaultConfig))); c.chimney.route = route;
+    codes.add(compareOutlets(c).code);
+  }
+  const tiny = normalizeConfig(clone(defaultConfig));
+  Object.assign(tiny.dimensions, { widthCm: 30, depthCm: 30, heightCm: 40 });
+  tiny.chimney.outlet = 'rear'; designInternals(tiny);
+  codes.add(compareOutlets(tiny).code);
+  ok(codes.size === 3, 'compareOutlets can return all three documented codes', JSON.stringify([...codes]));
+  const probe = compareOutlets(designInternals(normalizeConfig(clone(defaultConfig))));
+  for (const code of codes) for (const l of ['uk', 'en']) {
+    const fn = OUTLET_TXT[l][code];
+    ok(typeof fn === 'function', `OUTLET_TXT.${l} has ${code}`);
+    const text = fn(probe.values);
+    ok(typeof text === 'string' && text.length > 10 && !/undefined|NaN/.test(text), `OUTLET_TXT.${l}.${code} renders cleanly`, text.slice(0, 60));
+  }
+  for (const l of ['uk', 'en']) {
+    ok(typeof VALIDATION_TXT[l].REAR_OUTLET_NO_ROOM === 'function' && !/undefined/.test(VALIDATION_TXT[l].REAR_OUTLET_NO_ROOM({ height: 40, need: 55 })), `REAR_OUTLET_NO_ROOM text renders in ${l}`);
+    ok(typeof WARN_TXT[l].CONNECTOR_LONG === 'function' && !/undefined/.test(WARN_TXT[l].CONNECTOR_LONG(100)), `CONNECTOR_LONG text renders in ${l}`);
+  }
+}
+
+// 46. Кожен ПАРАМЕТРИЗОВАНИЙ текст попередження знає, яке поле метрик у нього
+// підставляти. Раніше app.js вгадував: невідомий код отримував m.draftPa, і
+// CONNECTOR_LONG показував «патрубок 21 см > 40 см» замість 150 см.
+{
+  const metrics = PhysicsModel.evaluate(designInternals(normalizeConfig(clone(defaultConfig)))).metrics;
+  for (const l of ['uk', 'en']) {
+    const missing = Object.entries(WARN_TXT[l]).filter(([code, v]) => typeof v === 'function' && !WARN_ARG[code]).map(([code]) => code);
+    ok(missing.length === 0, `every parameterised WARN_TXT.${l} entry has a WARN_ARG mapping`, JSON.stringify(missing));
+  }
+  const unknownField = Object.entries(WARN_ARG).filter(([, field]) => metrics[field] === undefined).map(([code, field]) => `${code}->${field}`);
+  ok(unknownField.length === 0, 'every WARN_ARG field actually exists in the metrics', JSON.stringify(unknownField));
+  const orphan = Object.keys(WARN_ARG).filter((code) => typeof WARN_TXT.uk[code] !== 'function');
+  ok(orphan.length === 0, 'WARN_ARG has no entries for non-parameterised codes', JSON.stringify(orphan));
+  // Кожен код, який модель реально видає, має текст в обох мовах.
+  const emitted = new Set();
+  for (const name of ['compact', 'workshop']) for (const mode of ['low', 'medium', 'overnight']) {
+    const c = applyModelPreset(normalizeConfig(clone(defaultConfig)), name);
+    applyModePreset(c, mode); c.chimney.outlet = 'rear'; c.chimney.connectorLengthCm = 150; designInternals(c);
+    for (const wn of PhysicsModel.evaluate(c).warnings) emitted.add(wn.code);
+  }
+  const noText = [...emitted].filter((code) => !WARN_TXT.uk[code] || !WARN_TXT.en[code]);
+  ok(noText.length === 0, 'every warning the model emits has text in both languages', JSON.stringify({ emitted: [...emitted], noText }));
+  ok(emitted.has('CONNECTOR_LONG'), 'the 150 cm connector sweep really emits CONNECTOR_LONG');
+  const connMetric = PhysicsModel.evaluate({ ...designInternals(normalizeConfig(clone(defaultConfig))), chimney: { ...defaultConfig.chimney, outlet: 'rear', connectorLengthCm: 150 } }).metrics;
+  ok(WARN_TXT.uk.CONNECTOR_LONG(connMetric[WARN_ARG.CONNECTOR_LONG]).includes('150'), 'CONNECTOR_LONG text reports the connector length, not the draft', WARN_TXT.uk.CONNECTOR_LONG(connMetric[WARN_ARG.CONNECTOR_LONG]));
+}
+
+// 47–53. Нижній вхід secondary (канал під днищем) + розмір вторинних отворів.
+
+// 47. Канал проходить МІЖ ніжками, а не під ними: ніжка лишається привареною
+// до 5-мм днища. Це головне обмеження компонування — 2-мм лоток під ніжкою
+// дав би ~170–290 МПа згину під ~780 Н на ніжку.
+{
+  let cases = 0, collisions = 0, buildable = 0;
+  const firstBad = [];
+  for (const w of [30, 58, 70, 96, 118, 140]) for (const d of [30, 46, 55, 82, 120]) for (const legH of [0, 5, 10, 15, 40]) for (const steel of [3, 5, 8]) {
+    const c = normalizeConfig(clone(defaultConfig));
+    c.dimensions = { widthCm: w, depthCm: d, heightCm: 95, legHeightCm: legH };
+    c.materials.steelThicknessMm = steel;
+    designInternals(c);
+    cases++;
+    const issues = bottomIntakeCollisions(c);
+    if (issues.length) { collisions++; if (firstBad.length < 3) firstBad.push({ w, d, legH, steel, issues }); }
+    const g = bottomIntakeGeometry(c);
+    if (g.buildable) {
+      buildable++;
+      if (g.groundClearCm < 2) { collisions++; if (firstBad.length < 3) firstBad.push({ w, d, legH, steel, clear: g.groundClearCm }); }
+    }
+  }
+  ok(collisions === 0, `bottom intake never collides with legs/riser holes (${cases} cases)`, JSON.stringify(firstBad));
+  ok(buildable > cases * 0.4, 'the duct is buildable on most stoves', JSON.stringify({ cases, buildable }));
+  // Ніжки лишаються на повну висоту просвіту: їх НЕ вкорочено під камеру.
+  const c = designInternals(normalizeConfig(clone(defaultConfig)));
+  const legs = buildBOM(c, null, 'uk').parts.find((p) => p.name === 'Ніжки 50×50');
+  ok(legs && legs.hCm === c.dimensions.legHeightCm, 'legs keep the full clearance height (welded to the 5 mm bottom)', JSON.stringify(legs));
+  ok(legFootprints(c).length === 4 && legFootprints({ dimensions: { widthCm: 70, depthCm: 55, legHeightCm: 0 } }).length === 0, 'leg footprints follow legHeightCm');
+  // Вікна в днищі лежать позаду ніжок і всередині сліду стояка (перевіряє
+  // bottomIntakeCollisions), а глибина вікна фізично свердлима.
+  const g = bottomIntakeGeometry(c);
+  ok(g.holeDepth > 1 && g.holeW > 1, 'floor feed windows are real openings', JSON.stringify({ holeW: g.holeW, holeDepth: g.holeDepth }));
+}
+
+// 48. Площа вторинних отворів масштабується від ТОПКИ й лишається буд-ною
+// (свердла 3–5 мм, перемичка ≥ Ø, не більше двох рядів).
+{
+  const seen = [];
+  for (const name of ['compact', 'standard', 'wide', 'workshop']) {
+    const c = designInternals(applyModelPreset(normalizeConfig(clone(defaultConfig)), name));
+    const p = secondaryHolePattern(c);
+    const liters = PhysicsModel.evaluate(c).metrics.fireboxLiters;
+    seen.push({ name, liters, area: +p.areaCm2.toFixed(2), dia: p.diaCm, count: p.count, rows: p.rows });
+    ok(SECONDARY_DRILLS_CM.includes(p.diaCm), `${name}: hole diameter is a real drill size`, JSON.stringify(p));
+    ok(p.rows <= 2 && p.pitchCm >= p.diaCm * 2, `${name}: holes fit the tube with a ≥1×Ø ligament`, JSON.stringify(p));
+    ok(Math.abs(p.areaCm2 / liters - SECONDARY_AREA_PER_LITER_CM2) < 0.02, `${name}: hole area scales with the firebox`, JSON.stringify({ liters, area: p.areaCm2, perLiter: +(p.areaCm2 / liters).toFixed(4) }));
+  }
+  const std = seen.find((s) => s.name === 'standard');
+  ok(std.area >= 6 && std.area <= 10, 'Standard secondary holes land in the 6–10 cm² window (was 1.06)', JSON.stringify(std));
+  ok(seen[0].area < seen[1].area && seen[1].area < seen[2].area && seen[2].area < seen[3].area, 'bigger firebox → bigger hole area', JSON.stringify(seen));
+  // Частка площі отворів у всіх входах повітря: була 2.7 %, і саме тому
+  // повзун secondary у Φ-тюнері «рухав» λ сильніше за залізо.
+  const c = designInternals(applyModelPreset(normalizeConfig(clone(defaultConfig)), 'standard'));
+  const r = PhysicsModel.evaluate(c);
+  const share = secondaryHolePattern(c).areaCm2 / r.breakdown.effectiveIntakeAreaCm2 * 100;
+  ok(share > 12, 'secondary holes are no longer a token 2.7 % of the intake area', JSON.stringify({ share: +share.toFixed(1) }));
+}
+
+// 49. Попередження SECONDARY_RESTRICTED не померло від збільшення отворів:
+// воно спрацьовує саме на замалих отворах.
+{
+  const small = designInternals(normalizeConfig(clone(defaultConfig)));
+  small.combustion.washAsSecondary = false;
+  small.secondaryAir.holeCount = 8; small.secondaryAir.holeDiameterCm = 0.25;
+  normalizeConfig(small);
+  const rs = PhysicsModel.evaluate(small);
+  ok(rs.breakdown.secondaryCoverage < 0.62 && rs.warnings.some((w) => w.code === 'SECONDARY_RESTRICTED'), 'undersized holes still raise SECONDARY_RESTRICTED', JSON.stringify({ coverage: rs.breakdown.secondaryCoverage, codes: rs.warnings.map((w) => w.code) }));
+  const sized = designInternals(normalizeConfig(clone(defaultConfig)));
+  sized.combustion.washAsSecondary = false;
+  const rr = PhysicsModel.evaluate(sized);
+  ok(!rr.warnings.some((w) => w.code === 'SECONDARY_RESTRICTED'), 'auto-sized holes clear the warning even without air-wash', JSON.stringify({ coverage: rr.breakdown.secondaryCoverage }));
+  ok(rr.breakdown.secondaryCoverage > rs.breakdown.secondaryCoverage, 'coverage grows with the hole area');
+}
+
+// 50. Повзун: щілина відкривається монотонно, упор 20 % попереджає, а САМА
+// поява каналу фізично нейтральна (нових коефіцієнтів у моделі немає).
+{
+  const c = designInternals(normalizeConfig(clone(defaultConfig)));
+  const at = (pct) => { const cc = clone(c); cc.operation.secondaryAirPct = pct; return PhysicsModel.evaluate(cc); };
+  const m0 = at(0).metrics, m20 = at(20).metrics, m100 = at(100).metrics;
+  ok(m0.secondaryIntakeOpenCm2 === 0 && m100.secondaryIntakeOpenCm2 === m100.secondaryIntakeFullCm2, 'slider closes at 0 % and fully opens at 100 %', JSON.stringify({ m0: m0.secondaryIntakeOpenCm2, m100: m100.secondaryIntakeOpenCm2, full: m100.secondaryIntakeFullCm2 }));
+  ok(m20.secondaryIntakeOpenCm2 > 0 && m20.secondaryIntakeOpenCm2 < m100.secondaryIntakeOpenCm2, 'intake opening is monotonic in the slider');
+  ok(m100.secondaryPathAreaCm2 < m100.secondaryOpeningAreaCm2 && m100.secondaryPathAreaCm2 < m100.secondaryIntakeFullCm2, 'series path area is smaller than either restriction', JSON.stringify({ path: m100.secondaryPathAreaCm2, holes: m100.secondaryOpeningAreaCm2, slot: m100.secondaryIntakeFullCm2 }));
+  ok(at(INTAKE_MIN_STOP_PCT - 5).warnings.some((wn) => wn.code === 'SECONDARY_INTAKE_LOW'), 'below the 20 % stop the model warns');
+  ok(!at(INTAKE_MIN_STOP_PCT).warnings.some((wn) => wn.code === 'SECONDARY_INTAKE_LOW'), 'at the stop the warning is gone');
+  const off = clone(c); off.secondaryAir.bottomIntake = false;
+  const rOff = PhysicsModel.evaluate(off), rOn = PhysicsModel.evaluate(c);
+  ok(rOff.metrics.lambda === rOn.metrics.lambda && rOff.metrics.efficiencyPct === rOn.metrics.efficiencyPct && rOff.metrics.heatOutputKw === rOn.metrics.heatOutputKw,
+    'the duct itself is physics-neutral: λ, efficiency and power do not move', JSON.stringify({ off: rOff.metrics.lambda, on: rOn.metrics.lambda }));
+  ok(rOff.metrics.secondaryIntakeFullCm2 === 0 && !rOff.warnings.some((wn) => wn.code === 'SECONDARY_INTAKE_LOW'), 'no duct → no intake area and no stop warning');
+}
+
+// 51. Конфіг: bottomIntake нормалізується, низькі ніжки дають ПОПЕРЕДЖЕННЯ
+// (а не помилку), а сміття не породжує NaN у геометрії.
+{
+  const junky = normalizeConfig(deepMerge(clone(defaultConfig), { secondaryAir: { bottomIntake: 'так' } }));
+  ok(junky.secondaryAir.bottomIntake === true, 'bottomIntake is always a boolean');
+  const off = normalizeConfig(deepMerge(clone(defaultConfig), { secondaryAir: { bottomIntake: false } }));
+  ok(off.secondaryAir.bottomIntake === false, 'an explicit false survives normalization');
+  const low = designInternals(normalizeConfig(clone(defaultConfig)));
+  low.dimensions.legHeightCm = 2; normalizeConfig(low);
+  const v = validateConfig(low);
+  ok(v.valid, 'low legs are not a configuration error', JSON.stringify(v.errors.map((e) => e.code)));
+  ok(v.warnings.some((wn) => wn.code === 'BOTTOM_INTAKE_NO_ROOM'), 'low legs warn BOTTOM_INTAKE_NO_ROOM', JSON.stringify(v.warnings.map((wn) => wn.code)));
+  ok(!bottomIntakeGeometry(low).buildable && bottomIntakeCollisions(low).length === 0, 'no duct → nothing to collide with');
+  const garbage = normalizeConfig(deepMerge(clone(defaultConfig), {
+    dimensions: { legHeightCm: 'abc' }, secondaryAir: { holeCount: 'x', holeDiameterCm: 'y', manifoldHeightCm: 'z' },
+  }));
+  const gg = bottomIntakeGeometry(garbage);
+  ok(Object.values(gg).every((value) => typeof value !== 'number' || Number.isFinite(value)), 'bottomIntakeGeometry never returns NaN', JSON.stringify(gg));
+  // Вузький канал — теж попередження, а не тиха брехня про повзун.
+  const choke = designInternals(normalizeConfig(clone(defaultConfig)));
+  choke.dimensions = { widthCm: 58, depthCm: 82, heightCm: 180, legHeightCm: 5 };
+  designInternals(choke);
+  const cv = validateConfig(choke);
+  ok(cv.valid && (cv.warnings.some((wn) => wn.code === 'BOTTOM_INTAKE_CHOKED') || !bottomIntakeGeometry(choke).choked),
+    'a duct narrower than the holes warns BOTTOM_INTAKE_CHOKED instead of silently throttling', JSON.stringify(cv.warnings.map((wn) => wn.code)));
+}
+
+// 52. BOM і креслення знають про канал; ніжки рахуються як ПРОФІЛЬНА труба,
+// а не суцільний пруток (стара помилка: 11.8 кг замість ~2.8 кг).
+{
+  const c = designInternals(normalizeConfig(clone(defaultConfig)));
+  const bom = buildBOM(c, null, 'uk');
+  const names = bom.parts.map((p) => p.name);
+  for (const part of ['Нижній вхід — канал поздовжній', 'Нижній вхід — колектор поперечний', 'Нижній вхід — плита з щілиною', 'Нижній вхід — повзун + ручка']) {
+    ok(names.includes(part), `BOM has "${part}"`, JSON.stringify(names.slice(-6)));
+  }
+  const duct = bom.parts.find((p) => p.name === 'Нижній вхід — канал поздовжній');
+  ok(duct.weldCm > 0 && duct.massKg > 0 && duct.massKg < 6, 'the duct is a profile tube with a sane mass and its own welds', JSON.stringify(duct));
+  const legs = bom.parts.find((p) => p.name === 'Ніжки 50×50');
+  ok(legs.massKg * 4 < 4, 'legs are billed as 50×50×3 profile (~4.4 kg/m), not solid bar', JSON.stringify(legs));
+  const off = clone(c); off.secondaryAir.bottomIntake = false;
+  ok(!buildBOM(off, null, 'uk').parts.some((p) => /Нижній вхід/.test(p.name)), 'no duct → no duct parts in the BOM');
+  // EN: жодної кирилиці в нових назвах/примітках + 11 колонок з каналом.
+  const cyr = /[А-Яа-яІіЇїЄєҐґʼ]/;
+  const en = buildBOM(c, null, 'en');
+  const cyrParts = en.parts.filter((p) => cyr.test(`${p.name}${p.note}${p.mat}`));
+  ok(cyrParts.length === 0, 'EN BOM has no Cyrillic in the new rows', JSON.stringify(cyrParts.map((p) => p.name)));
+  const rows = bomToCsv(en, 'en').split('\n');
+  const fieldCount = (line) => { let n = 1, q = false; for (const ch of line) { if (ch === '"') q = !q; else if (ch === ',' && !q) n++; } return n; };
+  ok(rows.every((line) => fieldCount(line) === 11), 'every CSV row still has exactly 11 columns with the duct present', JSON.stringify(rows.map(fieldCount).filter((n) => n !== 11)));
+  // Креслення показує канал на всіх трьох видах — інакше монтажник приварив
+  // би ніжки там, де має пройти канал.
+  for (const [lng, label] of [['uk', 'нижній вхід'], ['en', 'bottom intake']]) {
+    const svg = buildDrawingSVG(c, lng);
+    ok(svg.includes(label) && !/NaN|undefined/.test(svg), `drawing (${lng}) shows the bottom intake and has no NaN`, svg.length > 0 ? '' : 'empty');
+  }
+}
+
+// 53. i18n: нові ключі й коди є в ОБОХ словниках і рендеряться без сміття,
+// а кожен data-i18n у index.html має переклад.
+{
+  for (const l of ['uk', 'en']) {
+    for (const k of ['bottomIntake', 'intakeAreaLbl', 'intakePathLbl', 'intakeNote']) {
+      ok(typeof STR[l][k] === 'string' && STR[l][k].length > 2, `new UI key ${k} exists in ${l}`);
+    }
+    ok(typeof WARN_TXT[l].SECONDARY_INTAKE_LOW === 'function' && !/undefined|NaN/.test(WARN_TXT[l].SECONDARY_INTAKE_LOW(12)), `SECONDARY_INTAKE_LOW renders in ${l}`);
+    for (const code of ['BOTTOM_INTAKE_NO_ROOM', 'BOTTOM_INTAKE_CHOKED']) {
+      const fn = VALIDATION_TXT[l][code];
+      ok(typeof fn === 'function' && !/undefined|NaN/.test(fn({ legs: 2, need: 4.5, area: 12, holes: 18 })), `${code} renders in ${l}`);
+    }
+  }
+  const cyr = /[А-Яа-яІіЇїЄєҐґʼ]/;
+  ok(!cyr.test(`${STR.en.bottomIntake}${STR.en.intakeNote}${WARN_TXT.en.SECONDARY_INTAKE_LOW(5)}${VALIDATION_TXT.en.BOTTOM_INTAKE_NO_ROOM({ legs: 2, need: 4.5 })}`), 'EN texts have no Cyrillic');
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const keys = [...html.matchAll(/data-i18n="([^"]+)"/g)].map((m) => m[1]);
+  const missing = [...new Set(keys)].filter((k) => !STR.uk[k] || !STR.en[k]);
+  ok(keys.length > 20 && missing.length === 0, 'every data-i18n key in index.html exists in both dictionaries', JSON.stringify(missing));
+}
+
+// 60. Рецензія: маршрут top/wall є і в BOM (підйом + горизонталь + вертикаль +
+// 2 коліна), EN без кирилиці; стояки secondary не душать великі печі.
+{
+  const c = designInternals(normalizeConfig(clone(defaultConfig)));
+  c.chimney.route = 'wall';
+  const names = buildBOM(c, null, 'uk').parts.map((p) => p.name);
+  ok(names.some((n) => /підйом/.test(n)) && names.some((n) => /вертикаль/.test(n)) && names.includes('Горизонталь до стінного димоходу') && names.includes('Коліно 90°'), 'top/wall route is in the BOM', JSON.stringify(names.filter((n) => /Димохід|Коліно|Горизонталь/.test(n))));
+  ok(!/[А-Яа-яІіЇїЄєҐґ]/.test(bomToCsv(buildBOM(c, null, 'en'), 'en')), 'top/wall EN CSV has no Cyrillic');
+  for (const name of Object.keys(MODEL_PRESETS)) {
+    const g = bottomIntakeGeometry(designInternals(applyModelPreset(normalizeConfig(clone(defaultConfig)), name)));
+    ok(!g.choked && g.windowsCm2 >= g.holesCm2, `secondary path not choked by floor windows (${name})`, JSON.stringify({ holes: g.holesCm2, windows: g.windowsCm2, minPath: g.minPathCm2 }));
+  }
 }
 
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);process.exit(fails === 0 ? 0 : 1);

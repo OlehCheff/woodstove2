@@ -97,3 +97,6 @@ button:active{transform:translateY(1px)}
   #topbar{top:8px;right:8px;left:8px;overflow-x:auto;justify-content:flex-end}
   #topbar button{white-space:nowrap}
 }
+.hint{font-size:12px;opacity:.85;margin:4px 0}
+.hint.ok{color:#86efac}
+.hint.warn{color:#fcd34d}

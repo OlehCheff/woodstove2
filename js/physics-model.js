@@ -1,5 +1,5 @@
 // PhysicsModel v5 — оціночна airflow/thermal модель, не CFD і не сертифікація.
-import { OPERATION_PRESETS } from './config.js';
+import { OPERATION_PRESETS, rearOutletLayout, bottomIntakeGeometry, INTAKE_MIN_STOP_PCT } from './config.js';
 
 const MODE_COEFF = {
   'start-up':  { effBias: -4, powerFactor: 1.05, burnFactor: 0.72, fillFactor: 0.5 },
@@ -29,6 +29,40 @@ const LAMBDA_REF = 2.2;
 // вже не вистачає, щоб допалити всі гази: частина енергії йде в трубу як CO і дим.
 // Так пік ККД припадає на межу цільового діапазону, а не в зону MIX_RICH (Φ > 0.55).
 const LAMBDA_RICH = 2.0;
+// Межі потужності — лише захист від нісенітниці (NaN/Infinity з пошкодженого
+// конфігу), а НЕ «робочий діапазон». Колишні clamp(1.5…24) для gross і
+// clamp(1.0…20) для net були штучні: кожна мала піч показувала фальшиві
+// ~1.15 кВт (реально ~0.17), а великі зрізались — майстерня давала 18.05 кВт
+// замість ~26, і її режим high (16.88) виходив СЛАБШИМ за medium (18.05).
+// 500 кВт недосяжні в межах UI (найбільша піч 140×120×180 ≈ 200 кВт gross),
+// тож ця межа ніколи не спрацьовує на реальному конфізі.
+const MAX_SANE_KW = 500;
+const saneKw = (v) => (Number.isFinite(v) ? clamp(v, 0, MAX_SANE_KW) : 0);
+
+// ---- Вихід труби: власні повороти на 90°, яких немає у слайдері «Вигинів» ----
+// Слайдер chimney.bends описує вигини ВИЩЕ печі; ці — невідʼємні від способу
+// підключення. Маршрут «над піччю»: верхній виходить прямо (0), задній платить
+// одним коліном. Маршрут «у стінний димохід позаду»: верхньому потрібні два
+// повороти (вгору→назад→вгору), задньому — один.
+// ЗАСТЕРЕЖЕННЯ: штраф 1/(1+0.12·n) за поворот — це модельна УМОВНІСТЬ,
+// відкалібрована разом із рештою формули тяги, а не виміряний опір. За балансом
+// мас швидкість у трубі Ø17.5 на сталому режимі — 0.46–0.67 м/с, тобто реальний
+// трійник коштує ζ·ρv²/2 ≈ 0.03–0.16 Па, а не ~2 Па. Чесна частка дефіциту
+// тяги заднього виходу — охолодження патрубка (≈ −5% і ≈ −25 °C на 30 см
+// для defaultConfig, bends 0), решта −10% — ця умовність. 0.12 не чіпаємо,
+// щоб не зсувати наявне калібрування; на виборі виходу воно не позначається.
+const OUTLET_TURNS = { up: { top: 0, rear: 1 }, wall: { top: 2, rear: 1 } };
+// Одностінна труба в кімнаті охолоджує гази: NTU ≈ 0.2 (газ 300 °C) …
+// 0.39 (557 °C) на метр при U ≈ 2.7–5.3 Вт/м²К. Беремо 0.3/м — ОЦІНКА,
+// яку варто відкалібрувати Test Burn-ом (T газу до і після патрубка).
+// Для порівняння: увесь димохід модель охолоджує на 0.12/м (flueCoolingFactor),
+// і вертикальна одностінна труба верхнього виходу врахована саме там.
+const ROOM_PIPE_COOLING_PER_M = 0.3;
+// Маршрут «у стінний димохід» для ВЕРХНЬОГО виходу: підйом над кришкою перед
+// поворотом назад (м). Разом із проходом над піччю (0.3·глибини) це та зайва
+// труба в кімнаті, якої задній вихід не має.
+const TOP_WALL_RISE_M = 0.4;
+const AMBIENT_C = 20;
 
 export const PhysicsModel = {
   evaluate(config) {
@@ -42,6 +76,20 @@ export const PhysicsModel = {
     const chimD = +config?.chimney?.diameterCm || 15;
     const flueH = +config?.chimney?.totalHeightM || 5;
     const flueBends = +config?.chimney?.bends || 0;
+    const outlet = config?.chimney?.outlet === 'rear' ? 'rear' : 'top';
+    const route = config?.chimney?.route === 'wall' ? 'wall' : 'up';
+    const connectorM = clamp(+config?.chimney?.connectorLengthCm || 30, 15, 150) / 100;
+    const outletTurns = OUTLET_TURNS[route][outlet];
+    // Довжина ВІДКРИТОЇ горизонтальної/зайвої труби в кімнаті, якої немає у
+    // базового варіанта (верхній + «над піччю»): вона віддає тепло в кімнату
+    // й водночас охолоджує гази перед вертикаллю.
+    const roomPipeM = route === 'wall'
+      ? connectorM + (outlet === 'top' ? d * 0.3 / 100 + TOP_WALL_RISE_M : 0)
+      : (outlet === 'rear' ? connectorM : 0);
+    // Охорона `roomPipeM > 0`: для top/up множник рівно 1 (без exp(0)), тож
+    // метрики й журнали калібрування не зсуваються навіть на 1 ulp.
+    const roomPipeCooling = roomPipeM > 0 ? Math.exp(-ROOM_PIPE_COOLING_PER_M * roomPipeM) : 1;
+    const routeBends = flueBends + outletTurns;
     const washAsSecondary = config?.combustion?.washAsSecondary !== false;
     const tertiaryCfg = config?.combustion?.tertiary || {};
     const catalystCfg = config?.combustion?.catalyst || {};
@@ -98,6 +146,26 @@ export const PhysicsModel = {
     const secondaryTotalAreaCm2 = secondaryOpeningAreaCm2 + airWashOpeningAreaCm2 * washSecondaryShare + tertiaryAreaCm2 * 0.6;
     const chimneyAreaCm2 = circleArea(chimD);
     const effectiveIntakeAreaCm2 = primaryOpeningAreaCm2 + secondaryOpeningAreaCm2 + airWashOpeningAreaCm2 + tertiaryAreaCm2;
+    // ---- Нижній вхід secondary (канал під днищем + повзун спереду) ----
+    // Повзун — це фізичний привід ТОГО САМОГО operation.secondaryAirPct, який
+    // уже був у моделі. λ, ККД і потужність від самої появи каналу не
+    // змінюються: нових коефіцієнтів тут немає НАВМИСНО.
+    // Підігрів повітря в каналі (оцінка +20…90 °C) НЕ моделюється: свого
+    // коефіцієнта для нього немає, а на стелі combustionEff = 92 він лише
+    // підняв би втрати в трубі. Це записано і в REPORT §7.
+    const intake = bottomIntakeGeometry(config);
+    const secondaryIntakeFullCm2 = intake.slotAreaCm2;
+    const secondaryIntakeOpenCm2 = secondaryIntakeFullCm2 * clamp(secondaryPct, 0, 100) / 100;
+    // Щілина й отвори стоять ПОСЛІДОВНО, тож опори додаються як 1/A²
+    // (стандартне складання отворів, не новий коефіцієнт). Ця площа —
+    // ДОВІДКОВА: у λ вона не входить, бо airMix бере відсоток повзуна, а не
+    // площу. Саме тут модель приписує повзуну більше влади, ніж має залізо
+    // (вага 0.35 в airMix проти ~9 % площі входів із внутрішньою заслінкою, ~19 % повністю відкрито) — див. REPORT §7.
+    // Незмінна частина шляху (канал, колектор, вікна в днищі, стояки) — теж послідовно.
+    const fixedTerm = intake.fixedPathCm2 > 0 ? 1 / intake.fixedPathCm2 ** 2 : 0;
+    const secondaryPathAreaCm2 = secondaryIntakeOpenCm2 > 0
+      ? 1 / Math.sqrt(1 / secondaryOpeningAreaCm2 ** 2 + 1 / secondaryIntakeOpenCm2 ** 2 + fixedTerm)
+      : (intake.buildable ? 0 : secondaryOpeningAreaCm2);
 
     // Тяга: двигун системи — ПОВНИЙ димохід (плавучисть гарячих газів).
     // Δp ≈ g·H·(ρ_повітря − ρ_газів); вигини й опір зменшують тягу.
@@ -105,10 +173,14 @@ export const PhysicsModel = {
     const baffleAngleNorm = clamp(baffleAngle / 15, -1, 1);
     const baffleDraftPenalty = baffleHeightNorm * 1.2;
     const stackTempC = clamp(120 + flame * 320 + (mode === 'high' ? 50 : 0), 120, 650);
+    // Гази входять у вертикаль уже охолодженими на горизонтальному патрубку —
+    // саме це, а не коліно, є фізично чесною частиною дефіциту тяги заднього
+    // виходу (на defaultConfig з L = 30 см: 30.5 → 29.1 Па, тобто −4.6%).
+    const stackGasC = roomPipeM > 0 ? AMBIENT_C + (stackTempC - AMBIENT_C) * roomPipeCooling : stackTempC;
     const rhoAir = 1.2;
-    const rhoGas = rhoAir * 293 / (stackTempC + 273);
+    const rhoGas = rhoAir * 293 / (stackGasC + 273);
     const buoyancyPa = 9.81 * flueH * (rhoAir - rhoGas);
-    const bendPenalty = 1 / (1 + 0.12 * flueBends);
+    const bendPenalty = 1 / (1 + 0.12 * routeBends);
     const diaFactor = clamp((chimD / 15) ** 0.3, 0.8, 1.2);
     const draftPa = clamp(buoyancyPa * bendPenalty * diaFactor - baffleDraftPenalty, 3, 40);
     const stackVelocityMs = clamp(0.75 * Math.sqrt(Math.max(draftPa, 0.1)), 1, 7);
@@ -169,22 +241,26 @@ export const PhysicsModel = {
     // Температура димових газів на ВИХОДІ з труби: експоненційне охолодження вздовж
     // каналу (наближення до температури довкілля), а не лінійне — лінійна форма
     // перетинала нуль і давала однакові 40°C для будь-якої печі на довгих трубах.
-    const ambientC = 20;
+    const ambientC = AMBIENT_C;
     const flueCoolingFactor = Math.exp(-0.12 * flueH);
-    const exitFlueTempC = clamp(ambientC + (modeledFlueTempC - ambientC) * flueCoolingFactor - flueBends * 6, 40, 600);
+    const exitFlueTempC = clamp(ambientC + (modeledFlueTempC - ambientC) * flueCoolingFactor * roomPipeCooling - routeBends * 6, 40, 600);
+    // Тепло, яке віддає в кімнату ДОДАТКОВА одностінна труба цього маршруту
+    // (горизонтальний патрубок заднього виходу або підйом+горизонталь
+    // верхнього у стінний димохід). Це властивість МОНТАЖУ, а не печі, тому
+    // в efficiencyPct і heatOutputKw воно НЕ входить — окрема метрика.
+    // База відліку — верхній вихід із маршрутом «над піччю» (roomPipeM = 0):
+    // його власна вертикальна труба вже врахована в загальному охолодженні
+    // 0.12/м, тож це саме ПРИРІСТ відносно нього, а не «системний ККД».
+    const roomPipeGainPct = sensibleFlueLossPct * excessAirLossFactor * (1 - roomPipeCooling);
     const bodyTempC = clamp(110 + (1 - thermalRetention) * 520 + flame * 120 - (steelMm - 5) * 9, 40, 480);
     const bodyHeatSharePct = clamp((1 - thermalRetention) * 26 + 8, 8, 30);
 
     const draftFactor = clamp(draftPa / 12, 0.7, 1.3);
     const geometryFactor = clamp((w * d * h) / 1e6 / 0.36, 0.75, 1.25);
-    const grossHeatOutputKw = clamp(
-      fireboxLiters * 0.105 * (0.35 + 0.65 * airMix) * mc.powerFactor * draftFactor * geometryFactor,
-      1.5, 24.0
+    const grossHeatOutputKw = saneKw(
+      fireboxLiters * 0.105 * (0.35 + 0.65 * airMix) * mc.powerFactor * draftFactor * geometryFactor
     );
-    const heatOutputKw = clamp(
-      grossHeatOutputKw * efficiencyPct / 100 * calibrationFactor,
-      1.0, 20.0
-    );
+    const heatOutputKw = saneKw(grossHeatOutputKw * efficiencyPct / 100 * calibrationFactor);
     // Орієнтир: ~120 кг/м³ насипної маси сухих полін, не щільність деревини.
     // Безпечна максимальна закладка залишає місце для полум'я та вторинного повітря.
     const maxLoadKg = fireboxLiters * 0.12 * 0.9;
@@ -236,8 +312,16 @@ export const PhysicsModel = {
     // означає "зона на сталому режимі холодніша за поріг", а не "перші хвилини
     // після розпалу". Мінімальна досяжна зона в межах UI ~590°C, тож поріг
     // потрібно підняти вище цього значення, щоб побачити попередження.
+    // Механічний упор повзуна нижнього входу: нижче 20 % вторинне горіння
+    // задихається навіть тоді, коли модель ще показує прийнятний λ.
+    if (intake.buildable && secondaryPct < INTAKE_MIN_STOP_PCT)
+      warnings.push({ level: 'warn', code: 'SECONDARY_INTAKE_LOW', message: `Повзун нижнього входу secondary ${round(secondaryPct, 0)} % < ${INTAKE_MIN_STOP_PCT} %: вторинне горіння задихається (дим, креозот). На печі поставте механічний упор ${INTAKE_MIN_STOP_PCT} %.` });
     if (catalystEnabled && !catalystActive)
       warnings.push({ level: 'info', code: 'CATALYST_COLD', message: `Каталізатор не прогрітий (${round(combustionTempC, 0)}°C < ${round(catalystLightoffC, 0)}°C) — байпас відкрито.` });
+    // Норма патрубка печі ~0.4 м; довша горизонталь збирає сажу, гасить тягу
+    // й вимагає більших відступів до горючих (NFPA 211 — 457 мм).
+    if (roomPipeM > 0 && connectorM > 0.4)
+      warnings.push({ level: 'warn', code: 'CONNECTOR_LONG', message: `Горизонтальний патрубок ${round(connectorM * 100, 0)} см > 40 см: сажа, втрата тяги, більший відступ до горючих.` });
 
     return {
       version: 5,
@@ -263,8 +347,21 @@ export const PhysicsModel = {
         equivalenceRatio: round(equivalenceRatio, 3), lambda: round(lambda, 2),
         exitFlueTempC: round(exitFlueTempC, 0),
         secondaryTotalAreaCm2: round(secondaryTotalAreaCm2, 2), tertiaryAreaCm2: round(tertiaryAreaCm2, 2),
+        secondaryAirPct: round(secondaryPct, 0),
+        secondaryIntakeFullCm2: round(secondaryIntakeFullCm2, 2), secondaryIntakeOpenCm2: round(secondaryIntakeOpenCm2, 2),
+        secondaryPathAreaCm2: round(secondaryPathAreaCm2, 2), bottomIntakeBuildable: intake.buildable,
         secondaryIgnitionC: round(secondaryIgnitionC, 0),
         flueH, flueBends,
+        outlet, route, routeBends,
+        connectorCm: Math.round(connectorM * 100),
+        roomPipeM: round(roomPipeM, 2),
+        roomPipeGainPct: round(roomPipeGainPct, 1),
+        // ККД печі + тепло додаткової труби в кімнату. Окрема довідкова
+        // величина: це НЕ ККД печі і не «системний ККД» — верхній вихід у
+        // реальному монтажі теж має відкриту трубу в кімнаті, просто вона
+        // врахована в загальному охолодженні димоходу, а не тут.
+        efficiencyWithPipePct: round(efficiencyPct + roomPipeGainPct, 1),
+        stackGasC: round(stackGasC, 0),
       },
       breakdown: {
         airMix: round(airMix, 3), staging: round(staging, 2), loadKg: round(loadKg, 1),
@@ -276,15 +373,73 @@ export const PhysicsModel = {
   },
 };
 
+// Порівняння верхнього й заднього виходу для ПОТОЧНОЇ печі.
+// Переможця визначає МАРШРУТ, а не дерево правил: у маршруті «над піччю»
+// верхній виходить прямо, а задній платить коліном і охолодженням патрубка;
+// у маршруті «у стінний димохід позаду» все дзеркально (верхньому потрібні
+// два повороти й довша труба в кімнаті). Крок «виграш за ККД печі» зі
+// специфікації прибрано: у свипі на 960 випадках він не спрацював жодного
+// разу — ККД печі задає ВНУТРІШНІЙ шлях газів (бафль, полиця, перепускна
+// стінка), а не місце виходу, тож обидва варіанти дають ту саму цифру.
+// values — чесні порівняльні числа для UI, не аргументи рішення.
+export function compareOutlets(config) {
+  const at = (outlet) => PhysicsModel.evaluate({ ...config, chimney: { ...(config?.chimney || {}), outlet } }).metrics;
+  const top = at('top');
+  const rear = at('rear');
+  const route = config?.chimney?.route === 'wall' ? 'wall' : 'up';
+  // Комір перевіряємо не лише над ПОТОЧНИМ бафлем (його підібрано під верхній
+  // вихід), а й над найкращим досяжним для заднього: інакше вердикт залежав
+  // від порядку дій користувача.
+  let fits = rearOutletLayout(config).fits;
+  let rearNeedsRedesign = false;
+  if (!fits && config?.dimensions) {
+    const alt = optimizeConfig({ ...structuredClone(config), chimney: { ...(config.chimney || {}), outlet: 'rear' } });
+    fits = Boolean(alt && rearOutletLayout(alt.config).fits);
+    rearNeedsRedesign = fits;
+  }
+  const winner = !fits ? 'top' : (route === 'wall' ? 'rear' : 'top');
+  const code = !fits ? 'REAR_NO_ROOM' : (route === 'wall' ? 'ROUTE_WALL' : 'ROUTE_UP');
+  const pct = (a, b) => (b > 0 ? round((a - b) / b * 100, 1) : 0);
+  return {
+    winner, code, route, fits, rearNeedsRedesign,
+    values: {
+      dEff: round(rear.efficiencyPct - top.efficiencyPct, 1),
+      draftTop: top.draftPa, draftRear: rear.draftPa, dDraftPct: pct(rear.draftPa, top.draftPa),
+      exitTop: top.exitFlueTempC, exitRear: rear.exitFlueTempC, dExitC: round(rear.exitFlueTempC - top.exitFlueTempC, 0),
+      pipeGainPct: round(rear.roomPipeGainPct - top.roomPipeGainPct, 1),
+      pipeCm: Math.round(clamp(+config?.chimney?.connectorLengthCm || 30, 15, 150)),
+      dKwPct: pct(rear.heatOutputKw, top.heatOutputKw),
+      // Лише повороти, які додає сам вихід (без слайдера «Вигинів димоходу»).
+      turnsTop: OUTLET_TURNS[route].top, turnsRear: OUTLET_TURNS[route].rear,
+    },
+    top, rear,
+  };
+}
+
 // prepare(candidate) — необовʼязковий хук, що доводить залежні від бафла поля
 // (напр. діаметр труби в autodesign) до узгодженого стану перед оцінкою.
 export function optimizeConfig(config, prepare) {
   let best = null;
-  const h = config.dimensions.heightCm;
+  // Окремо тримаємо найкращого кандидата, у якого задній комір ФІЗИЧНО влазить
+  // між бафлем і кришкою. Фільтрувати можна лише ПІСЛЯ prepare(): комір
+  // залежить від діаметра труби, який prepare і рахує (варіант із обмеженням
+  // висоти бафля від вхідного конфігу дав 10/1800 неідемпотентних випадків).
+  let bestFit = null;
+  const wantRear = config?.chimney?.outlet === 'rear';
+  // Пошкоджений конфіг (NaN у висоті) не має зупиняти перебір: без числа
+  // список кандидатів виходив порожнім і функція поверталася з null.
+  const h = Number.isFinite(+config?.dimensions?.heightCm) ? +config.dimensions.heightCm : 95;
   const heightStart = Math.max(24, Math.round(h * 0.55));
-  const heightEnd = Math.min(h - 12, Math.round(h * 0.78));
+  // 120 — межа baffle.heightCm у normalizeConfig: бафль вище оцінювати не можна,
+  // інакше Ø труби рахувався від бафля, якого після нормалізації вже немає.
+  const heightEnd = Math.min(h - 12, Math.round(h * 0.78), 120);
   const heights = [];
   for (let value = heightStart; value <= heightEnd; value += 6) heights.push(value);
+  // Корпус нижче 36 см дає порожній список (heightStart 24 > heightEnd h−12).
+  // Тоді беремо одну безпечну висоту, щоб оптимізатор ЗАВЖДИ повертав кандидата:
+  // раніше він віддавав null, designInternals мовчки лишав бафль від попередньої
+  // печі (58 см усередині 40-см корпусу → BAFFLE_TOO_HIGH і хибний обʼєм топки).
+  if (!heights.length) heights.push(clamp(Math.round(h * 0.6), 20, Math.max(20, Math.round(h - 6))));
   const angles = [-2, 2, 6, 10];
   const gaps = [4, 6, 8, 10];
   const airflows = [45, 55, 65];
@@ -298,10 +453,20 @@ export function optimizeConfig(config, prepare) {
     if (prepare) prepare(candidate);
     const result = PhysicsModel.evaluate(candidate);
     const penalty = result.warnings.reduce((total, warning) => total + (warning.level === 'danger' ? 20 : warning.level === 'warn' ? 6 : 1), 0);
-    const comfortBonus = result.metrics.heatOutputKw >= 2.5 && result.metrics.heatOutputKw <= 12 ? 2 : 0;
-    const score = result.metrics.efficiencyPct + result.breakdown.secondaryCoverage * 2 + result.breakdown.airWashCoverage + comfortBonus - penalty;
+    // Бонус «за комфортну потужність» (+2 за 2.5…12 кВт) прибрано: він був
+    // сходинкою, а не фізикою — на межах діапазону перемикав бафль і робив
+    // смугу ≈1.8–2.5 кВт недосяжною для серії моделей. Оцінка тепер залежить
+    // лише від ККД, покриття вторинним повітрям і завісою та від попереджень.
+    const score = result.metrics.efficiencyPct + result.breakdown.secondaryCoverage * 2 + result.breakdown.airWashCoverage - penalty;
     if (!best || score > best.score) best = { score, config: candidate, result };
+    if (wantRear && rearOutletLayout(candidate).fits && (!bestFit || score > bestFit.score)) bestFit = { score, config: candidate, result };
   }
-  return best;
+  // Якщо задній комір не влазить у ЖОДНОГО кандидата (на сітці 1800 печей це
+  // 204 випадки: h = 40 — усі, h = 50 — 70/120), повертаємо найкращого БЕЗ
+  // фільтра. Повернути null не можна: designInternals тоді лишив би бафль від
+  // попередньої печі (58 см у корпусі 40 см) — BAFFLE_TOO_HIGH, топка 10 л
+  // замість 3.7 л. Геометрія лишається валідною, а про неможливість заднього
+  // виходу користувачу каже помилка REAR_OUTLET_NO_ROOM у validateConfig.
+  return bestFit || best;
 }
 

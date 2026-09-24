@@ -1,15 +1,15 @@
 // woodstove2 app: сцена + UI + креслення SVG + тур + експорт
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { defaultConfig, loadConfig, saveConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, encodeConfig, decodeConfig, deepMerge, getByPath, setByPath, OPERATION_PRESETS, MODEL_PRESETS } from './config.js';
-import { PhysicsModel } from './physics-model.js';
+import { defaultConfig, loadConfig, saveConfig, hasStoredConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, rearOutletLayout, encodeConfig, decodeConfig, deepMerge, getByPath, setByPath, OPERATION_PRESETS, MODEL_PRESETS } from './config.js';
+import { PhysicsModel, compareOutlets } from './physics-model.js';
 import { buildStove, disposeGroup } from './stove-builder.js';
 import { exportGLTF, exportSTL } from './exporters.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from './bom.js';
 import { calibrateFromLog, evaluateCalibration, detectJournalDesync, emptyCalibration, mergeCalibration, configSnapshot } from './calibration.js';
 import { designInternals } from './autodesign.js';
 import { PURPOSES, requiredPowerKw, roomVolume, sizeStoveForPower, evaluateRoom } from './room.js';
-import { STR, WARN_TXT, VALIDATION_TXT, TOUR, getLang, setLang } from './i18n.js';
+import { STR, WARN_TXT, WARN_ARG, VALIDATION_TXT, OUTLET_TXT, TOUR, getLang, setLang } from './i18n.js';
 
 let lang = getLang();
 const t = (k) => (STR[lang] && STR[lang][k]) || STR.uk[k] || k;
@@ -19,13 +19,19 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const safe = (fn, label = '') => { try { return fn(); } catch (e) { console.error('step failed' + (label ? ' [' + label + ']' : '') + ':', e); } };
 
 let config = loadConfig();
+let savedDesign = hasStoredConfig(); // піч уже спроєктована раніше
 const sharedValue = location.hash.startsWith('#config=') ? decodeConfig(location.hash.slice(8)) : null;
 if (sharedValue) {
   config = normalizeConfig(deepMerge(structuredClone(defaultConfig), sharedValue));
+  savedDesign = true;
   // Прибираємо #config з адреси, інакше він перекриватиме подальші правки та «Скинути» після F5.
   try { history.replaceState(null, '', location.pathname + location.search); } catch { /* ignore */ }
 }
-config = designInternals(config);
+// Збережена або поділена піч — авторитетна: похідні розміри доводимо, але
+// бафль НЕ перепідбираємо. Інакше F5 мовчки давав іншу піч, ніж була в сесії:
+// повітря/вологість/димохід у сесії оптимізатор не запускають, а завантаження
+// запускало (інший бафль → інший діаметр труби → інші кВт і ККД).
+config = designInternals(config, { keepBaffle: savedDesign });
 const cache = new Map(); // кеш матеріалів
 const COMPARE_KEY = 'woodstove2CompareV1';
 
@@ -120,8 +126,12 @@ function applyThermalZones(metrics = null) {
 function applyExplode(snap = 0) {
   if (snap) explodeCur = explodeTarget;
   const dist = config.explode.distanceCm;
+  // Задній вихід від'єднується НАЗАД і трохи вгору — уздовж власної осі
+  // патрубка, а не вертикально крізь суцільну кришку.
+  const rear = config.chimney.outlet === 'rear';
+  const flueOff = rear ? [0, dist * 0.4, -dist * 1.2] : [0, dist * 1.2, 0];
   const map = {
-    chimney: [0, dist * 1.2, 0], collar: [0, dist * 1.2, 0],
+    chimney: flueOff, collar: flueOff,
     doorPivot: [0, 0, dist * 0.9], firebrick: [-dist * 0.4, 0, 0],
     baffle: [dist * 0.35, dist * 0.2, 0], airSystems: [0, 0, dist * 0.65], chamber: [0, 0, -dist * 0.35],
   };
@@ -234,6 +244,16 @@ function renderPhysics() {
   document.getElementById('m-equiv-ratio').textContent = `${r.metrics.equivalenceRatio} (λ${r.metrics.lambda})`;
   document.getElementById('m-exit-flue').textContent = `${r.metrics.exitFlueTempC} °C`;
   document.getElementById('m-tertiary-area').textContent = `${r.metrics.tertiaryAreaCm2} cm²`;
+  // Нижній вхід secondary: «відкрито / повна» і послідовна площа шляху.
+  // Прочерк — коли каналу фізично немає (низькі ніжки або опція вимкнена).
+  safe(() => {
+    const el = document.getElementById('m-intake-area');
+    if (el) el.textContent = r.metrics.secondaryIntakeFullCm2 > 0 ? `${r.metrics.secondaryIntakeOpenCm2} / ${r.metrics.secondaryIntakeFullCm2} cm²` : '—';
+    const pathEl = document.getElementById('m-intake-path');
+    if (pathEl) pathEl.textContent = `${r.metrics.secondaryPathAreaCm2} cm²`;
+  }, 'intakeMetrics');
+  const roomPipeEl = document.getElementById('m-room-pipe');
+  if (roomPipeEl) roomPipeEl.textContent = `${r.metrics.roomPipeGainPct}% (Σ ${r.metrics.efficiencyWithPipePct}%)`;
   const ul = document.getElementById('warnings'); ul.innerHTML = '';
   if (!r.warnings.length) ul.innerHTML = `<li>${t('noIssues')}</li>`;
   for (const wmsg of r.warnings) {
@@ -244,6 +264,7 @@ function renderPhysics() {
   // Захист: падіння одного рендер-кроку (напр., друкарська помилка в новій панелі)
   // не має приховувати всю піч. Кожен крок — ізольований.
   safe(renderValidation);
+  safe(renderOutletVerdict);
   safe(() => renderTestBurn());
   safe(renderTestLog);
   safe(() => renderBomSummary(r));
@@ -251,6 +272,20 @@ function renderPhysics() {
   safe(() => renderAutoSummary(r));
   safe(renderRoomSummary);
   safe(() => applyThermalZones(r.metrics));
+}
+
+// Живий вердикт «який вихід кращий саме тут». Клас 'ok' — обраний вихід і є
+// переможцем, 'warn' — користувач обрав інший (що дозволено: це проєкт, а не
+// заборона). Числа беремо з compareOutlets, щоб панель і фізика не розходились.
+function renderOutletVerdict() {
+  const target = document.getElementById('outletVerdict');
+  if (!target) return;
+  const { winner, code, values } = compareOutlets(config);
+  const dict = OUTLET_TXT[lang] || OUTLET_TXT.uk;
+  const explain = dict[code] || OUTLET_TXT.uk[code];
+  const winnerLabel = t(winner === 'rear' ? 'outletRear' : 'outletTop');
+  target.className = winner === config.chimney.outlet ? 'hint ok' : 'hint warn';
+  target.textContent = `${t('outletRecommended')}: ${winnerLabel} — ${typeof explain === 'function' ? explain(values) : code}`;
 }
 
 function validationText(item) {
@@ -421,6 +456,7 @@ function getCompareMetrics(cfg) {
     [t('metricEfficiency')]: `${physics.efficiencyPct}%`,
     [t('metricBurn')]: `${physics.burnTimeHours} ${t('unitH')}`,
     [t('metricDraft')]: `${physics.draftPa} ${t('unitPa')}`,
+    [t('flueOutlet')]: t(cfg?.chimney?.outlet === 'rear' ? 'outletRear' : 'outletTop'),
     [t('metricWidth')]: `${cfg.dimensions.widthCm} ${t('unitCm')}`,
     [t('metricDepth')]: `${cfg.dimensions.depthCm} ${t('unitCm')}`,
     [t('metricHeight')]: `${cfg.dimensions.heightCm} ${t('unitCm')}`,
@@ -594,10 +630,17 @@ const controlMap = {
   flueTempC: 'testBurn.flueTempC', stoveTopTempC: 'testBurn.stoveTopTempC', glassTempC: 'testBurn.glassTempC', smokeOpacityPct: 'testBurn.smokeOpacityPct',
   volumeM3: 'room.volumeM3', areaM2: 'room.areaM2', ceilingM: 'room.ceilingM',
   chimneyTotalHeightM: 'chimney.totalHeightM', chimneyBends: 'chimney.bends', tertiaryHoleCount: 'combustion.tertiary.holeCount',
+  chimneyConnectorLengthCm: 'chimney.connectorLengthCm',
   excludeStartUp: 'calibration.excludeStartUp',
   primaryAirOpenPct: 'primaryAir.openPct', operationSecondaryAirPct: 'operation.secondaryAirPct',
 };
 // Зміна цих полів запускає перепроєктування внутрішньої геометрії.
+// Поля димоходу (висота, вигини, патрубок, вихід, маршрут) сюди НЕ входять
+// НАВМИСНО: збережена піч завантажується з keepBaffle, тож перепроєктування
+// в сесії зробило б F5 знову іншим від сесії (той самий клас розбіжності, що
+// закріплює тест 34). Бафль перепідбирається лише на зміну габаритів,
+// матеріалів, дверцят, режиму й пресета — і тоді оптимізатор уже враховує
+// задній комір (physics-model.js:optimizeConfig).
 const DESIGN_IDS = { widthCm: 1, depthCm: 1, heightCm: 1, legHeightCm: 1, steelThicknessMm: 1, firebrickThicknessCm: 1, doorWidthCm: 1, doorHeightCm: 1 };
 function fmt(id, v) {
   if (String(id).includes('Pct') || id === 'baffleAirflowPct' || id === 'airWashIntakePct') return `${v}%`;
@@ -610,6 +653,7 @@ function fmt(id, v) {
   if (id === 'areaM2') return `${v} m²`;
   if (id === 'ceilingM') return `${v} m`;
   if (id === 'chimneyTotalHeightM') return `${v} m`;
+  if (id === 'chimneyConnectorLengthCm') return `${v} ${t('unitCm')}`;
   if (id === 'chimneyBends' || id === 'tertiaryHoleCount') return `${v}`;
   if (id === 'catalystLightoffC') return `${v} °C`;
   if (id === 'heatExchangePasses') return `${v}`;
@@ -620,16 +664,16 @@ function fmt(id, v) {
   if (/Color/i.test(id)) return `${v}`;
   return `${v} ${t('unitCm')}`;
 }
+// Аргумент параметризованого тексту береться з таблиці WARN_ARG (i18n.js), а
+// не з ланцюжка if-ів із «здогадкою» в кінці: саме та здогадка підставляла
+// тягу в будь-який новий код. Якщо мапи немає — показуємо готове українське
+// повідомлення з моделі, а не число не з того поля.
 function warnText(code, fallback, m) {
   const dict = WARN_TXT[lang] || WARN_TXT.uk;
   const entry = dict[code];
   if (typeof entry === 'function') {
-    if (code === 'STEEL_OVERHEAT') return entry(m.bodyTempC);
-    if (code === 'WET_WOOD') return entry(m.moisturePct);
-    if (code === 'SECONDARY_INACTIVE' || code === 'CATALYST_COLD') return entry(m.combustionTempC);
-    if (code === 'MIX_RICH' || code === 'MIX_LEAN') return entry(m.equivalenceRatio);
-    if (code === 'CREOSOTE_RISK') return entry(m.exitFlueTempC);
-    return entry(m.draftPa);
+    const field = WARN_ARG[code];
+    return field && m[field] !== undefined ? entry(m[field]) : fallback;
   }
   return entry || fallback;
 }
@@ -666,6 +710,12 @@ function syncUI() {
   document.getElementById('woodSpecies').value = config.testBurn.woodSpecies;
   document.getElementById('roomPurpose').value = config.room.purpose;
   document.getElementById('roomInputMode').value = config.room.inputMode;
+  const outletSel = document.getElementById('chimneyOutlet'); if (outletSel) outletSel.value = config.chimney.outlet;
+  const routeSel = document.getElementById('chimneyRoute'); if (routeSel) routeSel.value = config.chimney.route;
+  // Патрубок має сенс лише там, де є горизонталь: верхній вихід прямо вгору
+  // її не має взагалі.
+  const connRow = document.getElementById('connectorRow');
+  if (connRow) connRow.style.display = (config.chimney.outlet === 'top' && config.chimney.route === 'up') ? 'none' : '';
   updateRoomRows();
   for (const [id, k] of Object.entries({ showFirebrick: 'firebrick', showBaffle: 'baffle', showAirChannels: 'airChannels', showChimney: 'chimney', showSection: 'section', showGrid: 'grid', showThermal: 'thermal', showShields: 'shields' })) {
     const el = document.getElementById(id); if (el) el.checked = config.visibility[k] !== false;
@@ -675,6 +725,8 @@ function syncUI() {
   document.getElementById('aeroFlow').checked = config.flow.aero;
   document.getElementById('washAsSecondary').checked = config.combustion.washAsSecondary;
   document.getElementById('tertiaryEnabled').checked = config.combustion.tertiary.enabled;
+  const bottomIntakeEl = document.getElementById('bottomIntake');
+  if (bottomIntakeEl) bottomIntakeEl.checked = config.secondaryAir.bottomIntake !== false;
   document.getElementById('catalystEnabled').checked = config.combustion.catalyst.enabled;
   const calExcl = document.getElementById('excludeStartUp'); if (calExcl) calExcl.checked = config.calibration.excludeStartUp;
   document.getElementById('modeHint').textContent =
@@ -704,7 +756,9 @@ function bindUI() {
       if (id in { woodMoisturePct: 1, loadKg: 1, measuredBurnHours: 1, measuredUsefulHeatKwh: 1, flueTempC: 1, stoveTopTempC: 1, glassTempC: 1, smokeOpacityPct: 1 }) {
         renderTestBurn(); return;
       }
-      if (DESIGN_IDS[id]) { designInternals(config); syncUI(); }
+      // Зберігаємо ПІСЛЯ перепроєктування: інакше в localStorage лягав новий
+      // розмір із бафлем під попереднє значення слайдера (сесія ≠ F5).
+      if (DESIGN_IDS[id]) { designInternals(config); saveConfig(config); syncUI(); }
       scheduleRebuild(); renderPhysics();
       if (config.viewMode !== '3d') renderOverlaySVG();
     });
@@ -721,6 +775,23 @@ function bindUI() {
   document.getElementById('viewMode').addEventListener('change', (e) => {
     config.viewMode = e.target.value; normalizeConfig(config); saveConfig(config); applyViewMode();
   });
+  // Вихід і маршрут міняють ГЕОМЕТРІЮ (комір, патрубок, трійник) і тягу, тож
+  // потрібні і перебудова 3D, і перерахунок фізики, і креслення. Бафль при
+  // цьому НЕ перепідбирається — див. коментар до DESIGN_IDS.
+  for (const [id, path] of Object.entries({ chimneyOutlet: 'outlet', chimneyRoute: 'route' })) {
+    const el = document.getElementById(id); if (!el) continue;
+    el.addEventListener('change', (e) => {
+      config.chimney[path] = e.target.value;
+      normalizeConfig(config);
+      // Задній комір не влазить над поточним бафлем (підібраним під верхній
+      // вихід) — перепідбираємо бафль: оптимізатор віддає перевагу кандидатам,
+      // де комір фізично влазить. Якщо таких немає, лишиться REAR_OUTLET_NO_ROOM.
+      if (config.chimney.outlet === 'rear' && !rearOutletLayout(config).fits) designInternals(config);
+      saveConfig(config); syncUI();
+      rebuildStove(); renderPhysics();
+      if (config.viewMode !== '3d') renderOverlaySVG();
+    });
+  }
   document.getElementById('doorHingeSide').addEventListener('change', (e) => {
     config.door.hingeSide = e.target.value === 'right' ? 'right' : 'left';
     normalizeConfig(config); saveConfig(config); rebuildStove();
@@ -770,6 +841,12 @@ function bindUI() {
   document.getElementById('washAsSecondary').addEventListener('change', (e) => {
     config.combustion.washAsSecondary = e.target.checked; saveConfig(config); renderPhysics();
   });
+  // Нижній вхід secondary: деталь конструктивна, тож 3D перебудовуємо повністю
+  // (ніжки, стояки й отвори в днищі залежать від наявності каналу).
+  document.getElementById('bottomIntake').addEventListener('change', (e) => {
+    config.secondaryAir.bottomIntake = e.target.checked; saveConfig(config);
+    cache.clear(); rebuildStove(); renderPhysics();
+  });
   document.getElementById('tertiaryEnabled').addEventListener('change', (e) => {
     config.combustion.tertiary.enabled = e.target.checked; saveConfig(config);
     cache.clear(); rebuildStove(); renderPhysics();
@@ -815,7 +892,8 @@ function bindUI() {
     const f = e.target.files?.[0]; if (!f) return;
     try {
       const parsed = JSON.parse(await f.text());
-      config = designInternals(normalizeConfig(deepMerge(structuredClone(defaultConfig), parsed)));
+      // Файл, збережений користувачем, — теж готова геометрія: бафль лишаємо.
+      config = designInternals(normalizeConfig(deepMerge(structuredClone(defaultConfig), parsed)), { keepBaffle: true });
       saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
     } catch { alert(lang === 'en' ? 'Invalid JSON' : 'Невалідний JSON'); }
     e.target.value = '';

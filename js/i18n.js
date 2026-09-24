@@ -26,8 +26,15 @@ export const STR = {
     steelRough: 'Roughness сталі', steelMetal: 'Metalness сталі',
     secChimney: 'Димохід / дверцята',
     secCombustion: 'Димохід / горіння', flueHeight: 'Висота димоходу (повна)', flueBends: 'Вигинів димоходу',
+    flueOutlet: 'Вихід труби', outletTop: 'Верхній (прямий підйом)', outletRear: 'Задній (коліно / трійник)',
+    flueRoute: 'Куди йде димохід', routeUp: 'Над піччю (через стелю)', routeWall: 'У стінний димохід позаду',
+    connectorLength: 'Горизонтальний патрубок', outletRecommended: 'Рекомендовано',
+    roomPipeGain: 'Тепло патрубка в кімнату',
     washAsSecondary: 'Air-wash як вторинне повітря', tertiaryEnabled: 'Третинне повітря (tertiary)', tertiaryHoles: 'Отворів tertiary', catalystEnabled: 'Каталізатор (honeycomb)', catalystLightoff: 'Поріг займання каталізатора',
     secStatus: 'Вторинне горіння', secActive: 'активне', secInactive: 'не активне', equivRatio: 'Надлишок повітря Φ', exitFlueTemp: 'T димових газів (вихід)', tertiaryAreaLbl: 'Площа tertiary',
+    bottomIntake: 'Нижній вхід secondary (повзун спереду)',
+    intakeAreaLbl: 'Нижній вхід: відкрито / повна', intakePathLbl: 'Secondary: шлях (послідовно)',
+    intakeNote: 'Повзун нижнього входу = слайдер «Secondary повітря». Відсоток повзуна — це ПОЛОЖЕННЯ, а не частка витрати: щілина й отвори стоять послідовно (опір ∝ 1/A²). Вплив слайдера на λ — припущення моделі (вага 0.35 у airMix проти ~9 % площі входів з урахуванням внутрішньої заслінки, ~19 % при повністю відкритій). Механічний упор на печі — 20 %.',
     doorW: 'Ширина дверцят', doorH: 'Висота дверцят',
      secPhys: 'Фізика v5', kEff: 'Корисний ККД', kKw: 'Потужність', kBurn: 'Горіння', kDraft: 'Тяга / топка',
     noIssues: 'Проблем не виявлено.',
@@ -70,8 +77,10 @@ export const STR = {
      phiPrimary: 'Primary повітря (%)', phiSecondary: 'Secondary повітря (%)',
      phiAuto: 'Авто в зону (Φ≈0.45)',
      phiInBand: '✓ Φ у цільовій зоні 0.4–0.5',
-     phiRich: '↑ Φ > 0.5 — забагато повітря (димлення малоймовірне, але зона охолоджується). Зменш primary/secondary.',
-     phiLean: '↓ Φ < 0.4 — мало повітря (ризик CO та диму). Збільш primary/secondary.',
+     // Φ = 1/λ: високе Φ — БАГАТА суміш, тобто повітря МАЛО (rich).
+     // Низьке Φ — бідна суміш, повітря забагато (lean). Тексти були переставлені.
+     phiRich: '↑ Φ > 0.5 — мало повітря (ризик CO та диму). Збільш primary/secondary.',
+     phiLean: '↓ Φ < 0.4 — забагато повітря (димлення малоймовірне, але зона охолоджується). Зменш primary/secondary.',
     secondaryArea: 'Площа secondary', secondaryVelocity: 'Швидкість secondary', secondaryPreheat: 'Підігрів secondary',
      airwashArea: 'Площа air-wash', airwashVelocity: 'Швидкість air-wash', airwashPreheat: 'Підігрів air-wash',
      combustionTemp: 'Температура допалювання', flueModelTemp: 'Розрахункова температура димоходу', gasResidence: 'Час газів у каналі', flueLoss: 'Втрати через димохід', thermalEff: 'Допалювання → корисний ККД',
@@ -93,8 +102,15 @@ export const STR = {
     steelRough: 'Steel roughness', steelMetal: 'Steel metalness',
     secChimney: 'Chimney / door',
     secCombustion: 'Chimney / combustion', flueHeight: 'Flue height (total)', flueBends: 'Flue bends',
+    flueOutlet: 'Flue outlet', outletTop: 'Top (straight rise)', outletRear: 'Rear (elbow / tee)',
+    flueRoute: 'Chimney route', routeUp: 'Above the stove (through ceiling)', routeWall: 'Into a wall chimney behind',
+    connectorLength: 'Horizontal connector', outletRecommended: 'Recommended',
+    roomPipeGain: 'Connector heat to room',
     washAsSecondary: 'Air-wash as secondary air', tertiaryEnabled: 'Tertiary air', tertiaryHoles: 'Tertiary holes', catalystEnabled: 'Catalyst (honeycomb)', catalystLightoff: 'Catalyst light-off threshold',
     secStatus: 'Secondary combustion', secActive: 'active', secInactive: 'inactive', equivRatio: 'Excess air Φ', exitFlueTemp: 'Flue gas T (exit)', tertiaryAreaLbl: 'Tertiary area',
+    bottomIntake: 'Bottom secondary intake (front slider)',
+    intakeAreaLbl: 'Bottom intake: open / full', intakePathLbl: 'Secondary: path (in series)',
+    intakeNote: 'The bottom-intake slider is the "Secondary air" slider. Its percentage is a POSITION, not a share of the flow: slot and holes sit in series (resistance ∝ 1/A²). The slider\'s effect on λ is a model assumption (weight 0.35 in airMix vs ~9 % of the intake area with the internal damper, ~19 % fully open). Fit a 20 % mechanical stop on the stove.',
     doorW: 'Door width', doorH: 'Door height',
      secPhys: 'Physics v5', kEff: 'Useful efficiency', kKw: 'Output', kBurn: 'Burn time', kDraft: 'Draft / firebox',
     noIssues: 'No issues detected.',
@@ -137,8 +153,8 @@ export const STR = {
      phiPrimary: 'Primary air (%)', phiSecondary: 'Secondary air (%)',
      phiAuto: 'Auto into band (Φ≈0.45)',
      phiInBand: '✓ Φ in target band 0.4–0.5',
-     phiRich: '↑ Φ > 0.5 — too much air (low CO risk, but combustion zone cools). Reduce primary/secondary.',
-     phiLean: '↓ Φ < 0.4 — too little air (CO and smoke risk). Increase primary/secondary.',
+     phiRich: '↑ Φ > 0.5 — too little air (CO and smoke risk). Increase primary/secondary.',
+     phiLean: '↓ Φ < 0.4 — too much air (low CO risk, but combustion zone cools). Reduce primary/secondary.',
     secondaryArea: 'Secondary area', secondaryVelocity: 'Secondary velocity', secondaryPreheat: 'Secondary preheat',
      airwashArea: 'Air-wash area', airwashVelocity: 'Air-wash velocity', airwashPreheat: 'Air-wash preheat',
      combustionTemp: 'Afterburn temperature', flueModelTemp: 'Modeled flue temperature', gasResidence: 'Gas residence time', flueLoss: 'Flue loss', thermalEff: 'Afterburn → useful efficiency',
@@ -159,6 +175,7 @@ export const WARN_TXT = {
     STARTUP_LONG: 'Start-up з довгим горінням — перевірте подачу повітря.',
     SECONDARY_RESTRICTED: 'Замала площа secondary-отворів для обʼєму топки.',
     SECONDARY_COLD: 'Secondary air недостатньо підігрівається перед догоранням.',
+    SECONDARY_INTAKE_LOW: (pct) => `Повзун нижнього входу secondary ${pct} % < 20 %: вторинне горіння задихається (дим, креозот). На печі поставте механічний упор 20 %.`,
     AIRWASH_JETS: 'Air-wash може працювати струменями: розширте slot або зменште intake.',
     AIRWASH_LOW: 'Недостатнє покриття скла повітряною завісою.',
     STEEL_OVERHEAT: (c) => `Корпус ~${c}°C при сталі ≤4 мм: збільшіть ізоляцію або товщину сталі.`,
@@ -168,6 +185,7 @@ export const WARN_TXT = {
     MIX_LEAN: (p) => `Багато повітря (Φ=${p}): зона охолоджується, зайві втрати.`,
     CREOSOTE_RISK: (c) => `Димові гази на виході ${c}°C < 150°C: конденсат і креозот.`,
     CATALYST_COLD: (c) => `Каталізатор не прогрітий (${c}°C): байпас відкрито.`,
+    CONNECTOR_LONG: (cm) => `Горизонтальний патрубок ${cm} см > 40 см: сажа, втрата тяги, більший відступ до горючих.`,
   },
   en: {
     SMOKE_RISK: 'Smoke risk: too little primary and secondary air.',
@@ -179,6 +197,7 @@ export const WARN_TXT = {
     STARTUP_LONG: 'Start-up with long burn — check air supply.',
     SECONDARY_RESTRICTED: 'Secondary opening area is too small for the firebox volume.',
     SECONDARY_COLD: 'Secondary air is not preheated enough before afterburning.',
+    SECONDARY_INTAKE_LOW: (pct) => `Bottom secondary intake at ${pct} % < 20 %: the secondary burn starves (smoke, creosote). Fit a 20 % mechanical stop.`,
     AIRWASH_JETS: 'Air-wash may jet: widen the slot or reduce intake.',
     AIRWASH_LOW: 'Air-wash coverage across the glass is too low.',
     STEEL_OVERHEAT: (c) => `Body ~${c}°C with ≤4 mm steel: increase insulation or steel thickness.`,
@@ -188,7 +207,25 @@ export const WARN_TXT = {
     MIX_LEAN: (p) => `Too much air (Φ=${p}): zone cools, extra losses.`,
     CREOSOTE_RISK: (c) => `Flue gas at exit ${c}°C < 150°C: condensation and creosote.`,
     CATALYST_COLD: (c) => `Catalyst not at light-off (${c}°C): bypass open.`,
+    CONNECTOR_LONG: (cm) => `Horizontal connector ${cm} cm > 40 cm: soot, draft loss, larger clearance to combustibles.`,
   },
+};
+
+// Яке саме поле метрик підставляти в кожен ПАРАМЕТРИЗОВАНИЙ текст WARN_TXT.
+// Раніше app.js мав ланцюжок if-ів із «здогадкою» entry(m.draftPa) у кінці:
+// новий код із функцією (CONNECTOR_LONG) мовчки отримував тягу й показував
+// «патрубок 21 см > 40 см» замість 150. Тепер відповідність перевіряє тест.
+export const WARN_ARG = {
+  DRAFT_WEAK: 'draftPa',
+  SECONDARY_INTAKE_LOW: 'secondaryAirPct',
+  STEEL_OVERHEAT: 'bodyTempC',
+  WET_WOOD: 'moisturePct',
+  SECONDARY_INACTIVE: 'combustionTempC',
+  CATALYST_COLD: 'combustionTempC',
+  MIX_RICH: 'equivalenceRatio',
+  MIX_LEAN: 'equivalenceRatio',
+  CREOSOTE_RISK: 'exitFlueTempC',
+  CONNECTOR_LONG: 'connectorCm',
 };
 
 export const VALIDATION_TXT = {
@@ -206,6 +243,11 @@ export const VALIDATION_TXT = {
     SECONDARY_CHANNEL_WIDE: (v) => `Secondary канал ${v.width} см заширокий для топки ${v.innerW} см.`,
     AIRWASH_CHANNEL_WIDE: (v) => `Air-wash канал ${v.width} см + дверцята ${v.door} см не влазять у фасад.`,
     GAS_HOOD_TIGHT: (v) => `Димова полиця завузька (${v.depth} см) — гази не встигають пройти канал.`,
+    REAR_OUTLET_NO_ROOM: (v) => `Задній вихід не вміщується: корпус ${v.height} см замалий між бафлем і кришкою (треба ≥${v.need} см). Лишіть верхній вихід.`,
+    CONNECTOR_LONG: (v) => `Патрубок ${v.length} см перевищує норму ~40 см для печі.`,
+    REAR_SHIELD_CUT: (v) => `Задній екран обрізано під комір на висоті ${v.y} см — тут одностінна труба без екрана, витримайте відступ до стіни.`,
+    BOTTOM_INTAKE_NO_ROOM: (v) => `Нижній вхід secondary: ніжки ${v.legs} см — під днищем немає місця для каналу (потрібно ≥${v.need} см просвіту). Підніміть ніжки або вимкніть опцію.`,
+    BOTTOM_INTAKE_CHOKED: (v) => `Нижній вхід secondary: вузьке місце каналу ${v.area} см² менше за отвори ${v.need} см² — витрату задає канал, а не повзун. Підніміть ніжки (вищий профіль) або зменшіть отвори.`,
   },
   en: {
     DOOR_TOO_WIDE: (v) => `Door ${v.doorW} cm > available ${v.usableW.toFixed(1)} cm.`,
@@ -221,6 +263,29 @@ export const VALIDATION_TXT = {
     SECONDARY_CHANNEL_WIDE: (v) => `Secondary channel ${v.width} cm is too wide for firebox ${v.innerW} cm.`,
     AIRWASH_CHANNEL_WIDE: (v) => `Air-wash channel ${v.width} cm + door ${v.door} cm do not fit the front.`,
     GAS_HOOD_TIGHT: (v) => `Smoke hood is too tight (${v.depth} cm) — gases cannot pass the channel.`,
+    REAR_OUTLET_NO_ROOM: (v) => `Rear outlet does not fit: ${v.height} cm body is too low between baffle and top (need ≥${v.need} cm). Keep the top outlet.`,
+    CONNECTOR_LONG: (v) => `Connector ${v.length} cm exceeds the ~40 cm limit for a stove connector.`,
+    REAR_SHIELD_CUT: (v) => `Rear heat shield is cut around the collar at ${v.y} cm — the single-wall pipe is unshielded there, keep clearance to the wall.`,
+    BOTTOM_INTAKE_NO_ROOM: (v) => `Bottom secondary intake: ${v.legs} cm legs leave no room for the duct under the bottom (need ≥${v.need} cm of clearance). Raise the legs or turn the option off.`,
+    BOTTOM_INTAKE_CHOKED: (v) => `Bottom secondary intake: the narrowest channel section ${v.area} cm² is smaller than the holes ${v.need} cm² — the duct, not the slider, sets the flow. Raise the legs (taller profile) or reduce the holes.`,
+  },
+};
+
+// Пояснення вибору виходу труби (compareOutlets). Тексти НАВМИСНО не
+// перебільшують: різниця тяги заднього виходу складається з охолодження
+// патрубка (фізика) і модельного штрафу за коліно (умовність — реальний
+// трійник коштує 0.03–0.16 Па). ККД ПЕЧІ від місця виходу не залежить:
+// його задає внутрішній шлях газів (бафль, полиця, перепускна стінка).
+export const OUTLET_TXT = {
+  uk: {
+    ROUTE_UP: (v) => `Труба йде вгору над піччю, тож верхній вихід не потребує жодного повороту. ККД печі однаковий (Δ ${v.dEff} п.п.): його задає внутрішній шлях газів, а не місце виходу. Верхній: тяга ${v.draftTop} Па проти ${v.draftRear} Па, газ на виході тепліший на ${-v.dExitC} °C (менше креозоту), сажа падає назад у топку. Задній дав би +${v.pipeGainPct} п.п. тепла в кімнату завдяки ${v.pipeCm} см одностінного патрубка — ціною тяги й чистки горизонталі. Увага: більшу частину цієї різниці тяги дає модельний штраф за поворот; фізично трійник коштує лише десяті частки Па, реальна втрата — охолодження патрубка (≈5 % тяги на 30 см).`,
+    ROUTE_WALL: (v) => `Димохід у стіні позаду: верхній вихід сам додає ${v.turnsTop} повороти й зайву трубу над піччю, задній — ${v.turnsRear} (без урахування слайдера «Вигинів»). Тому задній дає ${v.draftRear} Па проти ${v.draftTop} Па і на ${v.dExitC} °C тепліший газ на виході. ККД печі той самий (Δ ${v.dEff} п.п.); верхній натомість віддав би на ${-v.pipeGainPct} п.п. більше тепла в кімнату трубою. Увага: більшу частину цієї різниці тяги дає модельний штраф за поворот; фізично трійник коштує лише десяті частки Па, реальна втрата — охолодження патрубка (≈5 % тяги на 30 см).`,
+    REAR_NO_ROOM: () => 'Між бафлем і кришкою немає місця під задній комір — доступний лише верхній вихід.',
+  },
+  en: {
+    ROUTE_UP: (v) => `The chimney runs straight up above the stove, so the top outlet needs no turn at all. Stove efficiency is the same (Δ ${v.dEff} pp): it is set by the internal gas path, not by where the gas leaves. Top: draft ${v.draftTop} Pa vs ${v.draftRear} Pa, exit gas ${-v.dExitC} °C hotter (less creosote), soot falls back into the firebox. The rear outlet would add +${v.pipeGainPct} pp of heat to the room from ${v.pipeCm} cm of single-wall connector — at the cost of draft and sweeping a horizontal run. Note: most of this draft gap is the model's per-turn penalty; physically a tee costs only tenths of a Pa, the real loss is connector cooling (≈5 % of draft at 30 cm).`,
+    ROUTE_WALL: (v) => `With a wall chimney behind, the top outlet itself adds ${v.turnsTop} turns plus extra pipe above the stove, the rear one ${v.turnsRear} (not counting the "Bends" slider). So the rear gives ${v.draftRear} Pa vs ${v.draftTop} Pa and exit gas ${v.dExitC} °C hotter. Stove efficiency is unchanged (Δ ${v.dEff} pp); the top outlet would instead release ${-v.pipeGainPct} pp more heat into the room through its pipe. Note: most of this draft gap is the model's per-turn penalty; physically a tee costs only tenths of a Pa, the real loss is connector cooling (≈5 % of draft at 30 cm).`,
+    REAR_NO_ROOM: () => 'No room for the rear collar between baffle and top — only the top outlet is available.',
   },
 };
 

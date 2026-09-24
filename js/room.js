@@ -22,9 +22,13 @@ export function roomVolume(room) {
     : (+room.volumeM3 || 60);
 }
 
+// Потреба приміщення, а не можливості печі. Колишні межі 1…20 кВт просто
+// повторювали штучні межі моделі: майстерня на 1000 м³ «потребувала» 20 кВт
+// замість 65, а кімната на 3 м³ — 1 кВт замість 0.26. Лишаємо тільки
+// санітарні межі, щоб число не було нулем чи абсурдом.
 export function requiredPowerKw(purpose, volumeM3) {
   const p = PURPOSES[purpose] || PURPOSES.room;
-  return clamp(volumeM3 * p.kwPerM3 * p.reserve, 1, 20);
+  return clamp(volumeM3 * p.kwPerM3 * p.reserve, 0.2, 100);
 }
 
 // Підбір габаритів: масштабуємо пропорційну форму і беремо найближчу потужність.

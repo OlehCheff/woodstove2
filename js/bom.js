@@ -2,6 +2,7 @@
 // Розміри деталей рахуються за тими ж формулами, що й у stove-builder.js,
 // щоб специфікація збігалася з 3D-моделлю 1:1.
 import { PhysicsModel } from './physics-model.js';
+import { doorOpening, rearOutletLayout, bottomIntakeGeometry, secondaryHolePattern, INTAKE_MIN_STOP_PCT, LEG_SIZE_CM } from './config.js';
 
 const round = (v, d = 1) => Math.round(v * 10 ** d) / 10 ** d;
 const clampBom = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -35,6 +36,14 @@ const NAME_EN = {
   'Уголки бафля (Л/П, 2 шт)': 'Baffle angle supports (L/R, 2 pcs)',
   'Передній дефлектор': 'Front deflector',
   'Третинна труба (tertiary)': 'Tertiary tube', 'Каталітичний стільник': 'Catalytic honeycomb',
+  'Нижній вхід — канал поздовжній': 'Bottom intake — longitudinal duct',
+  'Нижній вхід — колектор поперечний': 'Bottom intake — cross collector',
+  'Нижній вхід — плита з щілиною': 'Bottom intake — slotted face plate',
+  'Нижній вхід — повзун + ручка': 'Bottom intake — slider + knob',
+  'Верх (суцільний)': 'Top (solid)', 'Задня панель (виріз під задній вихід)': 'Back panel (rear outlet cut-out)',
+  'Комір заднього виходу': 'Rear flue collar', 'Горизонтальний патрубок': 'Horizontal connector',
+  'Трійник 90° з ревізією': '90° tee with cleanout',
+  'Горизонталь до стінного димоходу': 'Horizontal run to wall chimney', 'Коліно 90°': '90° elbow',
 };
 function translateNote(s, lang) {
   if (lang !== 'en' || !s) return s;
@@ -56,7 +65,7 @@ function translateMat(s, lang) {
 }
 
 export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
-  const trName = (s) => (lang === 'en' ? (NAME_EN[s] || s.replace('Димохід', 'Flue').replace(/ см/g, ' cm')) : s);
+  const trName = (s) => (lang === 'en' ? (NAME_EN[s] || s.replace('Димохід', 'Flue').replace(/ см/g, ' cm').replace('підйом', 'rise').replace('вертикаль', 'vertical').replace('підйом', 'rise').replace('вертикаль', 'vertical')) : s);
   const w = cfg.dimensions.widthCm;
   const d = cfg.dimensions.depthCm;
   const h = cfg.dimensions.heightCm;
@@ -70,13 +79,9 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
 
   const innerW = Math.max(10, w - steelCm * 2);
   const innerD = Math.max(10, d - steelCm * 2);
-  const doorW = Math.max(20, Math.min(cfg.door.widthCm, w - steelCm * 4));
-  const doorH = Math.max(20, Math.min(cfg.door.heightCm, h - steelCm * 4));
-  const openingW = Math.min(w - steelCm * 2, doorW + 0.8);
-  const openingH = Math.min(h - steelCm * 2, doorH + 0.8);
-  const openingBottom = Math.max(steelCm, h * 0.48 - openingH / 2);
-  const openingTop = Math.min(h - steelCm, openingBottom + openingH);
-  const sideW = Math.max(steelCm, (w - openingW) / 2);
+  // Отвір/дверцята — спільна формула з 3D (config.js:doorOpening):
+  // стулка перекриває отвір на 1.5 см з кожного боку під ущільнювач.
+  const { doorW, doorH, openingW, openingBottom, openingTop, sideW } = doorOpening(cfg, steelCm);
   const frameT = cfg.door.frameThicknessCm;
   const baffleGap = Math.min(cfg.baffle.frontGapCm, innerD * 0.45);
   const baffleDepth = Math.max(8, innerD - baffleGap);
@@ -85,6 +90,9 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
   const collarR = chimR * 1.08;
   const flueBellBottom = Math.min(h - steelCm * 2, Math.max(cfg.baffle.heightCm + steelCm * 4, h * 0.55));
   const flueBellH = Math.max(6, (h - steelCm) - flueBellBottom);
+  // Задній вихід: ті самі числа, що й у 3D (config.js:rearOutletLayout).
+  const isRear = cfg.chimney.outlet === 'rear';
+  const rl = rearOutletLayout(cfg);
 
   const parts = [];
   const densityOf = (mat) => {
@@ -106,17 +114,31 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
   // Корпус — сталь (шви: контур днища + вертикальні стики + верх)
   add('Днище', 1, w, d, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (w + d));
   add('Бічна панель (Л/П)', 2, d, h, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (d + h));
-  add('Задня панель', 1, w, h, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (w + h));
+  if (isRear) {
+    // Нотатку формуємо за мовою, а не регулярками translateNote: у EN-CSV
+    // не має бути жодної кирилиці (тест 24).
+    const cutNote = lang === 'en'
+      ? `Ø${round(rl.collarR * 2, 1)} cm cut-out, centre ${round(rl.yCm, 1)} cm from the bottom`
+      : `виріз Ø${round(rl.collarR * 2, 1)} см, центр ${round(rl.yCm, 1)} см від низу`;
+    add('Задня панель (виріз під задній вихід)', 1, w, h, steelCm, `сталь ${steelMm} мм`, cutNote, 'sheet', 2 * (w + h) + Math.PI * rl.collarR * 2);
+  } else {
+    add('Задня панель', 1, w, h, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (w + h));
+  }
   add('Передня панель — бічна (Л/П)', 2, sideW, h, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (sideW + h));
   add('Передня панель — під дверима', 1, openingW, openingBottom, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (openingW + openingBottom));
   add('Передня панель — над дверима', 1, openingW, h - openingTop, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (openingW + (h - openingTop)));
-  // Верх з вирізом під комір
-  const frontStrip = (d / 2 - chimZ) - collarR - steelCm;
-  const rearStrip = Math.max(1, (chimZ + d / 2) - collarR);
-  const midW = Math.max(1, w / 2 - collarR);
-  add('Верх — передня смуга', 1, w, frontStrip, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (w + frontStrip));
-  add('Верх — задня смуга', 1, w, rearStrip, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (w + rearStrip));
-  add('Верх — бічні смуги (Л/П)', 2, midW, collarR * 2, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (midW + collarR * 2));
+  // Верх: у заднього виходу кришка суцільна — повноцінна варильна поверхня.
+  if (isRear) {
+    add('Верх (суцільний)', 1, w, d, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (w + d));
+  } else {
+    // Верх з вирізом під комір
+    const frontStrip = (d / 2 - chimZ) - collarR - steelCm;
+    const rearStrip = Math.max(1, (chimZ + d / 2) - collarR);
+    const midW = Math.max(1, w / 2 - collarR);
+    add('Верх — передня смуга', 1, w, frontStrip, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (w + frontStrip));
+    add('Верх — задня смуга', 1, w, rearStrip, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (w + rearStrip));
+    add('Верх — бічні смуги (Л/П)', 2, midW, collarR * 2, steelCm, `сталь ${steelMm} мм`, '', 'sheet', 2 * (midW + collarR * 2));
+  }
   // Дверцята — рама з 4 окремих планок
   const frameSide = Math.max(2, doorH - frameT * 2);
   add('Дверцята — планки рами гориз. (верх/низ)', 2, doorW, frameT, frameT, 'сталь', '', 'bar');
@@ -138,17 +160,49 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
   add('Димова полиця', 1, innerW, hoodDepth, steelCm, `сталь ${steelMm} мм`);
   add('Бічні напрямні верхнього ходу (Л/П)', 2, hoodDepth, hoodY - cfg.baffle.heightCm - steelCm, steelCm, `сталь ${steelMm} мм`);
   add('Задня перепускна стінка', 1, innerW, Math.max(6, (hoodY - cfg.baffle.heightCm) * 0.55), steelCm, `сталь ${steelMm} мм`);
-  add('Внутрішня димова труба (flue bell)', 1, Math.PI * chimR * 1.06 * 2, flueBellH, 0.3, 'сталь 3 мм', 'Ø' + round(chimR * 2.12, 1) + ' см, розгортка', 'tube', Math.PI * chimR * 2);
+  // Внутрішня димова труба закриває комірний отвір у КРИШЦІ; у заднього
+  // виходу кришка суцільна, тож ця деталь не потрібна.
+  if (!isRear) add('Внутрішня димова труба (flue bell)', 1, Math.PI * chimR * 1.06 * 2, flueBellH, 0.3, 'сталь 3 мм', 'Ø' + round(chimR * 2.12, 1) + ' см, розгортка', 'tube', Math.PI * chimR * 2);
   add('Люк чистки + кришка', 1, 8.2, 8.2, 0.9, 'сталь', 'Ø68/82 мм', 'purchased');
   // Повітряні системи — короби/труби з листа 3 мм (маса = розгортка × товщина стінки).
   const wallT = 0.3;
   // Primary: 2 овальні отвори в передній плиті + ковзна заслінка.
   add('Primary — 2 овальні отвори + заслінка', 1, 2 * (openingW * 0.26) + 6, Math.max(4, openingBottom * 0.45) * 2.6, steelCm, `сталь ${steelMm} мм`, 'отвори в передній плиті під дверцятами');
-  // Secondary: 2 стояки + поперечна SS-труба з отворами Ø3 мм.
+  // Secondary: 2 стояки + поперечна SS-труба з отворами.
+  const intake = bottomIntakeGeometry(cfg);
+  const pattern = secondaryHolePattern(cfg);
   const secRiserDev = 2 * (cfg.secondaryAir.channelWidthCm + cfg.secondaryAir.channelDepthCm);
-  add('Secondary стояки (Л/П)', 2, secRiserDev, Math.max(12, cfg.secondaryAir.preheatLengthCm), wallT, 'сталь 3 мм', 'розгортка короба', 'tube');
-  const tubeLen = Math.max(16, Math.min(innerW * 0.9, 120));
-  add('Secondary труба впоперек (SS)', 1, Math.PI * 3.2, tubeLen, 0.15, 'нерж. 1.5 мм', `Ø32×1.5, ${cfg.secondaryAir.holeCount}×Ø3 мм`, 'tube');
+  // З нижнім входом стояк опускається до днища (на 8 см нижче, мінус лист).
+  const riserLen = Math.max(12, cfg.secondaryAir.preheatLengthCm) + (intake.buildable ? 8 - steelCm : 0);
+  add('Secondary стояки (Л/П)', 2, secRiserDev, riserLen, wallT, 'сталь 3 мм', 'розгортка короба', 'tube');
+  const holeNote = lang === 'en'
+    ? `Ø32×1.5, ${pattern.count}×Ø${round(pattern.diaCm * 10, 0)} mm in ${pattern.rows} row(s), pitch ${round(pattern.pitchCm, 1)} cm`
+    : `Ø32×1.5, ${pattern.count}×Ø${round(pattern.diaCm * 10, 0)} мм у ${pattern.rows} ряд(и), крок ${round(pattern.pitchCm, 1)} см`;
+  add('Secondary труба впоперек (SS)', 1, Math.PI * 3.2, pattern.tubeLenCm, 0.15, 'нерж. 1.5 мм', holeNote, 'tube');
+  // Нижній вхід secondary: профільний канал під днищем + щілина з повзуном.
+  // Маса профілю рахується як розгортка стінки (kind 'tube'), а не як суцільний
+  // брусок — інакше труба 60×40×2 «важила» б як пруток.
+  if (intake.buildable) {
+    const ductDev = 2 * (intake.ductW + intake.ductH);
+    const armDev = 2 * (intake.ductD + intake.ductH);
+    const ductNote = lang === 'en'
+      ? `profile tube ${round(intake.ductW * 10, 0)}×${round(intake.ductH * 10, 0)}×2, under the stove bottom, between the legs`
+      : `профільна труба ${round(intake.ductW * 10, 0)}×${round(intake.ductH * 10, 0)}×2, під днищем, між ніжками`;
+    const holeSize = `${round(intake.holeW * 10, 0)}×${round(intake.holeDepth * 10, 0)}`;
+    const armNote = lang === 'en'
+      ? `profile tube ${round(intake.ductD * 10, 0)}×${round(intake.ductH * 10, 0)}×2 along the rear edge, 2 slots ${holeSize} mm into the bottom, clear of the legs`
+      : `профільна труба ${round(intake.ductD * 10, 0)}×${round(intake.ductH * 10, 0)}×2 вздовж задньої кромки, 2 вікна ${holeSize} мм у днищі, повз ніжки`;
+    const faceNote = lang === 'en'
+      ? `slot ${intake.slotW}×${intake.slotH} cm = ${intake.slotAreaCm2} cm2`
+      : `щілина ${intake.slotW}×${intake.slotH} см = ${intake.slotAreaCm2} см2`;
+    const sliderNote = lang === 'en'
+      ? `travel ${intake.slotW} cm, mechanical stop min. ${INTAKE_MIN_STOP_PCT} %`
+      : `хід ${intake.slotW} см, механічний упор мін. ${INTAKE_MIN_STOP_PCT} %`;
+    add('Нижній вхід — канал поздовжній', 1, ductDev, intake.ductLenCm, 0.2, 'сталь/профіль 2 мм', ductNote, 'tube', 2 * intake.ductLenCm + ductDev);
+    add('Нижній вхід — колектор поперечний', 1, armDev, intake.armSpanCm, 0.2, 'сталь/профіль 2 мм', armNote, 'tube', 2 * intake.armSpanCm + armDev + 4 * (intake.holeW + intake.holeDepth));
+    add('Нижній вхід — плита з щілиною', 1, intake.ductW + 1.2, intake.ductH + 0.6, 0.3, 'сталь 3 мм', faceNote, 'sheet', 2 * (intake.ductW + intake.ductH));
+    add('Нижній вхід — повзун + ручка', 1, intake.slotW + 1.6, intake.slotH + 1.2, 0.3, 'сталь 3 мм', sliderNote, 'sheet');
+  }
   if (cfg.combustion && cfg.combustion.tertiary && cfg.combustion.tertiary.enabled) {
     add('Третинна труба (tertiary)', 1, Math.PI * 1.6, Math.max(14, innerW * 0.8), 0.15, 'нерж. 1.5 мм', `${cfg.combustion.tertiary.holeCount}×Ø${cfg.combustion.tertiary.holeDiameterCm} см`, 'tube');
   }
@@ -168,16 +222,60 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
   add('Шамот — стіни (Л/П/З)', 3, brickH, Math.max(10, cd - insT * 2), brickT, 'шамот', 'Л + П + задня');
   if (insT > 0) add('Ізоляція топки (4 сторони)', 4, cw, linerTopY - steelCm, insT, 'vermiculite/CFB');
   // Димохід
-  add('Димохід Ø' + cfg.chimney.diameterCm + ' см', 1, Math.PI * chimR * 2, cfg.chimney.heightCm, 0.3, 'сталь 3 мм', 'розгортка', 'tube', Math.PI * chimR * 2);
-  add('Комір димоходу', 1, Math.PI * collarR * 2, steelCm * 2.2, 0.4, 'сталь', '', 'tube');
+  if (isRear) {
+    // Вертикаль починається над трійником і доходить до тієї самої
+    // абсолютної висоти, що й у верхнього виходу (та сама формула, що в 3D).
+    const riseY0 = rl.yCm + rl.teeH / 2;
+    const topAbs = h - rl.steelT / 2 + cfg.chimney.heightCm;
+    const riserLen = Math.max(10, topAbs - riseY0);
+    add('Димохід Ø' + cfg.chimney.diameterCm + ' см', 1, Math.PI * chimR * 2, riserLen, 0.3, 'сталь 3 мм', 'розгортка', 'tube', Math.PI * chimR * 2);
+    add('Комір заднього виходу', 1, Math.PI * collarR * 2, steelCm * 2.2, 0.4, 'сталь', '', 'tube');
+    const connNote = lang === 'en'
+      ? `Ø${cfg.chimney.diameterCm} cm, slope ≥2% up towards the tee`
+      : `Ø${cfg.chimney.diameterCm} см, ухил ≥2% угору до трійника`;
+    add('Горизонтальний патрубок', 1, Math.PI * chimR * 2, rl.connectorCm, 0.3, 'сталь 3 мм', connNote, 'tube', Math.PI * chimR * 2);
+    const teeNote = lang === 'en'
+      ? `Ø${cfg.chimney.diameterCm} cm, cleanout cap at the bottom`
+      : `Ø${cfg.chimney.diameterCm} см, заглушка ревізії знизу`;
+    add('Трійник 90° з ревізією', 1, cfg.chimney.diameterCm, cfg.chimney.diameterCm * 1.3, 0.3, 'сталь', teeNote, 'purchased');
+  } else if (cfg.chimney.route === 'wall') {
+    // Верхній вихід у стінний димохід — ті самі формули, що в stove-builder.js:
+    // підйом над кришкою (wallRiseCm), горизонталь назад 0.3·D + патрубок,
+    // вертикаль до тієї ж абсолютної висоти, два коліна 90°.
+    const wallRiseCm = Math.min(cfg.chimney.heightCm * 0.5, 40);
+    const runCm = d * 0.3 + rl.connectorCm;
+    const pipeDev = Math.PI * chimR * 2;
+    add('Димохід Ø' + cfg.chimney.diameterCm + ' см — підйом', 1, pipeDev, wallRiseCm, 0.3, 'сталь 3 мм', 'розгортка', 'tube', pipeDev);
+    const runNote = lang === 'en'
+      ? `Ø${cfg.chimney.diameterCm} cm, slope ≥2% up towards the wall`
+      : `Ø${cfg.chimney.diameterCm} см, ухил ≥2% угору до стіни`;
+    add('Горизонталь до стінного димоходу', 1, pipeDev, runCm, 0.3, 'сталь 3 мм', runNote, 'tube', pipeDev);
+    add('Димохід Ø' + cfg.chimney.diameterCm + ' см — вертикаль', 1, pipeDev, Math.max(10, cfg.chimney.heightCm - wallRiseCm), 0.3, 'сталь 3 мм', 'розгортка', 'tube', pipeDev);
+    add('Коліно 90°', 2, cfg.chimney.diameterCm, cfg.chimney.diameterCm * 1.3, 0.3, 'сталь', `Ø${cfg.chimney.diameterCm}`, 'purchased');
+    add('Комір димоходу', 1, Math.PI * collarR * 2, steelCm * 2.2, 0.4, 'сталь', '', 'tube');
+  } else {
+    add('Димохід Ø' + cfg.chimney.diameterCm + ' см', 1, Math.PI * chimR * 2, cfg.chimney.heightCm, 0.3, 'сталь 3 мм', 'розгортка', 'tube', Math.PI * chimR * 2);
+    add('Комір димоходу', 1, Math.PI * collarR * 2, steelCm * 2.2, 0.4, 'сталь', '', 'tube');
+  }
   // Ніжки
-  if (legH > 0) add('Ніжки 50×50', 4, 5, legH, 5, 'сталь/профіль', 'профільна труба', 'bar');
+  // Ніжки — ПРОФІЛЬНА труба 50×50×3 (≈4.4 кг/м), а не суцільний пруток:
+  // раніше рядок рахувався як 5×5 см суцільного перерізу (19.6 кг/м) і на
+  // Standard давав 11.8 кг замість ~2.8 кг. Маса = розгортка стінки × товщина,
+  // так само, як в інших профілів/коробів (kind 'tube').
+  if (legH > 0) {
+    const legNote = lang === 'en'
+      ? 'profile tube 50×50×3, welded to the 5 mm bottom'
+      : 'профільна труба 50×50×3, приварена до днища 5 мм';
+    add('Ніжки 50×50', 4, LEG_SIZE_CM * 4, legH, 0.3, 'сталь/профіль', legNote, 'tube', LEG_SIZE_CM * 4);
+  }
   // Теплові екрани
   // Теплові екрани — лише якщо увімкнені (опція).
   if (cfg.visibility && cfg.visibility.shields) {
-    const shieldH = h * 0.78;
+    // Задній екран доводиться обрізати під комір, інакше він перетинає трубу
+    // (у свипі — 942/1800 печей). Бічні екрани лишаються повними.
+    const shieldH = isRear ? Math.max(6, Math.min(h * 0.78, rl.yCm - rl.collarR - 6)) : h * 0.78;
     add('Тепловий екран — задній', 1, w - 4, shieldH, 0.3, 'сталь 3 мм', 'зазор 3.2 см');
-    add('Тепловий екран — бічні (Л/П)', 2, d - 4, shieldH, 0.3, 'сталь 3 мм');
+    add('Тепловий екран — бічні (Л/П)', 2, d - 4, h * 0.78, 0.3, 'сталь 3 мм');
   }
 
   const steelMass = parts.filter(p => METAL_RX.test(p.mat)).reduce((s, p) => s + p.massKg * p.qty, 0);
@@ -280,6 +378,24 @@ export function buildDrawingSVG(cfg, lang = 'uk') {
   const lbTotal = lang === 'en' ? 'Overall H' : 'H загальна';
   const lbDoor = lang === 'en' ? 'door' : 'дверцята';
   const lbBaffle = lang === 'en' ? 'baffle Y' : 'бафль Y';
+  const lbRear = lang === 'en' ? 'rear outlet Ø' : 'задній вихід Ø';
+  const lbConn = lang === 'en' ? 'connector' : 'патрубок';
+  const lbOutletY = lang === 'en' ? 'outlet Y' : 'Y виходу';
+  const lbBack = lang === 'en' ? 'back' : 'зад';
+  const lbFront = lang === 'en' ? 'front' : 'перед';
+  const lbTee = lang === 'en' ? 'tee' : 'трійник';
+  // ВЛАСНІ імена для нових величин: L і D у цій функції вже означають ніжки
+  // і глибину корпусу, тож «довжина патрубка» й «діаметр труби» — окремо.
+  const lbIntake = lang === 'en' ? 'bottom intake' : 'нижній вхід';
+  const isRearView = cfg.chimney?.outlet === 'rear';
+  const rl = rearOutletLayout(cfg);
+  // Нижній канал secondary малюємо на всіх видах: інакше креслення й BOM
+  // розійшлися б на цілий вузол під днищем (і монтажник приварив би ніжки
+  // там, де має проходити канал).
+  const bi = bottomIntakeGeometry(cfg);
+  const connLenCm = isRearView ? rl.connectorCm : 0;
+  const flueDiaCm = cfg.chimney.diameterCm;
+  const outletYCm = rl.yCm;
   const dimLine = (x1, y1, x2, y2, label, side = 'top') => {
     const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
     const tx = side === 'top' ? midX : midX - 6;
@@ -310,31 +426,74 @@ export function buildDrawingSVG(cfg, lang = 'uk') {
     <text x="${dx0 + px(doorW) / 2}" y="${dyTop + px(doorH) / 2}" text-anchor="middle" font-size="10" fill="#4f8cff">${lbDoor}</text>
     <line x1="${fx0}" y1="${sy(L + baffleY)}" x2="${fx0 + fw}" y2="${sy(L + baffleY)}" stroke="#c56a2d" stroke-width="1.5" stroke-dasharray="6 3"/>
     <text x="${fx0 + fw - 8}" y="${sy(L + baffleY) - 4}" text-anchor="end" font-size="9" fill="#c56a2d">${lbBaffle}=${cfg.baffle.heightCm} ${u}</text>
+    ${isRearView ? `<circle cx="${fx0 + fw / 2}" cy="${sy(L + outletYCm)}" r="${px(flueDiaCm / 2)}" fill="none" stroke="#4f8cff" stroke-width="1" stroke-dasharray="4 2"/>
+    <text x="${fx0 + fw / 2}" y="${sy(L + outletYCm) - px(flueDiaCm / 2) - 4}" text-anchor="middle" font-size="9" fill="#4f8cff">${lbRear}${flueDiaCm} ${u}</text>` : ''}
+    ${bi.buildable ? `<rect x="${fx0 + fw / 2 - px(bi.ductW / 2)}" y="${sy(L)}" width="${px(bi.ductW)}" height="${px(bi.ductH)}" fill="#eafaf0" stroke="#22c55e" stroke-width="1"/>
+    <rect x="${fx0 + fw / 2 - px(bi.slotW / 2)}" y="${sy(L - (bi.ductH - bi.slotH) / 2)}" width="${px(bi.slotW)}" height="${px(bi.slotH)}" fill="#fff" stroke="#22c55e" stroke-width="1" stroke-dasharray="3 2"/>
+    <text x="${fx0 + fw / 2 + px(bi.ductW / 2) + 4}" y="${sy(L - bi.ductH / 2) + 3}" font-size="9" fill="#22c55e">${lbIntake} ${bi.slotW}×${bi.slotH} ${u}</text>` : ''}
     ${dimLine(fx0, floorY + 20, fx0 + fw, floorY + 20, `W ${W} ${u}`, 'top')}
     ${dimLine(fx0 + fw + 20, sy(L), fx0 + fw + 20, sy(L + H), `${lbBody} ${H} ${u}`, 'side')}
     ${L > 0 ? dimLine(fx0 + fw + 48, sy(0), fx0 + fw + 48, sy(L + H), `${lbTotal} ${H + L} ${u}`, 'side') : ''}
     ${L > 0 ? dimLine(fx0 - 22, sy(0), fx0 - 22, sy(L), `${lbLegs} ${L} ${u}`, 'side') : ''}
   `;
-  // ---- SIDE VIEW ----
-  const sx0 = margin + fw + 150;
+  // ---- SIDE VIEW ---- (лівий край = ЗАД печі, як і верхній край виду зверху)
+  // Задній патрубок малюється ліворуч від виду, тож зсуваємо вид і на ту саму
+  // величину збільшуємо totalW — інакше патрубок до 150 см (450 px) наїхав би
+  // на фронтальний вид, а бічний вид обрізався б по краю полотна.
+  const sideShift = isRearView ? px(connLenCm + flueDiaCm) : 0;
+  const sx0 = margin + fw + 150 + sideShift;
   const sw = px(D);
+  const connX0 = sx0 - px(connLenCm);
+  const outletCy = sy(L + outletYCm);
+  const rearSide = isRearView ? `
+    <rect x="${connX0}" y="${outletCy - px(flueDiaCm / 2)}" width="${px(connLenCm)}" height="${px(flueDiaCm)}" fill="#eef3fa" stroke="#4f8cff" stroke-width="1"/>
+    <rect x="${connX0 - px(flueDiaCm / 2)}" y="${outletCy - px(rl.teeH / 2)}" width="${px(flueDiaCm)}" height="${px(rl.teeH)}" fill="#eef3fa" stroke="#4f8cff" stroke-width="1"/>
+    <text x="${connX0}" y="${outletCy + px(rl.teeH / 2) + 11}" text-anchor="middle" font-size="9" fill="#4f8cff">${lbTee}</text>
+    <line x1="${connX0}" y1="${outletCy - px(rl.teeH / 2)}" x2="${connX0}" y2="${fy0 - 14}" stroke="#4f8cff" stroke-width="1" stroke-dasharray="5 3"/>
+    ${dimLine(connX0, outletCy - px(flueDiaCm / 2) - 16, sx0, outletCy - px(flueDiaCm / 2) - 16, `${lbConn} ${connLenCm} ${u}`, 'top')}
+    ${dimLine(sx0 + sw + 20, sy(L), sx0 + sw + 20, outletCy, `${lbOutletY} ${round(outletYCm, 1)} ${u}`, 'side')}
+  ` : '';
   const side = `
     <rect x="${sx0}" y="${fy0}" width="${sw}" height="${fh}" fill="#f8f9fb" stroke="#172033" stroke-width="1.5"/>
     ${L > 0 ? `<line x1="${sx0}" y1="${sy(L)}" x2="${sx0 + sw}" y2="${sy(L)}" stroke="#172033" stroke-width="1" stroke-dasharray="3 3"/>` : ''}
     <rect x="${sx0}" y="${sy(L + baffleY)}" width="${sw}" height="${px(brickT)}" fill="#f5e3d0" stroke="#c56a2d"/>
-    <circle cx="${sx0 + sw / 2}" cy="${sy(L + H)}" r="${px(cfg.chimney.diameterCm / 2)}" fill="none" stroke="#172033" stroke-width="1"/>
+    ${isRearView ? '' : `<circle cx="${sx0 + px(D * 0.3)}" cy="${sy(L + H)}" r="${px(flueDiaCm / 2)}" fill="none" stroke="#172033" stroke-width="1"/>`}
+    <text x="${sx0 + 3}" y="${fy0 - 5}" font-size="9" fill="#666">${lbBack}</text>
+    <text x="${sx0 + sw - 3}" y="${fy0 - 5}" text-anchor="end" font-size="9" fill="#666">${lbFront}</text>
+    ${bi.buildable ? `<rect x="${sx0}" y="${sy(L)}" width="${sw}" height="${px(bi.ductH)}" fill="#eafaf0" stroke="#22c55e" stroke-width="1"/>
+    <text x="${sx0 + sw - 3}" y="${sy(L - bi.ductH) - 3}" text-anchor="end" font-size="9" fill="#22c55e">${lbIntake} ${bi.ductW}×${bi.ductH} ${u}</text>` : ''}
+    ${rearSide}
     ${dimLine(sx0, floorY + 20, sx0 + sw, floorY + 20, `D ${D} ${u}`, 'top')}
   `;
   // ---- TOP VIEW ---- (перед унизу, зад/димохід — вище)
-  const ty0 = fy0 + fh + 80;
+  // Той самий зсув по вертикалі: патрубок заднього виходу виходить ЗА задній
+  // край кришки, тож вид зверху опускаємо (totalH рахується від ty0).
+  const ty0 = fy0 + fh + 80 + (isRearView ? px(connLenCm + flueDiaCm) : 0);
+  // Вид зверху — єдине місце, де видно головне обмеження компонування:
+  // канал мусить пройти МІЖ ніжками, а отвори в днищі — повз їхній слід.
+  const tX = (x) => fx0 + fw / 2 + px(x);
+  const tZ = (z) => ty0 + px(D / 2 + z);
+  const legPlan = L > 0 ? [[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([sx, sz]) =>
+    `<rect x="${tX(sx * (W / 2 - 6) - 2.5)}" y="${tZ(sz * (D / 2 - 6) - 2.5)}" width="${px(5)}" height="${px(5)}" fill="#dfe3ea" stroke="#172033" stroke-width="1"/>`).join('') : '';
+  const topIntake = `${legPlan}${bi.buildable ? `
+    <rect x="${tX(-bi.ductW / 2)}" y="${tZ(-D / 2 + bi.ductD)}" width="${px(bi.ductW)}" height="${px(bi.ductLenCm)}" fill="none" stroke="#22c55e" stroke-width="1" stroke-dasharray="5 3"/>
+    <rect x="${tX(-bi.armSpanCm / 2)}" y="${tZ(-D / 2)}" width="${px(bi.armSpanCm)}" height="${px(bi.ductD)}" fill="none" stroke="#22c55e" stroke-width="1" stroke-dasharray="5 3"/>
+    ${[-bi.riserX, bi.riserX].map((hx) => `<rect x="${tX(hx - bi.holeW / 2)}" y="${tZ(bi.holeZ - bi.holeDepth / 2)}" width="${px(bi.holeW)}" height="${px(bi.holeDepth)}" fill="#22c55e" stroke="#22c55e" stroke-width="1"/>`).join('')}
+    <text x="${tX(0)}" y="${tZ(D / 2) - 6}" text-anchor="middle" font-size="9" fill="#22c55e">${lbIntake}</text>` : ''}`;
   const top = `
     <rect x="${fx0}" y="${ty0}" width="${fw}" height="${sw}" fill="#f8f9fb" stroke="#172033" stroke-width="1.5"/>
-    <circle cx="${fx0 + fw / 2}" cy="${ty0 + px(D * 0.3)}" r="${px(cfg.chimney.diameterCm / 2)}" fill="#eef3fa" stroke="#4f8cff" stroke-width="1"/>
-    <text x="${fx0 + fw / 2}" y="${ty0 + px(D * 0.3) - px(cfg.chimney.diameterCm / 2) - 5}" text-anchor="middle" font-size="9" fill="#4f8cff">Ø${cfg.chimney.diameterCm} ${u}</text>
+    ${isRearView ? `<rect x="${fx0 + fw / 2 - px(flueDiaCm / 2)}" y="${ty0 - px(connLenCm)}" width="${px(flueDiaCm)}" height="${px(connLenCm)}" fill="#eef3fa" stroke="#4f8cff" stroke-width="1"/>
+    <circle cx="${fx0 + fw / 2}" cy="${ty0 - px(connLenCm)}" r="${px(flueDiaCm / 2)}" fill="#fff" stroke="#4f8cff" stroke-width="1"/>
+    <text x="${fx0 + fw / 2 + px(flueDiaCm / 2) + 4}" y="${ty0 - px(connLenCm) / 2}" font-size="9" fill="#4f8cff">${lbConn} ${connLenCm} ${u}</text>`
+    : `<circle cx="${fx0 + fw / 2}" cy="${ty0 + px(D * 0.3)}" r="${px(flueDiaCm / 2)}" fill="#eef3fa" stroke="#4f8cff" stroke-width="1"/>
+    <text x="${fx0 + fw / 2}" y="${ty0 + px(D * 0.3) - px(flueDiaCm / 2) - 5}" text-anchor="middle" font-size="9" fill="#4f8cff">Ø${flueDiaCm} ${u}</text>`}
+    ${topIntake}
     ${dimLine(fx0, ty0 + sw + 20, fx0 + fw, ty0 + sw + 20, `W ${W} ${u}`, 'top')}
   `;
 
-  const totalW = margin * 2 + fw + 150 + sw;
+  // +30 px праворуч для заднього виходу: розмірна лінія «Y виходу …» довша за
+  // стандартну плашку й інакше вилазила б за межі viewBox.
+  const totalW = margin * 2 + fw + 150 + sw + sideShift + (isRearView ? 30 : 0);
   const totalH = ty0 + sw + 90;
   const title = lang === 'en' ? 'Woodstove 2 — technical drawing (cm)' : 'Woodstove 2 — технічне креслення (см)';
   const sub = lang === 'en'
