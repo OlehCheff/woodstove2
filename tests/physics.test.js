@@ -1363,4 +1363,25 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
     JSON.stringify({ ws6: ws6.dimensions, def: def.dimensions }));
 }
 
+// 61. Крок 1: «Перепроєктувати» (= designInternals без keepBaffle) повертає
+// застарілу збережену піч до свіжого розрахунку; MIX_LEAN досяжний; час
+// горіння більше не упирається в штучні 2…14 год.
+{
+  const fresh = designInternals(normalizeConfig(clone(defaultConfig)));
+  const stale = clone(fresh);
+  stale.baffle.heightCm = 30; stale.baffle.angleDeg = 10; stale.chimney.diameterCm = 12;
+  const kept = designInternals(clone(stale), { keepBaffle: true });
+  ok(kept.baffle.heightCm === 30, 'keepBaffle leaves a saved (stale) baffle alone', JSON.stringify(kept.baffle));
+  const redone = designInternals(clone(stale));
+  ok(redone.baffle.heightCm === fresh.baffle.heightCm && redone.chimney.diameterCm === fresh.chimney.diameterCm, 'redesign restores the fresh-design baffle and chimney diameter', JSON.stringify({ redone: [redone.baffle.heightCm, redone.chimney.diameterCm], fresh: [fresh.baffle.heightCm, fresh.chimney.diameterCm] }));
+  const open = designInternals(normalizeConfig(clone(defaultConfig)));
+  open.primaryAir.openPct = 100; open.operation.secondaryAirPct = 100; open.airWash.intakePct = 100;
+  ok(PhysicsModel.evaluate(open).warnings.some((wn) => wn.code === 'MIX_LEAN'), 'MIX_LEAN is reachable with every air inlet wide open', JSON.stringify({ phi: PhysicsModel.evaluate(open).metrics.equivalenceRatio }));
+  ok(!PhysicsModel.evaluate(fresh).warnings.some((wn) => wn.code === 'MIX_LEAN'), 'MIX_LEAN does not fire on the default stove');
+  const big = applyModelPreset(normalizeConfig(clone(defaultConfig)), 'ws10');
+  applyModePreset(big, 'high');
+  const bh = PhysicsModel.evaluate(designInternals(big)).metrics.burnTimeHours;
+  ok(Number.isFinite(bh) && bh >= 0 && bh < 200, 'burn time stays finite without the old 2..14 h clamp', JSON.stringify({ bh }));
+}
+
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);process.exit(fails === 0 ? 0 : 1);

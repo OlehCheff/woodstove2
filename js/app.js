@@ -740,6 +740,7 @@ function applyI18n() {
     if (STR[lang][k] && el.id !== 'toggleDoor') el.textContent = STR[lang][k];
   });
   document.getElementById('langToggle').textContent = lang === 'en' ? 'UA' : 'EN';
+  document.getElementById('redesignInternals').title = t('redesignTip');
   document.getElementById('exportGltf').title = lang === 'en' ? 'Export scene as glTF' : 'Експорт сцени в glTF';
   document.getElementById('exportStl').title = lang === 'en' ? 'Export scene as STL' : 'Експорт сцени в STL';
   const ol = document.getElementById('tourList');
@@ -855,6 +856,14 @@ function bindUI() {
     const presetName = document.getElementById('modelPreset').value;
     config = applyModelPreset(config, presetName);
     applyModePreset(config, config.operation.mode);
+    designInternals(config);
+    saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
+  });
+  // Збережена піч завантажується з keepBaffle (геометрія авторитетна), тож після
+  // оновлення фізики бафль/отвори/Ø труби лишаються старими. Ця кнопка —
+  // явне повне перепроєктування під поточні габарити (той самий шлях, що в
+  // першого запуску): один клік, жодних прихованих змін під час перетягування.
+  document.getElementById('redesignInternals').addEventListener('click', () => {
     designInternals(config);
     saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
   });

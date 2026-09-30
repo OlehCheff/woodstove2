@@ -152,9 +152,9 @@ efficiency = combustionEff − flueLoss + catalystBonus(0 / +2.5)               
 **Потужність / закладка / час:**
 ```
 gross = fireboxLiters·0.105·(0.35+0.65·airMix)·powerFactor·draftFactor·geometryFactor  saneKw [0,500] — лише запобіжник від NaN/∞, не робочий діапазон
-heat  = gross·efficiency/100 · calibrationFactor                                       saneKw [0,500]; час горіння досі clamp [2,14] год — на high великих печей і в overnight показаний час упирається саме в цю межу
+heat  = gross·efficiency/100 · calibrationFactor                                       saneKw [0,500]
 maxLoad = liters·0.12·0.9;  recommended = maxLoad·fillFactor
-burn = usefulEnergy/heat · burnFactor · (1+steelMm·0.015)                              [2,14]
+burn = usefulEnergy/heat · burnFactor · (1+steelMm·0.015)                              [0,200] — лише запобіжник від NaN; стелю 2…14 год знято. Увага: overnight дає 16–26 год (burnFactor 1.75 відкалібровано під стелю) — потребує калібрування
 ```
 
 **Варнінги:**

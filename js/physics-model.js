@@ -268,10 +268,11 @@ export const PhysicsModel = {
     const loadKg = recommendedLoadKg;
     const inputEnergyKwh = loadKg * woodEnergyKwhKg;
     const usefulEnergyKwh = inputEnergyKwh * efficiencyPct / 100;
-    const burnTimeHours = clamp(
-      (usefulEnergyKwh / Math.max(heatOutputKw, 0.1)) * mc.burnFactor * (1 + steelMm * 0.015),
-      2.0, 14.0
-    );
+    // Межу 2…14 год знято: вона була штучною (високі режими великих печей
+    // впирались у 2 год, хоча реальне повне завантаження горить ≈1.5 год).
+    // Лишився лише запобіжник від NaN/∞ — як і для потужності (saneKw).
+    const burnRaw = (usefulEnergyKwh / Math.max(heatOutputKw, 0.1)) * mc.burnFactor * (1 + steelMm * 0.015);
+    const burnTimeHours = Number.isFinite(burnRaw) ? clamp(burnRaw, 0, 200) : 0;
 
     const warnings = [];
     if (primaryPct < 18 && secondaryPct < 20)
@@ -304,7 +305,8 @@ export const PhysicsModel = {
       warnings.push({ level: 'warn', code: 'SECONDARY_INACTIVE', message: `Вторинне горіння не запалюється: зона ${round(combustionTempC, 0)}°C < ${round(secondaryIgnitionC, 0)}°C.` });
     if (equivalenceRatio > 0.55 && mode !== 'overnight')
       warnings.push({ level: 'warn', code: 'MIX_RICH', message: `Замало повітря (Φ=${round(equivalenceRatio, 2)}): дим і CO. Додайте вторинне/третинне повітря.` });
-    if (equivalenceRatio < 0.33)
+    // Поріг 0.35, а не 0.33: λ ≤ 3.0 (airMix ≤ 1) дає Φ ≥ 0.333, тож 0.33 було недосяжним.
+    if (equivalenceRatio < 0.35)
       warnings.push({ level: 'info', code: 'MIX_LEAN', message: `Багато повітря (Φ=${round(equivalenceRatio, 2)}): зона охолоджується, зайві втрати.` });
     if (exitFlueTempC < 150)
       warnings.push({ level: 'danger', code: 'CREOSOTE_RISK', message: `Димові гази на виході ${round(exitFlueTempC, 0)}°C < 150°C: конденсат і креозот.` });
