@@ -1,12 +1,15 @@
 // PhysicsModel v5 — оціночна airflow/thermal модель, не CFD і не сертифікація.
-import { OPERATION_PRESETS, rearOutletLayout, bottomIntakeGeometry, INTAKE_MIN_STOP_PCT } from './config.js';
+import { OPERATION_PRESETS, rearOutletLayout, bottomIntakeGeometry, INTAKE_MIN_STOP_PCT, INTAKE_SLOT_RATIO } from './config.js';
 
+// Розмір закладки (fillFactor) лежить в OPERATION_PRESETS (config.js), а не тут:
+// її звідти і так перекриває spread, тож колишній дубль був мертвим. burnFactor
+// прибрано зовсім — час горіння тепер рахується з енергії й потужності (див. burnRaw).
 const MODE_COEFF = {
-  'start-up':  { effBias: -4, powerFactor: 1.05, burnFactor: 0.72, fillFactor: 0.5 },
-  'low':       { effBias: +2, powerFactor: 0.58, burnFactor: 1.38, fillFactor: 0.6 },
-  'medium':    { effBias: +4, powerFactor: 0.82, burnFactor: 1.0,  fillFactor: 0.7 },
-  'high':      { effBias: -2, powerFactor: 1.18, burnFactor: 0.74, fillFactor: 0.85 },
-  'overnight': { effBias: -6, powerFactor: 0.42, burnFactor: 1.75, fillFactor: 0.7 },
+  'start-up':  { effBias: -4, powerFactor: 1.05 },
+  'low':       { effBias: +2, powerFactor: 0.58 },
+  'medium':    { effBias: +4, powerFactor: 0.82 },
+  'high':      { effBias: -2, powerFactor: 1.18 },
+  'overnight': { effBias: -6, powerFactor: 0.42 },
 };
 const WOOD_SPECIES = {
   birch: { lhvKwhKg: 4.2, bulkKgM3: 620 },
@@ -29,6 +32,21 @@ const LAMBDA_REF = 2.2;
 // вже не вистачає, щоб допалити всі гази: частина енергії йде в трубу як CO і дим.
 // Так пік ККД припадає на межу цільового діапазону, а не в зону MIX_RICH (Φ > 0.55).
 const LAMBDA_RICH = 2.0;
+// ---- λ із ПЛОЩ проходів, а не з відсотків слайдерів ----
+// Усі входи відкриті в ту саму топку, тож за спільного перепаду тиску витрата
+// крізь кожен ∝ його ВІДКРИТІЙ площі (Q = Cd·A·√(2Δp/ρ)); Cd і Δp спільні й
+// входять в єдину константу AIR_OPEN_REF. airMix — частка площі, відкритої
+// зараз, від площі ТІЄЇ САМОЇ печі при повністю відкритих входах (тому від
+// розміру печі не залежить), поділена на AIR_OPEN_REF.
+// Абсолютний баланс «витрата крізь отвори / стехіометрія палива» НЕ беремо:
+// площі входів на кВт у серії WS-1…WS-10 відрізняються ≈5.5× (автопроєкт не
+// масштабує primary/air-wash від потужності), тож такий λ виходить ≈13 на WS-1
+// і ≈2.3 на WS-10 (Δp 12 Па) — одна константа цього не виправить.
+// ОЦІНКА, не вимір: AIR_OPEN_REF підібрано так, щоб режими лишились приблизно
+// там, де були (medium Φ ≈ 0.45–0.47, пік ККД біля Φ 0.5); 1/AIR_OPEN_REF = 1.5.
+const AIR_OPEN_REF = 2 / 3;
+// Верхня межа airWash.gapCm у normalizeConfig: «повністю відкрита» щілина завіси.
+const WASH_GAP_MAX_CM = 3;
 // Межі потужності — лише захист від нісенітниці (NaN/Infinity з пошкодженого
 // конфігу), а НЕ «робочий діапазон». Колишні clamp(1.5…24) для gross і
 // clamp(1.0…20) для net були штучні: кожна мала піч показувала фальшиві
@@ -47,15 +65,16 @@ const saneKw = (v) => (Number.isFinite(v) ? clamp(v, 0, MAX_SANE_KW) : 0);
 // ЗАСТЕРЕЖЕННЯ: штраф 1/(1+0.12·n) за поворот — це модельна УМОВНІСТЬ,
 // відкалібрована разом із рештою формули тяги, а не виміряний опір. За балансом
 // мас швидкість у трубі Ø17.5 на сталому режимі — 0.46–0.67 м/с, тобто реальний
-// трійник коштує ζ·ρv²/2 ≈ 0.03–0.16 Па, а не ~2 Па. Чесна частка дефіциту
-// тяги заднього виходу — охолодження патрубка (≈ −5% і ≈ −25 °C на 30 см
-// для defaultConfig, bends 0), решта −10% — ця умовність. 0.12 не чіпаємо,
-// щоб не зсувати наявне калібрування; на виборі виходу воно не позначається.
+// трійник коштує ζ·ρv²/2 ≈ 0.03–0.16 Па, а не ≈1.5 Па (12 % від ≈13 Па).
+// Чесна частка дефіциту тяги заднього виходу — охолодження патрубка (≈ −5% і
+// ≈ −25 °C на 30 см для defaultConfig, bends 0), решта −10% — ця умовність.
+// 0.12 не чіпаємо, щоб не зсувати наявне калібрування; на виборі виходу воно
+// не позначається.
 const OUTLET_TURNS = { up: { top: 0, rear: 1 }, wall: { top: 2, rear: 1 } };
 // Одностінна труба в кімнаті охолоджує гази: NTU ≈ 0.2 (газ 300 °C) …
 // 0.39 (557 °C) на метр при U ≈ 2.7–5.3 Вт/м²К. Беремо 0.3/м — ОЦІНКА,
 // яку варто відкалібрувати Test Burn-ом (T газу до і після патрубка).
-// Для порівняння: увесь димохід модель охолоджує на 0.12/м (flueCoolingFactor),
+// Для порівняння: увесь димохід модель охолоджує на 0.12/м (FLUE_COOLING_PER_M),
 // і вертикальна одностінна труба верхнього виходу врахована саме там.
 const ROOM_PIPE_COOLING_PER_M = 0.3;
 // Маршрут «у стінний димохід» для ВЕРХНЬОГО виходу: підйом над кришкою перед
@@ -63,6 +82,57 @@ const ROOM_PIPE_COOLING_PER_M = 0.3;
 // труба в кімнаті, якої задній вихід не має.
 const TOP_WALL_RISE_M = 0.4;
 const AMBIENT_C = 20;
+
+// ---- Тяга: усі числа нижче — ОЦІНКИ зі стандартних інженерних значень ----
+// Власник не надав виміряних тяги/температур (манометр на патрубку, термопара),
+// тож нічого тут не відкалібровано за його піччю; див. REPORT §7.
+// Охолодження газу вздовж труби: T(z) = T_довк + (T_вх − T_довк)·e^(−k·z).
+// Та сама k = 0.12/м, що й для температури на ВИХОДІ (exitFlueTempC) — середнє
+// по трубі; реальна одностінна ділянка в кімнаті остигає швидше (0.3/м, вище).
+// Одна k для будь-якої печі — свідоме спрощення: фізично k ∝ U·π·D/(ṁ·cp), тож
+// мала піч (ṁ у ~16 разів менша за WS-10) остигає швидше, а велика повільніше;
+// k не масштабується ні витратою газу, ні Ø труби. Для WS-1…WS-3 на 5 м тягу
+// це завищує (оцінка ≈8 проти ≈14 Па), для WS-8…10 — навпаки. REPORT §7.
+const FLUE_COOLING_PER_M = 0.12;
+// Відношення робочої тяги до теоретичної. Інтеграл плавучості для профілю T(z)
+// вище дає ≈25 Па (medium, 5 м), а типова експлуатаційна тяга печі —
+// 10–20 Па на 4–5 м (паспорти: 0.04–0.08 in wc = 10–20 Па; випробування за
+// EN 13240 ведуть при 12 Па). Літературний діапазон відношення 0.5–0.9.
+// 0.55 збирає все, чого модель не розкладає: нещільності, ковпак і вітер,
+// відхилення реального профілю T від експоненти, невизначеність T на патрубку
+// (120+320·flame — теж оцінка). Тертя Дарсі + місцеві опори при швидкості з
+// балансу мас дають ≈0.1–1.7 Па для печей до WS-8 (0.4–1.3 м/с), але для WS-9/10
+// у high/start-up вже ≈2–4 Па (до ≈13 % теоретичної тяги; оцінка при Дарсі
+// f = 0.035 і сумарному ζ ≈ 1 на вході й ковпаку; при ζ ≈ 2 — до ≈7 Па).
+// Окремого члена тертя немає: залежність від Ø — diaFactor (він відображає
+// лише бік тертя: ширша труба тягне краще, а її охолодження газу НЕ
+// моделюється, тож завеликий Ø тягу не знижує), від вигинів — bendPenalty.
+const DRAFT_PRACTICAL_RATIO = 0.55;
+// Опорна тяга для draftFactor. Було 12 Па на СТАРІЙ шкалі тяги, що завищувала
+// ≈2.1×; 6 Па — те саме відносне положення на новій шкалі, а плато 1.3 тепер
+// починається від 1.3·6 ≈ 7.8 Па (≈ DRAFT_WEAK_PA), як і раніше для слабких труб.
+const DRAFT_REF_PA = 6;
+// Поріг DRAFT_WEAK ≈ 0.03 in wc — нижня межа, яку ще вказують у паспортах печей.
+const DRAFT_WEAK_PA = 8;
+// Евристики швидкості (stackVelocityMs, secondaryVelocityMs, airWashVelocityMs)
+// підігнані під ЗАВИЩЕНУ шкалу тяги: з них рахуються час перебування газу,
+// T зони горіння, ККД і поріг AIRWASH_JETS. Щоб вони не зсунулись, переводимо
+// нову тягу на стару шкалу, а не підганяємо їх заново. Це умовні евристики, а
+// не баланс мас (stackVelocityMs ≈3–10× вища за нього) — REPORT §7.
+const DRAFT_LEGACY_SCALE = 2.1;
+// Межі draftPa — лише захист від нісенітниці (як MAX_SANE_KW), а не «робочий
+// діапазон»: стару стелю 40 Па знято; в межах UI максимум ≈40 Па.
+const MIN_DRAFT_PA = 1;
+const MAX_SANE_DRAFT_PA = 100;
+
+// ---- Час горіння: ці числа — ОЦІНКИ, не виміри (REPORT §7) ----
+// Запасна частка максимальної закладки, якщо для режиму її немає в OPERATION_PRESETS.
+const DEFAULT_FILL_FACTOR = 0.65;
+// Закладка start-up — це розпалювання (≈0.3 від максимальної), і в нормі вона
+// горить ≈0.7–1.2 год (у серії WS-1…WS-10 до ≈1.1). Поріг 1.8 год = 1.5× верх
+// цієї смуги: довше — вогонь ледь тягне (задушене повітря, слабка тяга).
+// Колишній поріг 6 год не спрацьовував би ніколи.
+const STARTUP_LONG_H = 1.8;
 
 export const PhysicsModel = {
   evaluate(config) {
@@ -149,7 +219,8 @@ export const PhysicsModel = {
     // ---- Нижній вхід secondary (канал під днищем + повзун спереду) ----
     // Повзун — це фізичний привід ТОГО САМОГО operation.secondaryAirPct, який
     // уже був у моделі. λ, ККД і потужність від самої появи каналу не
-    // змінюються: нових коефіцієнтів тут немає НАВМИСНО.
+    // змінюються (фіксована частина шляху в λ не входить): нових коефіцієнтів
+    // тут немає НАВМИСНО.
     // Підігрів повітря в каналі (оцінка +20…90 °C) НЕ моделюється: свого
     // коефіцієнта для нього немає, а на стелі combustionEff = 92 він лише
     // підняв би втрати в трубі. Це записано і в REPORT §7.
@@ -158,9 +229,9 @@ export const PhysicsModel = {
     const secondaryIntakeOpenCm2 = secondaryIntakeFullCm2 * clamp(secondaryPct, 0, 100) / 100;
     // Щілина й отвори стоять ПОСЛІДОВНО, тож опори додаються як 1/A²
     // (стандартне складання отворів, не новий коефіцієнт). Ця площа —
-    // ДОВІДКОВА: у λ вона не входить, бо airMix бере відсоток повзуна, а не
-    // площу. Саме тут модель приписує повзуну більше влади, ніж має залізо
-    // (вага 0.35 в airMix проти ~9 % площі входів із внутрішньою заслінкою, ~19 % повністю відкрито) — див. REPORT §7.
+    // ДОВІДКОВА (реальний шлях разом із каналом): λ рахується з тієї ж
+    // послідовності отворів і щілини, але без фіксованої частини каналу
+    // (secondaryAirAreaCm2 нижче, біля airMix) — див. REPORT §4 і §7.
     // Незмінна частина шляху (канал, колектор, вікна в днищі, стояки) — теж послідовно.
     const fixedTerm = intake.fixedPathCm2 > 0 ? 1 / intake.fixedPathCm2 ** 2 : 0;
     const secondaryPathAreaCm2 = secondaryIntakeOpenCm2 > 0
@@ -168,25 +239,35 @@ export const PhysicsModel = {
       : (intake.buildable ? 0 : secondaryOpeningAreaCm2);
 
     // Тяга: двигун системи — ПОВНИЙ димохід (плавучисть гарячих газів).
-    // Δp ≈ g·H·(ρ_повітря − ρ_газів); вигини й опір зменшують тягу.
+    // Δp = g·∫(ρ_повітря − ρ_газів)dz; вигини й опір зменшують тягу.
     const baffleHeightNorm = clamp((baffleHeight - 20) / 60, 0, 1);
     const baffleAngleNorm = clamp(baffleAngle / 15, -1, 1);
-    const baffleDraftPenalty = baffleHeightNorm * 1.2;
+    // 0.5 Па на повну висоту бафля — ОЦІНКА (було 1.2 на старій шкалі ×2.1).
+    const baffleDraftPenalty = baffleHeightNorm * 0.5;
+    // ВАЖЛИВО: stackTempC — температура газу НА ПАТРУБКУ (вхід у вертикаль,
+    // оцінка 120 + 320·flame, +50 у high), а не середня по трубі. Раніше її брали
+    // як середню на всю висоту, звідси завищена тяга; тепер середню по висоті дає
+    // експоненційний профіль охолодження (інтеграл береться точно, див. нижче).
     const stackTempC = clamp(120 + flame * 320 + (mode === 'high' ? 50 : 0), 120, 650);
     // Гази входять у вертикаль уже охолодженими на горизонтальному патрубку —
     // саме це, а не коліно, є фізично чесною частиною дефіциту тяги заднього
-    // виходу (на defaultConfig з L = 30 см: 30.5 → 29.1 Па, тобто −4.6%).
+    // виходу (на defaultConfig з L = 30 см: 14.3 → 13.6 Па, тобто −5%).
     const stackGasC = roomPipeM > 0 ? AMBIENT_C + (stackTempC - AMBIENT_C) * roomPipeCooling : stackTempC;
     const rhoAir = 1.2;
-    const rhoGas = rhoAir * 293 / (stackGasC + 273);
-    const buoyancyPa = 9.81 * flueH * (rhoAir - rhoGas);
+    // Для ρ_газу(z) = ρ_пов·293/T(z) і T(z) = T_довк + ΔT·e^(−k·z) інтеграл
+    // плавучості точний: Δp = (g·ρ_пов/k)·ln(T_вх/T_вих) у кельвінах, де
+    // T_вих — температура на ВИХОДІ з труби. Підсумок множимо на DRAFT_PRACTICAL_RATIO.
+    const stackOutC = AMBIENT_C + (stackGasC - AMBIENT_C) * Math.exp(-FLUE_COOLING_PER_M * flueH);
+    const buoyancyPa = (9.81 * rhoAir / FLUE_COOLING_PER_M) * Math.log((stackGasC + 273) / (stackOutC + 273)) * DRAFT_PRACTICAL_RATIO;
     const bendPenalty = 1 / (1 + 0.12 * routeBends);
     const diaFactor = clamp((chimD / 15) ** 0.3, 0.8, 1.2);
-    const draftPa = clamp(buoyancyPa * bendPenalty * diaFactor - baffleDraftPenalty, 3, 40);
-    const stackVelocityMs = clamp(0.75 * Math.sqrt(Math.max(draftPa, 0.1)), 1, 7);
+    const draftPa = clamp(buoyancyPa * bendPenalty * diaFactor - baffleDraftPenalty, MIN_DRAFT_PA, MAX_SANE_DRAFT_PA);
+    // Швидкісні евристики — на старій шкалі тяги (див. DRAFT_LEGACY_SCALE).
+    const draftFitPa = draftPa * DRAFT_LEGACY_SCALE;
+    const stackVelocityMs = clamp(0.75 * Math.sqrt(Math.max(draftFitPa, 0.1)), 1, 7);
     const draftFlowM3s = clamp((chimneyAreaCm2 / 10000) * stackVelocityMs, 0.003, 0.2);
-    const secondaryVelocityMs = clamp((draftPa * 0.12) / Math.max(secondaryOpeningAreaCm2, 0.4), 0.05, 8);
-    const airWashVelocityMs = clamp((draftPa * 0.04) / Math.max(airWashOpeningAreaCm2 / 10, 0.6), 0.05, 5);
+    const secondaryVelocityMs = clamp((draftFitPa * 0.12) / Math.max(secondaryOpeningAreaCm2, 0.4), 0.05, 8);
+    const airWashVelocityMs = clamp((draftFitPa * 0.04) / Math.max(airWashOpeningAreaCm2 / 10, 0.6), 0.05, 5);
 
     const secondaryDemandCm2 = clamp(fireboxLiters * 0.006, 0.4, 2.0);
     const secondaryCoverage = clamp(secondaryTotalAreaCm2 / secondaryDemandCm2, 0, 1.5);
@@ -194,8 +275,22 @@ export const PhysicsModel = {
     const bafflePreheatBonus = baffleHeightNorm * 25 + baffleAngleNorm * 15;
     const secondaryPreheatC = clamp(20 + (+secondary.preheatLengthCm || 55) * 1.9 + flame * 95 + bafflePreheatBonus, 60, 420);
     const airWashPreheatC = clamp(20 + (+airWash.preheatLengthCm || 45) * 1.7 + flame * 65, 50, 340);
-    const washEffPct = clamp((washGap / 3) * (washIntake / 100) * 100, 0, 100);
-    const airMix = (primaryPct * 0.55 + secondaryPct * 0.35 + washEffPct * 0.10) / 100;
+    // λ із площ (див. AIR_OPEN_REF). Вторинний шлях: отвори (× заслінка
+    // baffle.airflowPct) і щілина повзуна (INTAKE_SLOT_RATIO × площі отворів ×
+    // положення повзуна) стоять ПОСЛІДОВНО, тож опори 1/A² додаються — так само,
+    // як у secondaryPathAreaCm2, але без каналу під днищем (його фіксована
+    // частина на λ не впливає: тест на нейтральність каналу лишається чинним).
+    // Вага слайдера в λ — його реальна частка площі (≈9 % відкритої площі
+    // medium, ≈5 % при всьому навстіж з щілиною 3 см), а не умовні 0.35. Tertiary завжди
+    // відкритий, тож входить і в відкриту, і в повну площу.
+    const secondaryHolesCm2 = circleArea(+secondary.holeDiameterCm || 0.7) * (+secondary.holeCount || 10);
+    const secondarySeriesCm2 = (damper, slider) => (damper > 0 && slider > 0)
+      ? secondaryHolesCm2 / Math.sqrt(1 / damper ** 2 + 1 / (INTAKE_SLOT_RATIO * slider) ** 2) : 0;
+    const secondaryAirAreaCm2 = secondarySeriesCm2(baffleFlow / 100, clamp(secondaryPct, 0, 100) / 100);
+    const primaryFullCm2 = circleArea(+config?.primaryAir?.holeDiameterCm || 1.2) * (+config?.primaryAir?.holeCount || 8);
+    const airOpenCm2 = primaryOpeningAreaCm2 + secondaryAirAreaCm2 + airWashOpeningAreaCm2 + tertiaryAreaCm2;
+    const airFullCm2 = primaryFullCm2 + secondarySeriesCm2(1, 1) + slotWidthCm * WASH_GAP_MAX_CM + tertiaryAreaCm2;
+    const airMix = airOpenCm2 / airFullCm2 / AIR_OPEN_REF;
     // Коефіцієнт надлишку повітря λ та Φ=1/λ (ціль Φ 0.4–0.5).
     const lambda = clamp(1.4 + airMix * 1.6, 1.1, 4);
     const equivalenceRatio = 1 / lambda;
@@ -241,9 +336,14 @@ export const PhysicsModel = {
     // Температура димових газів на ВИХОДІ з труби: експоненційне охолодження вздовж
     // каналу (наближення до температури довкілля), а не лінійне — лінійна форма
     // перетинала нуль і давала однакові 40°C для будь-якої печі на довгих трубах.
-    const ambientC = AMBIENT_C;
-    const flueCoolingFactor = Math.exp(-0.12 * flueH);
-    const exitFlueTempC = clamp(ambientC + (modeledFlueTempC - ambientC) * flueCoolingFactor * roomPipeCooling - routeBends * 6, 40, 600);
+    // Береться з ТОГО САМОГО профілю T(z), що й тяга (stackOutC вище: від T на
+    // патрубку 120+320·flame, а не від modeledFlueTempC ≈ 430–650 °C). Раніше
+    // exit рахувався від modeledFlueTempC і на low/overnight виходив ГАРЯЧІШИМ за
+    // газ, що увійшов у трубу (low: 264 проти 232 °C на патрубку), тож
+    // CREOSOTE_RISK мовчав на кожній типовій 5-метровій трубі. Тепер low/overnight
+    // на 5 м дають ≈110–140 °C і CREOSOTE_RISK спрацьовує — це ОЦІНКА (T на
+    // патрубку не виміряна), але вона не суперечить сама собі; REPORT §7.
+    const exitFlueTempC = clamp(stackOutC - routeBends * 6, 40, 600);
     // Тепло, яке віддає в кімнату ДОДАТКОВА одностінна труба цього маршруту
     // (горизонтальний патрубок заднього виходу або підйом+горизонталь
     // верхнього у стінний димохід). Це властивість МОНТАЖУ, а не печі, тому
@@ -255,7 +355,12 @@ export const PhysicsModel = {
     const bodyTempC = clamp(110 + (1 - thermalRetention) * 520 + flame * 120 - (steelMm - 5) * 9, 40, 480);
     const bodyHeatSharePct = clamp((1 - thermalRetention) * 26 + 8, 8, 30);
 
-    const draftFactor = clamp(draftPa / 12, 0.7, 1.3);
+    // Тяга обмежує потужність лише нижче 1.3·DRAFT_REF_PA ≈ 8 Па (слабкий
+    // димохід); вища тяга потужності не додає. Множник 1.3 — калібрувальний,
+    // вбудований у 0.105 кВт/л нижче: так було й до переякорення (стара
+    // шкала впиралась у 1.3 на всіх пресетах), тож потужність типових печей
+    // не змінилась.
+    const draftFactor = clamp(draftPa / DRAFT_REF_PA, 0.7, 1.3);
     const geometryFactor = clamp((w * d * h) / 1e6 / 0.36, 0.75, 1.25);
     const grossHeatOutputKw = saneKw(
       fireboxLiters * 0.105 * (0.35 + 0.65 * airMix) * mc.powerFactor * draftFactor * geometryFactor
@@ -264,14 +369,29 @@ export const PhysicsModel = {
     // Орієнтир: ~120 кг/м³ насипної маси сухих полін, не щільність деревини.
     // Безпечна максимальна закладка залишає місце для полум'я та вторинного повітря.
     const maxLoadKg = fireboxLiters * 0.12 * 0.9;
-    const recommendedLoadKg = maxLoadKg * (mc.fillFactor ?? 0.7);
+    // Розмір закладки за режимом (OPERATION_PRESETS.fillFactor) — частка максимальної.
+    const fillFactor = mc.fillFactor ?? DEFAULT_FILL_FACTOR;
+    const recommendedLoadKg = maxLoadKg * fillFactor;
     const loadKg = recommendedLoadKg;
     const inputEnergyKwh = loadKg * woodEnergyKwhKg;
     const usefulEnergyKwh = inputEnergyKwh * efficiencyPct / 100;
-    // Межу 2…14 год знято: вона була штучною (високі режими великих печей
-    // впирались у 2 год, хоча реальне повне завантаження горить ≈1.5 год).
-    // Лишився лише запобіжник від NaN/∞ — як і для потужності (saneKw).
-    const burnRaw = (usefulEnergyKwh / Math.max(heatOutputKw, 0.1)) * mc.burnFactor * (1 + steelMm * 0.015);
+    // Час горіння = енергія закладки / швидкість її віддачі: useful/heat ≡
+    // input/(gross·calibration), тож ККД скорочується, а режими розрізняє лише
+    // розмір закладки (fillFactor) і потужність. Без множників: раніше тут стояли
+    // burnFactor режиму (0.72…1.75) і (1+0.015·сталь), підігнані під стару стелю
+    // 14 год, і вони рахували ДВІЧІ — повільний режим уже довший через меншу
+    // потужність, а множник додавав ще 38–75 % зверху (heat·burn виходило
+    // 74–196 % корисної енергії дров, overnight 16–26 год). Тепломасу сталі
+    // не моделюємо: вона зсуває віддачу тепла, а не час вигорання палива.
+    // heatOutputKw — середня за закладку (як номінальна за EN 13240), тож
+    // догорання вугілля вже всередині; окремого «хвоста» та розгону розпалу
+    // стаціонарна модель не має. ОЦІНКА, не вимір (REPORT §7).
+    // Межу 2…14 год знято: вона була штучною. Лишився лише запобіжник від NaN/∞
+    // (і від нульової потужності) — як saneKw для потужності. Знаменник 1e-3 кВт
+    // (а не 0.1): на топках <≈3 л потужність < 0.1 кВт, і більший нижній поріг
+    // ламав баланс «heat·burn = корисна енергія» (час занижувався); від ∞ тут
+    // захищає clamp до 200 год.
+    const burnRaw = usefulEnergyKwh / Math.max(heatOutputKw, 1e-3);
     const burnTimeHours = Number.isFinite(burnRaw) ? clamp(burnRaw, 0, 200) : 0;
 
     const warnings = [];
@@ -283,7 +403,7 @@ export const PhysicsModel = {
       warnings.push({ level: 'warn', code: 'INEFFICIENT_MODE', message: 'Неефективний режим: ККД < 58%.' });
     if (washGap < 0.9 && flame > 0.75)
       warnings.push({ level: 'warn', code: 'DIRTY_GLASS', message: 'Закопчення скла: вузький air-wash при сильному полум’ї.' });
-    if (draftPa < 9 && mode !== 'overnight')
+    if (draftPa < DRAFT_WEAK_PA && mode !== 'overnight')
       warnings.push({ level: 'warn', code: 'DRAFT_WEAK', message: `Слабка тяга (${round(draftPa, 1)} Па): збільшіть висоту/Ø димоходу або інтенсивність.` });
     if (baffleGap > 12)
       warnings.push({ level: 'info', code: 'BAFFLE_GAP', message: 'Великий передній зазор бафля — гази йдуть повз догорання.' });
@@ -295,7 +415,7 @@ export const PhysicsModel = {
       warnings.push({ level: 'warn', code: 'AIRWASH_JETS', message: 'Air-wash може працювати струменями: розширте slot або зменште intake.' });
     if (airWashCoverage < 0.55 && mode !== 'overnight')
       warnings.push({ level: 'warn', code: 'AIRWASH_LOW', message: 'Недостатнє покриття скла повітряною завісою.' });
-    if (mode === 'start-up' && burnTimeHours > 6)
+    if (mode === 'start-up' && burnTimeHours > STARTUP_LONG_H)
       warnings.push({ level: 'info', code: 'STARTUP_LONG', message: 'Start-up з довгим горінням — перевірте подачу повітря.' });
     if (bodyTempC > 420 && steelMm <= 4)
       warnings.push({ level: 'danger', code: 'STEEL_OVERHEAT', message: `Корпус ~${round(bodyTempC, 0)}°C при сталі ≤4 мм: збільшіть ізоляцію або товщину сталі.` });
@@ -305,8 +425,11 @@ export const PhysicsModel = {
       warnings.push({ level: 'warn', code: 'SECONDARY_INACTIVE', message: `Вторинне горіння не запалюється: зона ${round(combustionTempC, 0)}°C < ${round(secondaryIgnitionC, 0)}°C.` });
     if (equivalenceRatio > 0.55 && mode !== 'overnight')
       warnings.push({ level: 'warn', code: 'MIX_RICH', message: `Замало повітря (Φ=${round(equivalenceRatio, 2)}): дим і CO. Додайте вторинне/третинне повітря.` });
-    // Поріг 0.35, а не 0.33: λ ≤ 3.0 (airMix ≤ 1) дає Φ ≥ 0.333, тож 0.33 було недосяжним.
-    if (equivalenceRatio < 0.35)
+    // Поріг 0.35, а не 0.33: Φ = 1/λ, а λ = 1.4 + 1.6·airMix; повністю відкрита
+    // піч дає airMix = 1.5 (1/AIR_OPEN_REF), тобто λ = 3.8 і Φ ≈ 0.26.
+    // Start-up навмисно гонить усі входи навстіж (розпал, тяга), тож Φ ≈ 0.32 там
+    // норма, а не помилка — як MIX_RICH для overnight.
+    if (equivalenceRatio < 0.35 && mode !== 'start-up')
       warnings.push({ level: 'info', code: 'MIX_LEAN', message: `Багато повітря (Φ=${round(equivalenceRatio, 2)}): зона охолоджується, зайві втрати.` });
     if (exitFlueTempC < 150)
       warnings.push({ level: 'danger', code: 'CREOSOTE_RISK', message: `Димові гази на виході ${round(exitFlueTempC, 0)}°C < 150°C: конденсат і креозот.` });
@@ -343,7 +466,7 @@ export const PhysicsModel = {
         thermalRetentionPct: round(thermalRetention * 100, 1), gasPathCm: round(gasPathCm, 1),
         gasResidenceSeconds: round(gasResidenceSeconds, 2), grossHeatOutputKw: round(grossHeatOutputKw, 2),
         inputEnergyKwh: round(inputEnergyKwh, 1), usefulEnergyKwh: round(usefulEnergyKwh, 1),
-        recommendedLoadKg: round(recommendedLoadKg, 1), maxLoadKg: round(maxLoadKg, 1), loadingVolumePct: round((mc.fillFactor ?? 0.7) * 100, 0),
+        recommendedLoadKg: round(recommendedLoadKg, 1), maxLoadKg: round(maxLoadKg, 1), loadingVolumePct: round(fillFactor * 100, 0),
         calibrationFactor: round(calibrationFactor, 3),
         secondaryActive, catalystActive,
         equivalenceRatio: round(equivalenceRatio, 3), lambda: round(lambda, 2),
@@ -485,5 +608,33 @@ export function optimizeConfig(config, prepare) {
   // замість 3.7 л. Геометрія лишається валідною, а про неможливість заднього
   // виходу користувачу каже помилка REAR_OUTLET_NO_ROOM у validateConfig.
   return bestFit || best;
+}
+
+// Φ-тюнер: підбір трьох важелів повітря (primary, secondary, air-wash intake),
+// щоб Φ вийшло найближче до цілі. Air-wash — третій важіль, бо λ тепер із ПЛОЩ,
+// а щілина завіси (≈78 % відкритої площі medium) домінує: без неї два слайдери
+// primary/secondary рухають Φ лише в вікні ≈0.45–0.49 і не доходять до зони
+// 0.4–0.5 у start-up/high/overnight. Щілина gapCm — це габарит, а не регулювання,
+// тож не чіпаємо її. Межі — межі слайдерів (secondary ≥ INTAKE_MIN_STOP_PCT).
+// Нічию розв'язуємо меншим зсувом від поточних положень: 1e-5 на 1 % ходу — це
+// не зсуває мету більш ніж на ≈0.003, але не дає тюнеру без потреби крутити все.
+// Чиста функція (app.js лише застосовує результат), щоб її можна було тестувати.
+export function fitAirToPhi(config, target = 0.45) {
+  const p0 = +config?.primaryAir?.openPct || 0;
+  const s0 = +config?.operation?.secondaryAirPct || 0;
+  const w0 = +config?.airWash?.intakePct || 0;
+  let best = null;
+  for (let p = 15; p <= 95; p += 5) for (let s = INTAKE_MIN_STOP_PCT; s <= 90; s += 10) for (let w = 10; w <= 100; w += 10) {
+    const probe = {
+      ...config,
+      primaryAir: { ...config?.primaryAir, openPct: p },
+      operation: { ...config?.operation, secondaryAirPct: s },
+      airWash: { ...config?.airWash, intakePct: w },
+    };
+    const phi = PhysicsModel.evaluate(probe).metrics.equivalenceRatio;
+    const score = Math.abs(phi - target) + 1e-5 * (Math.abs(p - p0) + Math.abs(s - s0) + Math.abs(w - w0));
+    if (!best || score < best.score) best = { score, primaryPct: p, secondaryPct: s, washIntakePct: w, phi };
+  }
+  return best;
 }
 

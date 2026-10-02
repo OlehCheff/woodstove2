@@ -99,9 +99,10 @@
   <details open><summary data-i18n="secPhiTuner">Φ-тюнер (надлишок повітря)</summary><div class="body" id="phiTuner">
     <div class="row"><label><span data-i18n="phiPrimary">Primary повітря (%)</span> <output id="primaryAirOpenPct-v"></output></label><input type="range" id="primaryAirOpenPct" min="10" max="95" step="1"></div>
     <div class="row"><label><span data-i18n="phiSecondary">Secondary повітря (%)</span> <output id="operationSecondaryAirPct-v"></output></label><input type="range" id="operationSecondaryAirPct" min="10" max="95" step="1"></div>
+    <div class="row"><label><span data-i18n="phiWash">Air-wash притік (%)</span> <output id="airWashIntakePct-v"></output></label><input type="range" id="airWashIntakePct" min="0" max="100" step="1"></div>
     <div class="phi-gauge"><div class="phi-track"><div class="phi-band"></div><div class="phi-marker" id="phiMarker"></div></div><div class="phi-label" id="phiLabel">Φ —</div></div>
     <div class="phi-status" id="phiStatus">—</div>
-    <div class="hint" data-i18n="intakeNote">Повзун нижнього входу = слайдер «Secondary повітря». Відсоток повзуна — це ПОЛОЖЕННЯ, а не частка витрати: щілина й отвори стоять послідовно (опір ∝ 1/A²). Вплив слайдера на λ — припущення моделі (вага 0.35 у airMix проти ~20 % площі входів). Механічний упор на печі — 20 %.</div>
+    <div class="hint" data-i18n="intakeNote">Повзун нижнього входу = слайдер «Secondary повітря». Відсоток повзуна — це ПОЛОЖЕННЯ, а не частка витрати: щілина й отвори стоять послідовно (опір ∝ 1/A²). λ рахується з ВІДНОСНОЇ відкритості входів (частка площі від повністю відкритої цієї ж печі), а не з абсолютного балансу повітря. Частки відкритої площі primary / secondary / air-wash: для WS-6 у medium ≈ 13 / 8 / 79 %, на інших печах і режимах вони інші (по серії 8–16 / 2–34 / 57–86 %). Основний важіль Φ і потужності — air-wash; primary 10→95 % змінює потужність лише на ≈9 %, а secondary майже не рухає λ (оцінка моделі, не вимір). Механічний упор на печі — 20 %.</div>
     <div class="btns"><button id="phiAuto" class="accent" data-i18n="phiAuto">Авто в зону (Φ≈0.45)</button></div>
   </div></details>
 

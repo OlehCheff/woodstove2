@@ -2,12 +2,20 @@
 export const STORAGE_KEY = 'woodstove2ConfigV1';
 export const LEGACY_KEYS = ['woodstove1ConfigV2', 'woodstove1Config'];
 
+// fillFactor — частка МАКСИМАЛЬНОЇ закладки (liters·0.12·0.9), яку рекомендує режим.
+// ОЦІНКА, а не вимір: підібрана так, щоб час горіння ПОВНОЇ закладки (burn =
+// energy/power, без множників режиму) вкладався в типові межі — start-up 0.7–1.2 год,
+// high 1.5–2.5, medium 3–4.5, low 5–7, overnight 8–12. Start-up — розпалювання
+// (≈0.3 від максимальної), решта — звичайна закладка ≈0.65. Overnight (0.60) менший
+// за medium лише тому, що потужність цього режиму (powerFactor 0.42) уже низька:
+// з більшою закладкою вийшло б понад 12 год. Це наслідок підгонки, не порада
+// «на ніч класти менше»; див. REPORT §7.
 export const OPERATION_PRESETS = {
-  'start-up':  { primaryAirOpenPct: 95, secondaryAirPct: 85, airWashGapCm: 2.4, airWashIntakePct: 85, baffleAirflowPct: 75, flameIntensity: 1.0,  flameColor: 0xffb347, fillFactor: 0.5 },
-  'low':       { primaryAirOpenPct: 28, secondaryAirPct: 35, airWashGapCm: 1.2, airWashIntakePct: 55, baffleAirflowPct: 35, flameIntensity: 0.35, flameColor: 0xff8844, fillFactor: 0.6 },
-  'medium':    { primaryAirOpenPct: 52, secondaryAirPct: 55, airWashGapCm: 1.4, airWashIntakePct: 60, baffleAirflowPct: 55, flameIntensity: 0.62, flameColor: 0xffa04d, fillFactor: 0.7 },
-  'high':      { primaryAirOpenPct: 82, secondaryAirPct: 78, airWashGapCm: 2.0, airWashIntakePct: 80, baffleAirflowPct: 70, flameIntensity: 0.88, flameColor: 0xffc261, fillFactor: 0.85 },
-  'overnight': { primaryAirOpenPct: 15, secondaryAirPct: 24, airWashGapCm: 0.8, airWashIntakePct: 30, baffleAirflowPct: 25, flameIntensity: 0.22, flameColor: 0xff6a33, fillFactor: 0.7 },
+  'start-up':  { primaryAirOpenPct: 95, secondaryAirPct: 85, airWashGapCm: 2.4, airWashIntakePct: 85, baffleAirflowPct: 75, flameIntensity: 1.0,  flameColor: 0xffb347, fillFactor: 0.30 },
+  'low':       { primaryAirOpenPct: 28, secondaryAirPct: 35, airWashGapCm: 1.2, airWashIntakePct: 55, baffleAirflowPct: 35, flameIntensity: 0.35, flameColor: 0xff8844, fillFactor: 0.65 },
+  'medium':    { primaryAirOpenPct: 52, secondaryAirPct: 55, airWashGapCm: 1.4, airWashIntakePct: 60, baffleAirflowPct: 55, flameIntensity: 0.62, flameColor: 0xffa04d, fillFactor: 0.65 },
+  'high':      { primaryAirOpenPct: 82, secondaryAirPct: 78, airWashGapCm: 2.0, airWashIntakePct: 80, baffleAirflowPct: 70, flameIntensity: 0.88, flameColor: 0xffc261, fillFactor: 0.65 },
+  'overnight': { primaryAirOpenPct: 15, secondaryAirPct: 24, airWashGapCm: 0.8, airWashIntakePct: 30, baffleAirflowPct: 25, flameIntensity: 0.22, flameColor: 0xff6a33, fillFactor: 0.60 },
 };
 
 // Серія WS-1…WS-10 — градація готових моделей за ПОТУЖНІСТЮ в режимі medium
@@ -18,6 +26,18 @@ export const OPERATION_PRESETS = {
 // physics-model.js). WS-6 навмисно дорівнює defaultConfig (габарити/матеріали/
 // дверцята нижче — ті самі числа, що й у defaultConfig): це те, чим раніше
 // був пресет 'standard'.
+// nominalKw — потужність medium ТАК, ЯК ЇЇ ПОКАЗУЄ UI після «Застосувати»
+// (applyModelPreset + applyModePreset + designInternals), бо саме цю цифру
+// називає підпис пресета; тест 66 тримає її в ±2 %. Сам patch (без
+// designInternals) дає на −2.6…+1.5 % інше число (λ залежить від площі
+// secondary-отворів, а designInternals перераховує їх за об'ємом топки): його
+// тест тримає в ±5 %. Перепінено в кроці 4 після переходу λ на площі, тяги на
+// профіль T(z) і часу горіння без множників: габарити НЕ чіпали, бо зсув був
+// майже рівномірним (−1.7…−3.9 %, у більших печей трохи більший) і кроки між
+// моделями лишились 1.33…1.41× (ціль ≈1.35×). WS-6: 5.73 → 5.52 кВт — це
+// наслідок λ із площ (airMix medium 0.506 → 0.467: множник потужності
+// 0.35+0.65·airMix −3.7 %, ККД +0.3 п.п.); тяга потужність не змінила
+// (draftFactor на плато 1.3).
 // Нижню межу серії (WS-1) задають ПРАКТИЧНІ межі, а не ККД (він від розміру
 // печі майже не залежить, ~75-77 % на medium для будь-якого кроку серії):
 // поліно 25 см має влізти в топку, дверцята ≥ 20×20 см, зона горіння під
@@ -27,7 +47,7 @@ export const OPERATION_PRESETS = {
 // СОБІ (без наступного виклику designInternals) давав валідну піч.
 export const MODEL_PRESETS = {
   ws1: {
-    labelKey: 'presetWs1', nominalKw: 1.19,
+    labelKey: 'presetWs1', nominalKw: 1.14,
     patch: {
       dimensions: { widthCm: 50, depthCm: 45, heightCm: 49, legHeightCm: 18 },
       materials: { steelThicknessMm: 3, firebrickThicknessCm: 2.5 },
@@ -38,7 +58,7 @@ export const MODEL_PRESETS = {
     },
   },
   ws2: {
-    labelKey: 'presetWs2', nominalKw: 1.65,
+    labelKey: 'presetWs2', nominalKw: 1.59,
     patch: {
       dimensions: { widthCm: 54, depthCm: 47, heightCm: 57, legHeightCm: 17 },
       materials: { steelThicknessMm: 3, firebrickThicknessCm: 2.5 },
@@ -49,7 +69,7 @@ export const MODEL_PRESETS = {
     },
   },
   ws3: {
-    labelKey: 'presetWs3', nominalKw: 2.23,
+    labelKey: 'presetWs3', nominalKw: 2.14,
     patch: {
       dimensions: { widthCm: 59, depthCm: 49, heightCm: 68, legHeightCm: 17 },
       materials: { steelThicknessMm: 4, firebrickThicknessCm: 3 },
@@ -60,7 +80,7 @@ export const MODEL_PRESETS = {
     },
   },
   ws4: {
-    labelKey: 'presetWs4', nominalKw: 3.13,
+    labelKey: 'presetWs4', nominalKw: 3.01,
     patch: {
       dimensions: { widthCm: 63, depthCm: 52, heightCm: 79, legHeightCm: 16 },
       materials: { steelThicknessMm: 4, firebrickThicknessCm: 3 },
@@ -71,7 +91,7 @@ export const MODEL_PRESETS = {
     },
   },
   ws5: {
-    labelKey: 'presetWs5', nominalKw: 4.19,
+    labelKey: 'presetWs5', nominalKw: 4.03,
     patch: {
       dimensions: { widthCm: 67, depthCm: 54, heightCm: 88, legHeightCm: 15 },
       materials: { steelThicknessMm: 5, firebrickThicknessCm: 4 },
@@ -83,7 +103,7 @@ export const MODEL_PRESETS = {
   },
   // = defaultConfig (колишній 'standard'): ті самі габарити/матеріали/дверцята.
   ws6: {
-    labelKey: 'presetWs6', nominalKw: 5.73,
+    labelKey: 'presetWs6', nominalKw: 5.52,
     patch: {
       dimensions: { widthCm: 70, depthCm: 55, heightCm: 95, legHeightCm: 15 },
       materials: { steelThicknessMm: 5, firebrickThicknessCm: 4 },
@@ -99,7 +119,7 @@ export const MODEL_PRESETS = {
     },
   },
   ws7: {
-    labelKey: 'presetWs7', nominalKw: 7.85,
+    labelKey: 'presetWs7', nominalKw: 7.57,
     patch: {
       dimensions: { widthCm: 75, depthCm: 57, heightCm: 98, legHeightCm: 15 },
       materials: { steelThicknessMm: 5, firebrickThicknessCm: 4 },
@@ -110,7 +130,7 @@ export const MODEL_PRESETS = {
     },
   },
   ws8: {
-    labelKey: 'presetWs8', nominalKw: 10.41,
+    labelKey: 'presetWs8', nominalKw: 10.08,
     patch: {
       dimensions: { widthCm: 84, depthCm: 62, heightCm: 104, legHeightCm: 14 },
       materials: { steelThicknessMm: 6, firebrickThicknessCm: 5 },
@@ -121,7 +141,7 @@ export const MODEL_PRESETS = {
     },
   },
   ws9: {
-    labelKey: 'presetWs9', nominalKw: 14.2,
+    labelKey: 'presetWs9', nominalKw: 13.81,
     patch: {
       dimensions: { widthCm: 93, depthCm: 67, heightCm: 110, legHeightCm: 14 },
       materials: { steelThicknessMm: 6, firebrickThicknessCm: 5 },
@@ -132,7 +152,7 @@ export const MODEL_PRESETS = {
     },
   },
   ws10: {
-    labelKey: 'presetWs10', nominalKw: 19.15,
+    labelKey: 'presetWs10', nominalKw: 18.68,
     patch: {
       dimensions: { widthCm: 107, depthCm: 75, heightCm: 119, legHeightCm: 13 },
       materials: { steelThicknessMm: 8, firebrickThicknessCm: 6 },

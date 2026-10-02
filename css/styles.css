@@ -71,7 +71,8 @@ button:active{transform:translateY(1px)}
 .calibration-result b{color:#fbbf24}
 .phi-gauge{margin-top:8px;padding:8px 4px 10px;border:1px solid var(--line);border-radius:9px;background:#101820}
 .phi-track{position:relative;height:10px;background:#1a1f2a;border-radius:4px;margin:0 8px 6px}
-.phi-band{position:absolute;left:40%;right:40%;top:0;bottom:0;background:rgba(34,197,94,.4);border-radius:4px}
+/* Смуга Φ 0.4–0.5 у тій самій мапі, що й маркер у renderPhiGauge: (Φ−0.1)/0.9 → 33.33 %…44.44 % треку */
+.phi-band{position:absolute;left:33.33%;right:55.56%;top:0;bottom:0;background:rgba(34,197,94,.4);border-radius:4px}
 .phi-marker{position:absolute;top:-3px;width:4px;height:16px;background:#f97316;border-radius:2px;transform:translateX(-2px);transition:left .12s linear}
 .phi-label{font-size:11px;color:var(--muted);text-align:center;margin-bottom:2px}
 .phi-status{font-size:11.5px;color:#fbbf24;text-align:center}

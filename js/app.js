@@ -2,11 +2,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { defaultConfig, loadConfig, saveConfig, hasStoredConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, rearOutletLayout, encodeConfig, decodeConfig, deepMerge, getByPath, setByPath, OPERATION_PRESETS, MODEL_PRESETS } from './config.js';
-import { PhysicsModel, compareOutlets } from './physics-model.js';
+import { PhysicsModel, compareOutlets, fitAirToPhi } from './physics-model.js';
 import { buildStove, disposeGroup } from './stove-builder.js';
 import { exportGLTF, exportSTL } from './exporters.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from './bom.js';
-import { calibrateFromLog, evaluateCalibration, detectJournalDesync, emptyCalibration, mergeCalibration, configSnapshot } from './calibration.js';
+import { calibrateFromLog, evaluateCalibration, detectJournalDesync, refreshLogPredictions, emptyCalibration, mergeCalibration, configSnapshot } from './calibration.js';
 import { designInternals } from './autodesign.js';
 import { PURPOSES, requiredPowerKw, roomVolume, sizeStoveForPower, evaluateRoom } from './room.js';
 import { STR, WARN_TXT, WARN_ARG, VALIDATION_TXT, OUTLET_TXT, TOUR, getLang, setLang } from './i18n.js';
@@ -416,7 +416,8 @@ function renderTestLog() {
 }
 function calibrateModel() {
   const log = getTestLog();
-  const cal = calibrateFromLog(log, { excludeStartUp: !!config.calibration.excludeStartUp });
+  // Прогнози записів — за ПОТОЧНОЮ моделлю (збережені застаріли після оновлення фізики).
+  const cal = calibrateFromLog(refreshLogPredictions(log), { excludeStartUp: !!config.calibration.excludeStartUp });
   if (!cal) { renderCalibrationSummary(); return false; }
   config.calibration = normalizeConfig({ ...config, calibration: mergeCalibration(cal, config.calibration) }).calibration;
   saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
@@ -443,7 +444,7 @@ function renderCalibrationSummary() {
   if (!target) return;
   const cal = config.calibration || {};
   const log = getTestLog();
-  const stats = evaluateCalibration(log, cal);
+  const stats = evaluateCalibration(refreshLogPredictions(log), cal);
   const sync = detectJournalDesync(log);
   const clamped = Object.entries(cal.modeScale || {})
     .filter(([, v]) => v <= 0.8001 || v >= 1.1999)
@@ -567,19 +568,13 @@ function renderPhiGauge(m) {
 }
 
 function autoPhi() {
-  // Шукаємо поєднання primary/secondary, що дає Φ найближче до 0.45.
-  let best = null;
-  for (let p = 15; p <= 95; p += 2) {
-    for (let s = 20; s <= 90; s += 4) {
-      const probe = { ...config, primaryAir: { ...config.primaryAir, openPct: p }, operation: { ...config.operation, secondaryAirPct: s }, calibration: { ...config.calibration, enabled: false } };
-      const phi = PhysicsModel.evaluate(probe).metrics.equivalenceRatio;
-      const score = Math.abs(phi - 0.45);
-      if (!best || score < best.score) best = { score, p, s, phi };
-    }
-  }
+  // Поєднання primary/secondary/air-wash intake, що дає Φ найближче до 0.45
+  // (λ із площ: air-wash — третій важіль, див. fitAirToPhi у physics-model.js).
+  const best = fitAirToPhi(config, 0.45);
   if (best) {
-    config.primaryAir.openPct = best.p;
-    config.operation.secondaryAirPct = best.s;
+    config.primaryAir.openPct = best.primaryPct;
+    config.operation.secondaryAirPct = best.secondaryPct;
+    config.airWash.intakePct = best.washIntakePct;
     saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
   }
 }
@@ -688,6 +683,7 @@ const controlMap = {
   chimneyConnectorLengthCm: 'chimney.connectorLengthCm',
   excludeStartUp: 'calibration.excludeStartUp',
   primaryAirOpenPct: 'primaryAir.openPct', operationSecondaryAirPct: 'operation.secondaryAirPct',
+  airWashIntakePct: 'airWash.intakePct',
 };
 // Зміна цих полів запускає перепроєктування внутрішньої геометрії.
 // Поля димоходу (висота, вигини, патрубок, вихід, маршрут) сюди НЕ входять
@@ -785,8 +781,14 @@ function syncUI() {
   if (bottomIntakeEl) bottomIntakeEl.checked = config.secondaryAir.bottomIntake !== false;
   document.getElementById('catalystEnabled').checked = config.combustion.catalyst.enabled;
   const calExcl = document.getElementById('excludeStartUp'); if (calExcl) calExcl.checked = config.calibration.excludeStartUp;
-  document.getElementById('modeHint').textContent =
-    `${config.operation.mode} · primary ${Math.round(config.primaryAir.openPct)}% · secondary ${Math.round(config.operation.secondaryAirPct)}%`;
+  renderModeHint();
+}
+// Рядок режиму під перемикачем: усі три важелі Φ. Air-wash — головний (≈78 % відкритої
+// площі входів), тож без нього рядок вводив в оману; оновлюється й під час руху
+// слайдерів Φ-тюнера, а не лише в syncUI.
+function renderModeHint() {
+  const el = document.getElementById('modeHint'); if (!el) return;
+  el.textContent = `${config.operation.mode} · primary ${Math.round(config.primaryAir.openPct)}% · secondary ${Math.round(config.operation.secondaryAirPct)}% · air-wash ${Math.round(config.airWash.intakePct)}%`;
 }
 function bindUI() {
   for (const [id, path] of Object.entries(controlMap)) {
@@ -802,6 +804,7 @@ function bindUI() {
       if (id === 'doorHeightCm') config.door.preferredHeightCm = v;
       normalizeConfig(config); saveConfig(config);
       const o = document.getElementById(`${id}-v`); if (o) o.textContent = fmt(id, getByPath(config, path));
+      if (id === 'primaryAirOpenPct' || id === 'operationSecondaryAirPct' || id === 'airWashIntakePct') renderModeHint();
       if (['showFirebrick', 'showBaffle'].includes(id)) { applyVisibility(); return; }
       if (id.startsWith('steel') || id.endsWith('Color') || id === 'brickColor' || id === 'glassColor' || id === 'floorColor' || id === 'steelRoughness' || id === 'steelMetalness') {
         cache.clear(); // кольори/матеріали — скинути кеш

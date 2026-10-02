@@ -99,6 +99,24 @@ export function detectJournalDesync(log, evalFn) {
   return { count, samples };
 }
 
+// Прогноз кожного запису журналу за ПОТОЧНОЮ моделлю. Записи зберігають
+// predictedKw тієї моделі, яка була на момент тесту; після оновлення фізики він
+// застарілий, а calibrateFromLog і evaluateCalibration беруть саме його —
+// масштаб (виміряне / прогноз) вийшов би відносно СТАРОЇ моделі, а відсоток
+// «після» показував би майже ідеальний збіг, якого немає. Знімок конфігу
+// повний, тож для записів із ним прогноз можна перерахувати; записи без знімка
+// (або без вологості в ньому) лишаються як є — їх розсинхрон ловить detectJournalDesync.
+export function refreshLogPredictions(log, evalFn) {
+  const evaluate = evalFn || recomputeUncal;
+  return (log || []).map((e) => {
+    if (!e || !e.config || e.config.testBurn?.woodMoisturePct == null) return e;
+    try {
+      const cur = evaluate(e.config);
+      return Number.isFinite(cur) && cur > 0 ? { ...e, predictedKw: round(cur, 2) } : e;
+    } catch { return e; /* геометрія знімка не валідна для моделі */ }
+  });
+}
+
 // Статистика для UI: що було і що стало після калібрування.
 export function evaluateCalibration(entries, calibration) {
   let beforeSum = 0, afterSum = 0, beforeMax = 0, afterMax = 0, n = 0;
