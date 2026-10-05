@@ -1,6 +1,6 @@
 // Швидкі тести PhysicsModel v5 — запуск: node tests/physics.test.js
 import { readFileSync } from 'node:fs';
-import { PhysicsModel, optimizeConfig, compareOutlets, fitAirToPhi } from '../js/physics-model.js';
+import { PhysicsModel, optimizeConfig, compareOutlets, fitAirToPhi, pickBaffleCandidate, SCORE_INDIFFERENCE } from '../js/physics-model.js';
 import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, deepMerge, encodeConfig, decodeConfig, doorOpening, DOOR_OVERLAP_CM, MODEL_PRESETS, rearOutletLayout, bottomIntakeGeometry, bottomIntakeCollisions, legFootprints, secondaryHolePattern, SECONDARY_AREA_PER_LITER_CM2, INTAKE_MIN_STOP_PCT, SECONDARY_DRILLS_CM } from '../js/config.js';
 import { STR, WARN_TXT, WARN_ARG, VALIDATION_TXT, OUTLET_TXT, PROD_TXT } from '../js/i18n.js';
 import { calibrateFromLog, evaluateCalibration, detectJournalDesync, refreshLogPredictions, mergeCalibration, emptyCalibration, configSnapshot } from '../js/calibration.js';
@@ -18,6 +18,19 @@ function ok(cond, msg, extra = '') {
 }
 
 const base = normalizeConfig(clone(defaultConfig));
+
+// Шлях UI: «Застосувати» = patch пресета + режим + designInternals (БЕЗ keepBaffle) —
+// саме цю піч бачить користувач. Повний designInternals ≈ 12 мс, тож 50 клітинок
+// пресет × режим рахуємо один раз і діляться ними блоки 66, 69, 72, 74 і 75.
+const UI_CELLS = new Map();
+function uiCell(name, mode) {
+  const key = `${name}/${mode}`;
+  if (!UI_CELLS.has(key)) {
+    const cfg = designInternals(applyModePreset(applyModelPreset(normalizeConfig(clone(defaultConfig)), name), mode));
+    UI_CELLS.set(key, { cfg, e: PhysicsModel.evaluate(cfg) });
+  }
+  return UI_CELLS.get(key);
+}
 
 // 1. medium в адекватних межах
 let r = PhysicsModel.evaluate(base);
@@ -49,7 +62,12 @@ let night = normalizeConfig(clone(defaultConfig));
 applyModePreset(night, 'overnight');
 r = PhysicsModel.evaluate(night);
 ok(r.metrics.heatOutputKw < PhysicsModel.evaluate(base).metrics.heatOutputKw, 'overnight < medium power', JSON.stringify(r.metrics));
-ok(r.metrics.burnTimeHours >= 8 && r.metrics.burnTimeHours <= 12, 'overnight long burn (≈8–12 h, not the old 16–26 h)', JSON.stringify(r.metrics));
+// Смуга 8–12 год — для здорової тяги (плато draftFactor); на холодній 5-метровій трубі
+// повільний режим має тягу ≈6–7 Па (охолодження ∝ 1/витрата газу, REPORT §7), потужність
+// нижча, а горіння довше за плато — тому вікно «повільна, але не стара 16–26 год» ширше.
+ok(r.metrics.burnTimeHours >= 8 && r.metrics.burnTimeHours <= 14, 'overnight long burn (≈8–14 h on a 5 m chimney, not the old 16–26 h)', JSON.stringify(r.metrics));
+const nightPlateau = r.metrics.burnTimeHours * r.breakdown.draftFactor / 1.3;
+ok(nightPlateau >= 8 && nightPlateau <= 12, 'overnight burn without the draft throttle sits inside 8–12 h', JSON.stringify({ nightPlateau: +nightPlateau.toFixed(1), draftFactor: r.breakdown.draftFactor }));
 
 // 3. high + тонка сталь = OVERHEAT_RISK
 let hot = normalizeConfig(clone(defaultConfig));
@@ -754,8 +772,11 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
       const tW = mk('top', 'wall'), rW = mk('rear', 'wall');
       const tU = mk('top', 'up'), rU = mk('rear', 'up');
       n++;
-      if (tW.draftPa > rW.draftPa || tW.exitFlueTempC >= rW.exitFlueTempC || tW.roomPipeGainPct <= rW.roomPipeGainPct) bad++;
-      if (rU.draftPa > tU.draftPa || rU.exitFlueTempC >= tU.exitFlueTempC || rU.roomPipeGainPct <= tU.roomPipeGainPct) bad++;
+      // Той, кому дісталась зайва труба, виходить холодніше — хіба що обидва вже впали до
+      // температури довкілля (20 °C: газ не може вийти холоднішим за кімнату).
+      const colder = (a, b) => a < b || (a === 20 && b === 20);
+      if (tW.draftPa > rW.draftPa || !colder(tW.exitFlueTempC, rW.exitFlueTempC) || tW.roomPipeGainPct <= rW.roomPipeGainPct) bad++;
+      if (rU.draftPa > tU.draftPa || !colder(rU.exitFlueTempC, tU.exitFlueTempC) || rU.roomPipeGainPct <= tU.roomPipeGainPct) bad++;
       if (tW.draftPa < rW.draftPa && rU.draftPa < tU.draftPa) strict++;
     }
   }
@@ -1365,21 +1386,23 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
 
 // 66. Серія WS-1…WS-10 (STAGE 3): кожна модель тримає заявлену потужність
 // (nominalKw) на medium у межах ±5%, крок до наступної моделі — +25…45%
-// (рішення власника: 30-40%, тест дає технічний запас), і кожен пресет ×
-// кожен режим дає валідну геометрію без 'danger'-попереджень. Геометрію й
-// 'danger' перевіряємо на САМОМУ patch (без designInternals), бо саме так
-// пресет має працювати одразу після applyModelPreset — designInternals лише
-// ПІДТВЕРДЖУЄ бафль/димохід, зашиті у patch, а не рятує невалідний пресет.
+// (рішення власника: 30-40%, ціль серії ≈1.35×, тест дає технічний запас), і кожен
+// пресет × кожен режим дає валідну геометрію без 'danger'-попереджень (крім
+// CREOSOTE_RISK, див. нижче). Геометрію й 'danger' перевіряємо на САМОМУ patch
+// (без designInternals), бо саме так пресет має працювати одразу після
+// applyModelPreset — designInternals лише ПІДТВЕРДЖУЄ бафль/димохід, зашиті у
+// patch, а не рятує невалідний пресет.
 // Потужність — на двох шляхах: голий patch (±5 %) і те, що показує UI після
 // «Застосувати» (patch + режим + designInternals, ±2 %): підпис пресета
-// називає саме другу цифру, а вона відрізняється від першої на −2.6…+1.5 %.
+// називає саме другу цифру, а вона відрізняється від першої на −1.5…+0.8 %.
 {
   const WS_NAMES = Object.keys(MODEL_PRESETS).filter((n) => /^ws\d+$/.test(n)).sort((a, b) => +a.slice(2) - +b.slice(2));
   ok(WS_NAMES.length === 10, 'MODEL_PRESETS has exactly the WS-1..WS-10 series', JSON.stringify(WS_NAMES));
 
   const nominal = [];
   let dangerBad = 0, invalidBad = 0, dangerCases = 0;
-  const creosoteModes = new Set();
+  // CREOSOTE_RISK за режимом: масив по пресетах WS-1…WS-10 (від малої до великої).
+  const creosoteBy = { 'start-up': [], low: [], medium: [], high: [], overnight: [] };
   for (const name of WS_NAMES) {
     const preset = MODEL_PRESETS[name];
     ok(Number.isFinite(preset.nominalKw) && preset.nominalKw > 0, `${name}: has a nominalKw`, JSON.stringify(preset.nominalKw));
@@ -1389,19 +1412,27 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
       const rr = PhysicsModel.evaluate(c);
       dangerCases++;
       // CREOSOTE_RISK — це про холодний ВИХІД труби, а не про геометрію пресета:
-      // на low/overnight газ на 5 м одностінної труби остигає нижче 150 °C (тяга
-      // й вихід рахуються від одного профілю T(z), REPORT §7), і це чесне
-      // попередження. Решта 'danger' (перегрів, сталь) має бути відсутня.
-      for (const w of rr.warnings) if (w.code === 'CREOSOTE_RISK') creosoteModes.add(mode);
+      // газ на 5 м одностінної труби остигає нижче 150 °C (тяга й вихід рахуються
+      // від одного профілю T(z), охолодження зростає з Ø і падає з витратою газу, REPORT §7), і це
+      // чесне попередження. Решта 'danger' (перегрів, сталь) має бути відсутня.
+      creosoteBy[mode].push(rr.warnings.some((w) => w.code === 'CREOSOTE_RISK'));
       if (rr.warnings.some((w) => w.level === 'danger' && w.code !== 'CREOSOTE_RISK')) dangerBad++;
       if (!validateConfig(c).valid) invalidBad++;
       // UI після «Застосувати» = patch + режим + designInternals (без keepBaffle):
       // саме цю потужність називає підпис пресета.
-      if (mode === 'medium') nominal.push({ name, kw: rr.metrics.heatOutputKw, uiKw: PhysicsModel.evaluate(designInternals(clone(c))).metrics.heatOutputKw, target: preset.nominalKw });
+      if (mode === 'medium') { const ui = uiCell(name, 'medium').e.metrics; nominal.push({ name, kw: rr.metrics.heatOutputKw, uiKw: ui.heatOutputKw, uiL: ui.fireboxLiters, target: preset.nominalKw }); }
     }
   }
   ok(dangerBad === 0, 'every WS preset x mode is free of danger warnings except CREOSOTE_RISK (patch alone, no designInternals)', JSON.stringify({ cases: dangerCases, dangerBad }));
-  ok([...creosoteModes].every((m) => m === 'low' || m === 'overnight'), 'CREOSOTE_RISK on a 5 m chimney appears only in the slow modes (low/overnight), never in start-up/medium/high', JSON.stringify([...creosoteModes]));
+  // Креозот на 5 м: НІКОЛИ в start-up/high; у medium — лише на двох найменших печах
+  // (WS-1/WS-2, 1.2–1.7 кВт: мала витрата газу → швидко остигає; ВІДОМИЙ ВИНЯТОК, питання
+  // власнику в REPORT §7); у low/overnight — на малих і середніх. Чим більша піч, тим гарячіший
+  // вихід, тож множина клітинок з креозотом — префікс серії.
+  const crShape = Object.fromEntries(Object.entries(creosoteBy).map(([m, f]) => [m, f.map((x) => (x ? 'C' : '.')).join('')]));
+  ok(!creosoteBy['start-up'].some(Boolean) && !creosoteBy.high.some(Boolean), 'CREOSOTE_RISK on a 5 m chimney never fires in start-up/high on any WS preset', JSON.stringify(crShape));
+  ok(Object.values(creosoteBy).every((f) => f.every((x, i) => i === 0 || !x || f[i - 1])), 'CREOSOTE_RISK follows stove size: a smaller WS model in the same mode is never safer than a larger one', JSON.stringify(crShape));
+  ok(creosoteBy.medium.slice(2).every((x) => !x) && creosoteBy.medium[0], 'medium: CREOSOTE_RISK fires only on the two smallest stoves (WS-1, WS-2 — the known exception on a bare 5 m flue, REPORT §7); WS-3…WS-10 are clean', JSON.stringify(crShape));
+  ok(creosoteBy.low.slice(0, 6).every(Boolean) && creosoteBy.overnight.slice(0, 6).every(Boolean), 'low/overnight fire CREOSOTE_RISK on WS-1…WS-6 on a bare 5 m flue', JSON.stringify(crShape));
   ok(invalidBad === 0, 'every WS preset x mode is valid geometry (patch alone, no designInternals)', JSON.stringify({ cases: dangerCases, invalidBad }));
 
   for (const { name, kw, uiKw, target } of nominal) {
@@ -1412,7 +1443,42 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
   }
   const ratios = [];
   for (let i = 1; i < nominal.length; i++) ratios.push(nominal[i].uiKw / nominal[i - 1].uiKw);
+  // Потужність ∝ об'єму топки (без geometryFactor), тож габарити WS-1…WS-9 підібрані
+  // під ладдер ≈1.35× від WS-6 (= defaultConfig, 5.52 кВт): кроки 1.25–1.45 з технічним
+  // запасом, а середній крок (геометричне середнє) ≈1.35.
   ok(ratios.every((r) => r >= 1.25 && r <= 1.45), 'consecutive WS steps stay within a 1.25x-1.45x power ratio', JSON.stringify(ratios.map((r) => +r.toFixed(3))));
+  const meanStep = Math.pow(nominal[nominal.length - 1].uiKw / nominal[0].uiKw, 1 / (nominal.length - 1));
+  ok(meanStep >= 1.30 && meanStep <= 1.40, 'the geometric-mean step of the series is the ≈1.35x target (owner: +30…40 % per model)', JSON.stringify({ meanStep: +meanStep.toFixed(3) }));
+  // Серія — це ЗРОСТАННЯ: габарити, об'єм топки й потужність не спадають від моделі до моделі
+  // (інакше пресет «більша піч» опинився б меншим за попередній).
+  const dimsOf = (name) => { const c = applyModelPreset(normalizeConfig(clone(defaultConfig)), name); return { w: c.dimensions.widthCm, d: c.dimensions.depthCm, h: c.dimensions.heightCm, L: PhysicsModel.evaluate(c).metrics.fireboxLiters }; };
+  const grid = WS_NAMES.map(dimsOf);
+  const shrinks = [];
+  for (let i = 1; i < grid.length; i++) for (const key of ['w', 'd', 'h', 'L']) if (grid[i][key] < grid[i - 1][key]) shrinks.push(`${WS_NAMES[i]}:${key}`);
+  ok(shrinks.length === 0, 'width, depth, height and firebox volume never shrink along WS-1…WS-10', JSON.stringify(shrinks));
+  // Потужність medium на літр топки однакова по всій серії (ККД від розміру майже не
+  // залежить), тому серія й виходить геометричною саме за об'ємом топки.
+  const kwPerL = nominal.map((n) => n.uiKw / n.uiL);
+  ok(Math.max(...kwPerL) / Math.min(...kwPerL) < 1.04, 'medium kW per litre of firebox is the same across the series (±2 %): the steps come from the volume, not from a size clamp', JSON.stringify(kwPerL.map((v) => +v.toFixed(4))));
+
+  // Свіп 5 режимів × верх/зад × вгору/в стіну на кожній моделі (бафль збережено — швидко):
+  // валідна геометрія й жодного 'danger', окрім CREOSOTE_RISK, який є чесним наслідком
+  // охолодження труби (REPORT §7). Що задній комір влазить у кожну модель після
+  // «Застосувати», перевіряє блок 41.
+  const sweepDanger = [], sweepInvalid = [];
+  let sweepCells = 0;
+  for (const name of WS_NAMES) {
+    for (const mode of ['start-up', 'low', 'medium', 'high', 'overnight']) {
+      const seed = designInternals(applyModePreset(applyModelPreset(normalizeConfig(clone(defaultConfig)), name), mode), { keepBaffle: true });
+      for (const outlet of ['top', 'rear']) for (const route of ['up', 'wall']) {
+        const c = clone(seed); c.chimney.outlet = outlet; c.chimney.route = route;
+        sweepCells++;
+        if (!validateConfig(c).valid) sweepInvalid.push(`${name}/${mode}/${outlet}/${route}`);
+        if (PhysicsModel.evaluate(c).warnings.some((w) => w.level === 'danger' && w.code !== 'CREOSOTE_RISK')) sweepDanger.push(`${name}/${mode}/${outlet}/${route}`);
+      }
+    }
+  }
+  ok(sweepInvalid.length === 0 && sweepDanger.length === 0, 'WS × 5 modes × top/rear × up/wall (200 cells): valid geometry and no danger warning except CREOSOTE_RISK', JSON.stringify({ sweepCells, sweepInvalid: sweepInvalid.slice(0, 5), sweepDanger: sweepDanger.slice(0, 5) }));
 
   // ws6 (= defaultConfig, колишній 'standard') зберігає ті самі габарити.
   const ws6 = applyModelPreset(normalizeConfig(clone(defaultConfig)), 'ws6');
@@ -1517,16 +1583,28 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
   // (е) Φ-тюнер: три важелі (primary, secondary, air-wash intake) дістають Φ
   // у зону 0.4–0.5 у КОЖНОМУ режимі кожної моделі, у межах ходу слайдерів.
   let bad = [], worstErr = 0;
+  const drift = [];
   for (const n of presetNames) for (const m of ['start-up', 'low', 'medium', 'high', 'overnight']) {
     const c = mkStove(n, m);
     const fit = fitAirToPhi(c, 0.45);
     const probe = clone(c); probe.primaryAir.openPct = fit.primaryPct; probe.operation.secondaryAirPct = fit.secondaryPct; probe.airWash.intakePct = fit.washIntakePct;
     const phi = evalOf(probe).metrics.equivalenceRatio;
+    // Тюнер тримає швидкість горіння: потужність без впливу тяги (кВт / draftFactor — це
+    // і є швидкість горіння, яку задає повітря ложа) після підбору в 0.8…1.6× від початкової
+    // (без цього primary, тепер головний важіль потужності, давав ×0.35…×4.8). Фактична
+    // потужність у робочих режимах теж у цих межах; у повільних режимах малих печей
+    // додаткове повітря ще й оживляє тягу (більша витрата газу → менше охолодження), тож
+    // там фактичний приріст більший — це не збій тюнера, і тут його не міряємо.
+    const e0 = evalOf(c), e1 = evalOf(probe);
+    const kwFree0 = e0.metrics.heatOutputKw / e0.breakdown.draftFactor, kwFree1 = e1.metrics.heatOutputKw / e1.breakdown.draftFactor;
+    const kwQ = kwFree1 / kwFree0, kwActual = e1.metrics.heatOutputKw / e0.metrics.heatOutputKw;
+    if (kwQ < 0.8 || kwQ > 1.6 || (m !== 'overnight' && m !== 'low' && (kwActual < 0.8 || kwActual > 1.6))) drift.push(`${n}/${m}:${kwQ.toFixed(2)}/${kwActual.toFixed(2)}`);
     worstErr = Math.max(worstErr, Math.abs(phi - 0.45));
     const inReach = fit.secondaryPct >= INTAKE_MIN_STOP_PCT && fit.primaryPct >= 10 && fit.primaryPct <= 95 && fit.washIntakePct >= 0 && fit.washIntakePct <= 100;
     if (phi < 0.4 || phi > 0.5 || Math.abs(phi - fit.phi) > 1e-9 || !inReach) bad.push(`${n}/${m}:${phi}`);
   }
   ok(bad.length === 0, 'Φ auto-fit lands inside 0.4–0.5 for all 50 preset × mode cases, inside the slider ranges', JSON.stringify({ bad, worstErr: +worstErr.toFixed(3) }));
+  ok(drift.length === 0, 'Φ auto-fit holds the burn rate: the draft-free power after the fit stays within 0.8–1.6× of the one before it in all 50 cases (actual power too, outside the slow modes)', JSON.stringify(drift));
   // Без air-wash (лише primary/secondary) до зони не дістати в start-up: саме тому
   // тюнер має третій важіль.
   let twoLeverBest = 1;
@@ -1555,8 +1633,12 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
   // 0.04–0.08 in wc), а не 30 Па. Усі п'ять режимів на 4–6 м, medium на 5 м.
   const win = {};
   for (const m of MODES) win[m] = [4, 5, 6].map((H) => at((c) => setH(c, H), mk(m)).metrics.draftPa);
-  const all = Object.values(win).flat();
-  ok(all.every((v) => v >= 8 && v <= 22), 'draft sits in a realistic 8–22 Pa band on 4–6 m in every mode', JSON.stringify(win));
+  // Повільний режим на холодній трубі тягне слабше (газ остигає: витрата мала, k велике;
+  // 8-Па поріг DRAFT_WEAK для overnight не діє, там він 4 Па) — його нижня межа ≈4 Па, решти режимів — 8 Па.
+  // Гарячі режими з великою витратою газу (start-up/high) тягнуть сильніше за medium,
+  // бо їх газ остигає менше: верх вікна 25 Па (було 22, коли охолодження не залежало від витрати).
+  const working = Object.entries(win).filter(([m]) => m !== 'overnight').flatMap(([, v]) => v);
+  ok(working.every((v) => v >= 8 && v <= 25) && win.overnight.every((v) => v >= 4 && v <= 25), 'draft sits in a realistic 8–25 Pa band on 4–6 m in start-up/low/medium/high (overnight: 4–25 Pa)', JSON.stringify(win));
   const d5 = at((c) => setH(c, 5)).metrics.draftPa;
   ok(d5 >= 10 && d5 <= 18, 'default stove, medium, 5 m: draft 10–18 Pa (was ≈30)', JSON.stringify({ d5 }));
   ok(Math.abs(evalOf(c0).metrics.draftPa - d5) < 1e-9 && c0.chimney.totalHeightM === 5, 'the default stove has a 5 m chimney');
@@ -1598,6 +1680,19 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
   ok(!weak((c) => setH(c, 3)), 'DRAFT_WEAK stays quiet on a 3 m chimney in medium');
   const quietModes = MODES.filter((m) => m !== 'overnight' && weak((c) => { setH(c, 5); c.chimney.bends = 1; }, mk(m)));
   ok(quietModes.length === 0, 'DRAFT_WEAK never fires on 5 m + 1 bend in start-up/low/medium/high', JSON.stringify(quietModes));
+  // Overnight тягне природно слабше (≈6–10 Па на 5 м), тож 8-Па поріг для нього не діє, але
+  // найслабша тяга серії не лишається без попередження: нижче 4 Па DRAFT_WEAK є в КОЖНОМУ режимі
+  // (раніше виняток для overnight ховав і тягу 1.8 Па). Сітка висота × вигини × режим.
+  const hidden = [], noisy = [];
+  let weakCells = 0;
+  for (const m of MODES) for (const H of [2, 3, 4, 5, 6, 8]) for (const b of [0, 1, 2, 3]) {
+    const r = at((c) => { setH(c, H); c.chimney.bends = b; }, mk(m));
+    const has = r.warnings.some((w) => w.code === 'DRAFT_WEAK');
+    if (r.metrics.draftPa < 4 - 1e-9) { weakCells++; if (!has) hidden.push(`${m}/${H}m/${b}b:${r.metrics.draftPa}`); }
+    if (m === 'overnight' && r.metrics.draftPa >= 4 && has) noisy.push(`${H}m/${b}b:${r.metrics.draftPa}`);
+  }
+  ok(weakCells > 0 && hidden.length === 0, 'any cell with a draft below 4 Pa carries DRAFT_WEAK, overnight included (nothing weak is hidden)', JSON.stringify({ weakCells, hidden: hidden.slice(0, 5) }));
+  ok(noisy.length === 0, 'overnight keeps its relaxed threshold: a 4–8 Pa draft in overnight does not warn', JSON.stringify(noisy.slice(0, 5)));
 
   // (г) Потужність не стрибнула від переякорення: draftFactor тепер обмежує її
   // лише на слабкій тязі (нижче ≈8 Па), а на звичайному димоході лежить на плато.
@@ -1605,7 +1700,11 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
   const kw6 = evalOf(ws6).metrics.heatOutputKw;
   ok(Math.abs(kw6 / MODEL_PRESETS.ws6.nominalKw - 1) <= 0.05, 'default (ws6) medium power stays within ±5 % of its pinned nominalKw', JSON.stringify({ kw6 }));
   const kwAt = (H, mode = 'medium') => at((c) => setH(c, H), mk(mode)).metrics.heatOutputKw;
-  ok(MODES.every((m) => Math.abs(kwAt(5, m) / kwAt(8, m) - 1) < 0.02), 'power is on the draft plateau at 5 m and 8 m (same kW, ±2 %) in every mode', JSON.stringify(MODES.map((m) => [kwAt(5, m), kwAt(8, m)])));
+  // Overnight виключено: його потужність обмежена тягою навіть на 5 м (тяга ≈6 Па < 7.8),
+  // тож вища труба її піднімає — але ніколи не знижує.
+  const plateauModes = MODES.filter((m) => m !== 'overnight');
+  ok(plateauModes.every((m) => Math.abs(kwAt(5, m) / kwAt(8, m) - 1) < 0.02), 'power is on the draft plateau at 5 m and 8 m (same kW, ±2 %) in start-up/low/medium/high', JSON.stringify(plateauModes.map((m) => [kwAt(5, m), kwAt(8, m)])));
+  ok(kwAt(8, 'overnight') >= kwAt(5, 'overnight') - 1e-9, 'overnight: a taller chimney never lowers the draft-limited power', JSON.stringify({ h5: kwAt(5, 'overnight'), h8: kwAt(8, 'overnight') }));
   const kw2 = kwAt(2), kw5 = kwAt(5);
   ok(kw2 < kw5 && kw2 >= kw5 * 0.7 / 1.3 - 1e-9, 'a weak 2 m draft throttles power, but never below 0.7/1.3 of the plateau', JSON.stringify({ kw2, kw5 }));
 
@@ -1637,7 +1736,9 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
       const cc = clone(base); setH(cc, H);
       const mm = evalOf(cc).metrics;
       if (mm.exitFlueTempC > mm.stackGasC) hotter.push(`${name}/${m}/H${H}:${mm.exitFlueTempC}>${mm.stackGasC}`);
-      if (!(mm.exitFlueTempC < prevExit)) notCooling.push(`${name}/${m}/H${H}`);
+      // Строге остигання — доки газ вище температури довкілля (20 °C): нижче він не
+      // охолоджується, і два сусідні H можуть обидва лежати на цій підлозі.
+      if (!(mm.exitFlueTempC < prevExit) && !(mm.exitFlueTempC <= 20 && prevExit <= 20)) notCooling.push(`${name}/${m}/H${H}`);
       prevExit = mm.exitFlueTempC;
     }
   }
@@ -1662,6 +1763,14 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
   const mkPreset = (name, mode) => applyModePreset(applyModelPreset(normalizeConfig(clone(defaultConfig)), name), mode);
   const metricsOf = (c) => PhysicsModel.evaluate(c).metrics;
   const names = Object.keys(MODEL_PRESETS);
+  // Смуги — для ЗДОРОВОЇ тяги (плато draftFactor 1.3, тяга ≥ ≈7.8 Па). Мала піч або повільний
+  // режим на холодній 5-метровій трубі має слабшу тягу, потужність нижча, горіння довше
+  // (охолодження труби ∝ 1/витрата газу, REPORT §7): це чесний наслідок, а не збій смуги.
+  // Тому смуги перевіряємо на «часі без впливу тяги» = burn·draftFactor/1.3 (потужність
+  // там та сама, що на плато), а реальний час — окремо: поза смугою він лише довший і лише
+  // там, де тяга справді слабка.
+  const DRAFT_MAX = 1.3;
+  const plateauHours = (c) => { const e = PhysicsModel.evaluate(c); return e.metrics.burnTimeHours * e.breakdown.draftFactor / DRAFT_MAX; };
 
   // (а) Баланс енергії: heat × burn = корисна енергія закладки (η скорочується).
   // Допуск — лише округлення метрик (потужність до 0.01 кВт, час до 0.1 год, енергія до 0.1 кВт·год):
@@ -1676,9 +1785,13 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
   ok(balanceBad.length === 0, 'burn conserves energy: heat × burn equals the useful energy of the load (no hidden multipliers)', JSON.stringify({ cases: names.length * MODES.length, balanceBad }));
   // Те саме на крихітній топці (30×30×40 см, overnight): потужність там < 0.1 кВт,
   // і колишній нижній поріг знаменника 0.1 кВт занижував час (≈9.6 замість ≈14 год).
+  // 30×30×40 см — найменший корпус, який лишає normalizeConfig; сталь 5 мм і шамот
+  // 4 см дають топку ≈3.7 л і потужність ≈0.06 кВт (з 3 мм/2.5 см було 0.11 кВт —
+  // після переходу на fuelBedAir це вже не «sub-0.1 kW»).
   const tinyCfg = mkPreset('ws1', 'overnight');
   Object.assign(tinyCfg.dimensions, { widthCm: 30, depthCm: 30, heightCm: 40, legHeightCm: 0 });
-  tinyCfg.materials.steelThicknessMm = 3;
+  tinyCfg.materials.steelThicknessMm = 5;
+  tinyCfg.materials.firebrickThicknessCm = 4;
   const tiny = metricsOf(designInternals(normalizeConfig(tinyCfg)));
   const tinyRatio = tiny.heatOutputKw * tiny.burnTimeHours / tiny.usefulEnergyKwh;
   ok(tiny.heatOutputKw > 0 && tiny.heatOutputKw < 0.1 && tinyRatio > 0.8 && tinyRatio < 1.2, 'burn conserves energy on a sub-0.1 kW firebox too (no floor on the denominator)', JSON.stringify({ kw: tiny.heatOutputKw, useful: tiny.usefulEnergyKwh, burn: tiny.burnTimeHours, ratio: +tinyRatio.toFixed(2) }));
@@ -1698,29 +1811,48 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
     ws5: (mode) => designInternals(mkPreset('ws5', mode), { keepBaffle: true }),
   };
   for (const [label, mk] of Object.entries(stoves)) {
-    const hours = Object.fromEntries(MODES.map((mode) => [mode, metricsOf(mk(mode)).burnTimeHours]));
-    ok(MODES.every((mode) => inBand(mode, hours[mode])), `${label} stove: every mode burns a full load inside its band (0.7–1.2 / 5–7 / 3–4.5 / 1.5–2.5 / 8–12 h)`, JSON.stringify(hours));
+    const hours = Object.fromEntries(MODES.map((mode) => [mode, +plateauHours(mk(mode)).toFixed(2)]));
+    ok(MODES.every((mode) => inBand(mode, hours[mode])), `${label} stove: every mode burns a full load inside its band (0.7–1.2 / 5–7 / 3–4.5 / 1.5–2.5 / 8–12 h) without the draft throttle`, JSON.stringify(hours));
+    const real = Object.fromEntries(MODES.map((mode) => [mode, metricsOf(mk(mode)).burnTimeHours]));
+    ok(MODES.every((mode) => inBand(mode, real[mode])), `${label} stove: all five modes, overnight included, stay in their bands at the REAL 5 m draft (not only without the throttle)`, JSON.stringify(real));
   }
 
-  // (г) Краї серії (WS-1…4 і WS-8…10 стоять на межах geometryFactor 0.75…1.25,
-  // це 1.67× розкиду): смуга там не сходиться строго, але жоден із 50 випадків
-  // не виходить за неї більш ніж на 15 % — до правки було 0.9…27 год.
+  // (г) Час горіння повної закладки НЕ залежить від розміру печі: і закладка, і
+  // потужність ∝ об'єму топки (колишній geometryFactor 0.75…1.25 на краях серії
+  // давав розкид 1.67× і 22 з 50 клітинок поза смугами). Тепер усі 50 клітинок
+  // (голі patch-и) СТРОГО в смугах, а розкид по 10 моделях в кожному режимі — не
+  // більше 5 % або одного кроку округлення метрики (0.1 год; на start-up ≈0.9 год
+  // це 11 %).
+  const cellsBy = Object.fromEntries(MODES.map((mode) => [mode, names.map((name) => PhysicsModel.evaluate(mkPreset(name, mode)))]));
+  const burnsBy = Object.fromEntries(MODES.map((mode) => [mode, cellsBy[mode].map((e) => e.metrics.burnTimeHours)]));
+  const platBy = Object.fromEntries(MODES.map((mode) => [mode, cellsBy[mode].map((e) => e.metrics.burnTimeHours * e.breakdown.draftFactor / DRAFT_MAX)]));
   const off = [];
-  for (const name of names) for (const mode of MODES) {
-    const h = metricsOf(mkPreset(name, mode)).burnTimeHours;
-    if (h < BANDS[mode][0] * 0.85 || h > BANDS[mode][1] * 1.15) off.push(`${name}/${mode}:${h}`);
-  }
-  ok(off.length === 0, 'all 50 preset × mode burn times stay within ±15 % of their band (series edges included)', JSON.stringify(off));
-  // Те саме на шляху UI («Застосувати» = patch + режим + designInternals): там 22 із
-  // 50 клітинок виходять за смугу (≤ 10 %), але ±15 % мають триматись. Беремо краї
-  // серії й середину (WS-1/6/10 × 5 режимів): повний designInternals на всіх 50
-  // клітинках коштував би ≈0.8 с.
+  for (const mode of MODES) names.forEach((name, i) => { if (!inBand(mode, platBy[mode][i])) off.push(`${name}/${mode}:${platBy[mode][i].toFixed(2)}`); });
+  ok(off.length === 0, 'all 50 preset × mode burn times lie strictly inside their bands without the draft throttle (series edges included)', JSON.stringify(off));
+  const sizeFlat = (hours) => Math.max(...hours) - Math.min(...hours) <= Math.max(0.05 * Math.min(...hours), 0.1 + 1e-9);
+  ok(MODES.every((mode) => sizeFlat(platBy[mode])), 'burn time of a full load is size-independent: max/min across WS-1…WS-10 within 5 % (or 0.1 h) in every mode, without the draft throttle', JSON.stringify(Object.fromEntries(MODES.map((mode) => [mode, [+Math.min(...platBy[mode]).toFixed(2), +Math.max(...platBy[mode]).toFixed(2)]]))));
+  ok(['start-up', 'medium', 'high'].every((mode) => sizeFlat(burnsBy[mode])), 'start-up/medium/high are never draft-limited: their real burn time is size-independent too', JSON.stringify(Object.fromEntries(['start-up', 'medium', 'high'].map((mode) => [mode, burnsBy[mode]]))));
+  // Реальний час поза смугою — лише ДОВШИЙ і лише там, де тяга слабка (draftFactor < 1.3):
+  // повільний режим малої печі на холодній трубі. Робочі режими цього не торкається.
+  const offReal = [], throttledModes = new Set();
+  for (const mode of MODES) cellsBy[mode].forEach((e, i) => {
+    const hrs = e.metrics.burnTimeHours, thr = e.breakdown.draftFactor < DRAFT_MAX - 1e-9;
+    if (thr) throttledModes.add(mode);
+    if (!inBand(mode, hrs) && !(thr && hrs > BANDS[mode][1])) offReal.push(`${names[i]}/${mode}:${hrs}`);
+    if (thr && hrs < platBy[mode][i] - 0.1) offReal.push(`${names[i]}/${mode}:shorter-than-plateau`);
+  });
+  ok(offReal.length === 0, 'a burn time outside its band is only ever LONGER than the band and only on a draft-throttled cell (draft < 7.8 Pa); a throttle never shortens the burn', JSON.stringify(offReal));
+  ok([...throttledModes].every((m) => m === 'low' || m === 'overnight'), 'only the slow modes (low/overnight) are ever draft-throttled on the WS series', JSON.stringify([...throttledModes]));
+  // Те саме на шляху UI («Застосувати» = patch + режим + designInternals): бафль
+  // оптимізатор підбирає під режим, топка стає іншою, але закладка йде за нею. Усі 50
+  // клітинок (спільний кеш uiCell): саме цю таблицю бачить користувач. РЕАЛЬНІ (з тягою)
+  // часи цієї таблиці перевіряє блок 75.
+  const uiNames = names;
+  const uiBurn = Object.fromEntries(MODES.map((mode) => [mode, uiNames.map((name) => { const e = uiCell(name, mode).e; return +(e.metrics.burnTimeHours * e.breakdown.draftFactor / DRAFT_MAX).toFixed(2); })]));
   const offUi = [];
-  for (const name of ['ws1', 'ws6', 'ws10']) for (const mode of MODES) {
-    const h = metricsOf(designInternals(mkPreset(name, mode))).burnTimeHours;
-    if (h < BANDS[mode][0] * 0.85 || h > BANDS[mode][1] * 1.15) offUi.push(`${name}/${mode}:${h}`);
-  }
-  ok(offUi.length === 0, 'the same ±15 % burn bands hold after Apply (WS-1/6/10: patch + mode + designInternals)', JSON.stringify(offUi));
+  for (const mode of MODES) uiBurn[mode].forEach((h, i) => { if (!inBand(mode, h)) offUi.push(`${uiNames[i]}/${mode}:${h}`); });
+  ok(offUi.length === 0, 'the same strict burn bands hold after Apply on all 50 cells (patch + mode + designInternals), without the draft throttle', JSON.stringify(offUi));
+  ok(MODES.every((mode) => sizeFlat(uiBurn[mode])), 'burn time is size-independent after Apply too (all 10 models, within 5 % or 0.1 h per mode, without the draft throttle)', JSON.stringify(uiBurn));
 
   // (д) Без множника сталі: товща сталь не подовжує горіння. Вона зменшує об'єм
   // топки, а закладка й потужність масштабуються разом з ним.
@@ -1775,10 +1907,10 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
 
   // (б) Практична нижня межа серії зберігається на найменшій моделі: поліно 25 см
   // влазить у топку (внутрішні ширина й глибина — як у physics-model.js: мінус
-  // сталь і футеровка з обох боків), зона горіння під бафлем ≥ 15 см, дверцята
-  // ≥ 20×20 см, а «чесна» потужність medium ≥ 1 кВт.
+  // сталь і футеровка шамот+ізоляція з обох боків), зона горіння під бафлем ≥ 15 см,
+  // дверцята ≥ 20×20 см, а «чесна» потужність medium ≥ 1 кВт.
   const ws1 = applyModelPreset(normalizeConfig(clone(defaultConfig)), 'ws1');
-  const steelCm = ws1.materials.steelThicknessMm / 10, linerCm = ws1.materials.firebrickThicknessCm;
+  const steelCm = ws1.materials.steelThicknessMm / 10, linerCm = ws1.materials.firebrickThicknessCm + ws1.thermal.insulationThicknessCm;
   const inW = ws1.dimensions.widthCm - 2 * steelCm - 2 * linerCm, inD = ws1.dimensions.depthCm - 2 * steelCm - 2 * linerCm;
   const burnZone = ws1.baffle.heightCm - steelCm - linerCm;
   const ws1kw = PhysicsModel.evaluate(ws1).metrics.heatOutputKw;
@@ -1845,6 +1977,436 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
   const pos = (phi) => (phi - 0.1) / 0.9 * 100;
   ok(/clamp\(\(phi - 0\.1\) \/ 0\.9, 0, 1\)/.test(app), 'renderPhiGauge maps phi to (phi - 0.1) / 0.9 of the track');
   ok(band && Math.abs(+band[1] - pos(0.4)) < 0.05 && Math.abs(100 - +band[2] - pos(0.5)) < 0.05, 'the green .phi-band spans exactly phi 0.4–0.5 of the track', JSON.stringify({ band: band && [band[1], band[2]], want: [+pos(0.4).toFixed(2), +(100 - pos(0.5)).toFixed(2)] }));
+}
+
+// 72. Потужність (швидкість горіння) = повітря, що доходить до ложа палива
+// (breakdown.fuelBedAir = 0.65·primary + 0.30·air-wash + 0.05 нещільності; ваги —
+// ОЦІНКИ, REPORT §7), а не частка ВСІЄЇ відкритої площі, як було через airMix:
+// air-wash (≈78 % площі) тоді забирав керування в primary. λ, ККД і Φ лишаються
+// площовими (блок 67). Суворість режиму у ВАЛОВІЙ потужності (швидкості горіння) береться
+// ЛИШЕ з положень слайдерів режиму; окремого powerFactor немає. Єдиний інший канал — слабка
+// тяга (flameIntensity режиму → T на патрубку → draftFactor < 1.3), він окремо виміряний
+// у пункті (г) і діє лише на найменших печах. Перевіряємо ПОВЕДІНКУ (напрям,
+// порядок, діапазони відношень), а не точні константи; усе через голі patch-и або
+// designInternals з keepBaffle.
+{
+  const MODES = ['start-up', 'low', 'medium', 'high', 'overnight'];
+  const names = Object.keys(MODEL_PRESETS);
+  const mkBare = (name, mode) => applyModePreset(applyModelPreset(normalizeConfig(clone(defaultConfig)), name), mode);
+  const evalOf = (c) => PhysicsModel.evaluate(c);
+  const kwOf = (c) => evalOf(c).metrics.heatOutputKw;
+  // Потужність без впливу тяги (кВт / draftFactor): саме її задають положення слайдерів
+  // режиму. Фактична потужність повільних режимів на холодній трубі ще й урізається слабкою
+  // тягою (охолодження труби ∝ 1/витрата газу), тому співвідношення режимів, які мають
+  // відображати лише суворість положень, міряємо без неї.
+  const kwFreeOf = (c) => { const e = evalOf(c); return e.metrics.heatOutputKw / e.breakdown.draftFactor; };
+  const c0 = designInternals(applyModePreset(normalizeConfig(clone(defaultConfig)), 'medium'), { keepBaffle: true });
+  const kwAt = (mut) => { const c = clone(c0); mut(c); return kwOf(c); };
+  const strictlyUp = (seq) => seq.every((x, i) => i === 0 || x > seq[i - 1]);
+
+  // (а) Primary — головний регулятор: повне закриття лишає невелику частку
+  // потужності («піч, закрита по primary, горить повільно»), хід 10→95 % — кратний.
+  const prim = [10, 25, 50, 75, 95].map((v) => kwAt((c) => { c.primaryAir.openPct = v; }));
+  ok(strictlyUp(prim), 'power rises strictly with the primary opening', JSON.stringify(prim));
+  ok(prim[4] / prim[0] >= 2.5, 'primary 10→95 % multiplies the power by at least 2.5 (it was ×1.08 when power followed the open-area share)', JSON.stringify({ lo: prim[0], hi: prim[4], x: +(prim[4] / prim[0]).toFixed(2) }));
+  ok(prim[0] / kwAt(() => {}) < 0.6, 'a stove closed down on primary (10 %) burns far slower than at the medium setting (52 %)', JSON.stringify({ closed: prim[0], medium: kwAt(() => {}) }));
+  // (б) Air-wash — помірний вплив; secondary — майже нуль (заходить над ложем).
+  const wash = [10, 40, 70, 100].map((v) => kwAt((c) => { c.airWash.intakePct = v; }));
+  const sec = [20, 40, 60, 80, 95].map((v) => kwAt((c) => { c.operation.secondaryAirPct = v; }));
+  ok(strictlyUp(wash) && wash[3] / wash[0] >= 1.1 && wash[3] / wash[0] <= 2.0, 'air-wash 10→100 % raises power moderately (×1.1…×2.0)', JSON.stringify({ wash, x: +(wash[3] / wash[0]).toFixed(2) }));
+  ok(Math.abs(sec[4] / sec[0] - 1) < 0.1 && Math.max(...sec) / Math.min(...sec) < 1.1, 'secondary 20→95 % changes power by less than 10 % (secondary air only completes the combustion)', JSON.stringify(sec));
+  ok(prim[4] / prim[0] > 1.5 * (wash[3] / wash[0]) && wash[3] / wash[0] > sec[4] / sec[0], 'influence on power: primary > air-wash > secondary', JSON.stringify({ primary: +(prim[4] / prim[0]).toFixed(2), wash: +(wash[3] / wash[0]).toFixed(2), secondary: +(sec[4] / sec[0]).toFixed(2) }));
+  // (в) fuelBedAir: у (0, 1], рухається лише primary і air-wash (не secondary, не заслінка).
+  const bed = (mut) => { const c = clone(c0); mut(c); return evalOf(c).breakdown.fuelBedAir; };
+  const b0 = bed(() => {});
+  const bClosed = bed((c) => { c.primaryAir.openPct = 0; c.airWash.intakePct = 0; });
+  const bOpen = bed((c) => { c.primaryAir.openPct = 100; c.airWash.intakePct = 100; c.airWash.gapCm = 3; });
+  ok(b0 > 0 && b0 < 1 && bClosed > 0 && bClosed < b0 && Math.abs(bOpen - 1) < 1e-9, 'fuelBedAir: a fully closed stove still leaks (>0), a fully open one is 1', JSON.stringify({ bClosed, b0, bOpen }));
+  ok(bed((c) => { c.operation.secondaryAirPct = 95; }) === b0 && bed((c) => { c.baffle.airflowPct = 100; }) === b0, 'fuelBedAir ignores the secondary slider and the baffle damper');
+  ok(bed((c) => { c.primaryAir.openPct = 90; }) > b0 && bed((c) => { c.airWash.intakePct = 90; }) > b0, 'fuelBedAir grows with primary and air-wash');
+
+  // (г) Суворість режиму береться з ОДНОГО місця — положень слайдерів. Та сама піч з
+  // положеннями medium і лише іншою позначкою режиму дає ту саму валову потужність
+  // (раніше powerFactor режиму множив її ще раз, разом ×2.9 для overnight).
+  const grossByLabel = MODES.map((m) => { const c = clone(c0); c.operation.mode = m; return evalOf(c).metrics.grossHeatOutputKw; });
+  ok(Math.max(...grossByLabel) / Math.min(...grossByLabel) < 1.01, 'the mode label alone does not scale power (no powerFactor): mode severity comes only from the slider positions', JSON.stringify(grossByLabel));
+  // Те саме для flameIntensity режиму: швидкість горіння (валова потужність без тяги) від неї не
+  // залежить ні в якій клітинці, а фактична потужність — лише там, де тяга нижча за плато
+  // (слабка тяга малих печей у повільних режимах; на плато лише ККД, ≤ 7 %).
+  const flameBad = [], flameChan = [];
+  for (const name of ['ws1', 'ws3', 'ws6', 'ws10']) for (const m of ['low', 'overnight']) {
+    const cell = uiCell(name, m);
+    const hot = clone(cell.cfg); hot.operation.flameIntensity = 0.62; // як у medium
+    const eh = evalOf(hot), ec = cell.e;
+    const free = (e) => e.metrics.grossHeatOutputKw / e.breakdown.draftFactor;
+    if (Math.abs(free(eh) / free(ec) - 1) > 0.01) flameBad.push(`${name}/${m}`);
+    const plateau = ec.breakdown.draftFactor >= 1.3 - 1e-9;
+    const q = eh.metrics.heatOutputKw / ec.metrics.heatOutputKw;
+    flameChan.push(`${name}/${m}:${q.toFixed(2)}`);
+    if (plateau && q > 1.07) flameBad.push(`${name}/${m}:plateau-but-x${q.toFixed(2)}`);
+  }
+  ok(flameBad.length === 0, 'flameIntensity does not scale the burn rate (draft-free power) anywhere; on the draft plateau it moves net power only through efficiency (≤ 7 %)', JSON.stringify({ flameBad, flameChan }));
+
+  // (д) Порядок і співвідношення режимів на ОДНАКОВІЙ топці (голий patch: той самий
+  // бафль і об'єм): start-up і high вище medium > low > overnight; overnight 25–40 %
+  // від medium, high 1.4–1.9× (потужність без впливу тяги). Не залежить від розміру печі.
+  const badRatios = [];
+  for (const name of ['ws1', 'ws6', 'ws10']) {
+    const k = Object.fromEntries(MODES.map((m) => [m, kwFreeOf(mkBare(name, m))]));
+    const q = Object.fromEntries(MODES.map((m) => [m, k[m] / k.medium]));
+    const orderOk = k['start-up'] > k.high && k.high > k.medium && k.medium > k.low && k.low > k.overnight;
+    const inR = q.overnight >= 0.25 && q.overnight <= 0.40 && q.high >= 1.4 && q.high <= 1.9 && q.low >= 0.5 && q.low <= 0.8 && q['start-up'] >= 1.3 && q['start-up'] <= 2.0;
+    if (!orderOk || !inR) badRatios.push(`${name}:${MODES.map((m) => q[m].toFixed(2)).join('/')}`);
+  }
+  ok(badRatios.length === 0, 'on the same firebox: start-up > high > medium > low > overnight, overnight 0.25–0.40, high 1.4–1.9, low 0.5–0.8, start-up 1.3–2.0 of medium (draft-free power)', JSON.stringify(badRatios));
+  // Фактична потужність (з тягою) на тій самій топці: порядок режимів лишається, а
+  // слабка тяга повільних режимів малих печей лише ПОГЛИБЛЮЄ їх відставання від medium.
+  const actualRatioBad = ['ws1', 'ws6', 'ws10'].filter((name) => {
+    const k = Object.fromEntries(MODES.map((m) => [m, kwOf(mkBare(name, m))]));
+    const kf = Object.fromEntries(MODES.map((m) => [m, kwFreeOf(mkBare(name, m))]));
+    return !(k['start-up'] > k.high && k.high > k.medium && k.medium > k.low && k.low > k.overnight
+      && k.overnight / k.medium <= kf.overnight / kf.medium + 1e-9 && k.low / k.medium <= kf.low / kf.medium + 1e-9);
+  });
+  ok(actualRatioBad.length === 0, 'with the real draft the mode order holds and slow modes fall further behind medium, never ahead', JSON.stringify(actualRatioBad));
+  // На шляху UI бафль вибирає оптимізатор. Тайбрейк (SCORE_INDIFFERENCE) більше не
+  // «роздуває» бафль під повільні режими, тож суворість режиму тут теж лише з положень
+  // слайдерів (див. нижче «спільний бафль режимів»). Порядок режимів лишається.
+  const uiOrderBad = ['ws1', 'ws6', 'ws10'].filter((name) => {
+    const k = Object.fromEntries(MODES.map((m) => [m, uiCell(name, m).e.metrics.heatOutputKw]));
+    return !(k['start-up'] > k.high && k.high > k.medium && k.medium > k.low && k.low > k.overnight && k.overnight / k.medium <= 0.5);
+  });
+  ok(uiOrderBad.length === 0, 'after Apply (designInternals) the mode order holds and overnight stays at or below 50 % of medium', JSON.stringify(uiOrderBad));
+
+  // (е) Потужність ∝ об'єму топки без обрізання (geometryFactor прибрано): кВт на
+  // літр у medium однаковий для всієї серії (розбіг лише через ККД ≈ 1.5 %).
+  const perL = names.map((n) => { const m = evalOf(mkBare(n, 'medium')).metrics; return m.heatOutputKw / m.fireboxLiters; });
+  ok(Math.max(...perL) / Math.min(...perL) < 1.03, 'medium kW per litre of firebox is the same for WS-1…WS-10 (no size clamp)', JSON.stringify(perL.map((v) => +v.toFixed(4))));
+
+  // (ж) Закладка за наміром неспадна: start-up (розпалювання) найменша, overnight
+  // не менша за medium (її не «підгонять» під потужність, як було з 0.60 < 0.65).
+  const fill = MODES.map((m) => evalOf(applyModePreset(normalizeConfig(clone(defaultConfig)), m)).metrics.loadingVolumePct);
+  ok(fill[0] < fill[1] && fill[1] <= fill[2] && fill[2] <= fill[3] && fill[3] <= fill[4], 'load fraction is monotone by intent: start-up < low <= medium <= high <= overnight', JSON.stringify(fill));
+  ok(fill[4] >= fill[2], 'overnight is loaded at least as full as medium', JSON.stringify({ overnight: fill[4], medium: fill[2] }));
+}
+
+// 73. Охолодження труби залежить від витрати газу й Ø (крок D). k ∝ D·ṁ^−α (NTU на метр
+// U·π·D/(ṁ·cp) дає α = 1, але це верхня межа; прийнято α = 0.5, ОЦІНКА): мала піч або
+// повільний режим (мала ṁ) остигає швидше, ширша труба при тій самій витраті — теж. Еталон —
+// default medium (k = 0.12/м → 14.3 Па, 184 °C). U, cp, α, 4.5 кг повітря/кг дров і еталонна
+// витрата — ОЦІНКИ (REPORT §7); перевіряємо ПОВЕДІНКУ (масштабування, еталон, єдиний профіль
+// T(z)), а не окремі константи.
+{
+  const MODES = ['start-up', 'low', 'medium', 'high', 'overnight'];
+  const names = Object.keys(MODEL_PRESETS);
+  const evalOf = (c) => PhysicsModel.evaluate(c);
+  const mkBare = (name, mode) => applyModePreset(applyModelPreset(normalizeConfig(clone(defaultConfig)), name), mode);
+  const def = designInternals(normalizeConfig(clone(defaultConfig))); // як його показує UI
+  const dm = evalOf(def).metrics;
+  const strictlyUp = (seq) => seq.every((x, i) => i === 0 || x > seq[i - 1]);
+  const strictlyDown = (seq) => seq.every((x, i) => i === 0 || x < seq[i - 1]);
+
+  // (а) Еталон: default medium лишається на 14.3 Па / 184 °C (k = 0.12/м), патрубок заднього
+  // виходу охолоджує так само, як і раніше (293 °C на вході у вертикаль, 164 °C на виході).
+  ok(Math.abs(dm.draftPa - 14.3) <= 0.1 && Math.abs(dm.exitFlueTempC - 184) <= 1 && Math.abs(dm.flueCoolingPerM - 0.12) <= 0.001,
+    'default stove, medium, 5 m: the reference anchor holds (14.3 Pa, 184 °C, k = 0.12 /m)', JSON.stringify({ draft: dm.draftPa, exit: dm.exitFlueTempC, k: dm.flueCoolingPerM, mdot: dm.flueGasKgS }));
+  const rearDef = clone(def); rearDef.chimney.outlet = 'rear';
+  const rdm = evalOf(rearDef).metrics;
+  ok(Math.abs(rdm.stackGasC - 293) <= 2 && Math.abs(rdm.exitFlueTempC - 164) <= 2, 'default stove with a rear 30 cm connector: the connector cools the gas as before (293 °C at the vertical, 164 °C at the exit)', JSON.stringify({ stackGasC: rdm.stackGasC, exit: rdm.exitFlueTempC, draft: rdm.draftPa }));
+
+  // (б) k = C·D·ṁ^−α з ОДНИМ показником α на всіх 50 клітинках: ln(k/D) лежить на прямій за ln ṁ.
+  // Сам α — ОЦІНКА (REPORT §7), тест вимагає лише фізичного діапазону 0.2…1 (турбулентна течія …
+  // чистий NTU зі сталим U) і щільного збігу з прямою, тобто що Ø і витрата справді множать k.
+  // Допуск — округлення метрик (ṁ до 5 знаків, k до 4).
+  const xs = [], ys = [];
+  for (const name of names) for (const mode of MODES) { const c = mkBare(name, mode), m = evalOf(c).metrics; xs.push(Math.log(m.flueGasKgS)); ys.push(Math.log(m.flueCoolingPerM / c.chimney.diameterCm)); }
+  const mx = xs.reduce((a, b) => a + b) / xs.length, my = ys.reduce((a, b) => a + b) / ys.length;
+  const slope = xs.reduce((a, x, i) => a + (x - mx) * (ys[i] - my), 0) / xs.reduce((a, x) => a + (x - mx) ** 2, 0);
+  const resid = Math.max(...xs.map((x, i) => Math.abs(ys[i] - my - slope * (x - mx))));
+  ok(slope <= -0.2 && slope >= -1.0 && resid < 0.03, 'k ∝ Ø·ṁ^−α on all 50 preset × mode cells with one exponent α in the physical range 0.2…1 (cooling per metre grows with pipe diameter and falls with gas flow)', JSON.stringify({ alpha: +(-slope).toFixed(3), maxResid: +resid.toFixed(4) }));
+
+  // (в) Менша витрата газу → швидше остигання. Серія WS у medium: більша піч — більша ṁ,
+  // менше k, гарячіший вихід. Те саме на ОДНІЙ печі, коли primary міняє витрату.
+  const med = names.map((n) => evalOf(mkBare(n, 'medium')).metrics);
+  ok(strictlyUp(med.map((m) => m.flueGasKgS)) && strictlyDown(med.map((m) => m.flueCoolingPerM)) && strictlyUp(med.map((m) => m.exitFlueTempC)),
+    'WS-1…WS-10 in medium: bigger stove — more gas, less cooling per metre, hotter exit', JSON.stringify({ mdot: med.map((m) => m.flueGasKgS), k: med.map((m) => m.flueCoolingPerM), exit: med.map((m) => m.exitFlueTempC) }));
+  const byPrimary = [95, 52, 10].map((p) => { const c = clone(def); c.primaryAir.openPct = p; return evalOf(c).metrics; });
+  ok(strictlyDown(byPrimary.map((m) => m.flueGasKgS)) && strictlyUp(byPrimary.map((m) => m.flueCoolingPerM)) && strictlyDown(byPrimary.map((m) => m.exitFlueTempC)),
+    'one stove, primary 95 → 52 → 10 %: less gas flow, faster cooling, colder exit', JSON.stringify(byPrimary.map((m) => [m.flueGasKgS, m.flueCoolingPerM, m.exitFlueTempC])));
+  // Повільні режими тієї самої печі остигають швидше за робочі (менше повітря ложа → менша ṁ).
+  const wsCool = (name) => MODES.map((mode) => evalOf(mkBare(name, mode)).metrics.flueCoolingPerM);
+  ok(['ws1', 'ws6', 'ws10'].every((n) => { const k = wsCool(n); return k[4] > k[1] && k[1] > k[2] && k[2] > k[3] && k[3] > k[0]; }),
+    'on one stove the slow modes cool faster per metre: overnight > low > medium > high > start-up', JSON.stringify(['ws1', 'ws6', 'ws10'].map(wsCool)));
+
+  // (г) Ширша труба при тій самій витраті: k росте з Ø (k/Ø стале), вихід холодніший.
+  const byDia = [10, 14, 18, 25].map((D) => { const c = clone(def); c.chimney.diameterCm = D; return { D, m: evalOf(c).metrics }; });
+  const perCm = byDia.map(({ D, m }) => m.flueCoolingPerM / D);
+  ok(strictlyUp(byDia.map(({ m }) => m.flueCoolingPerM)) && strictlyDown(byDia.map(({ m }) => m.exitFlueTempC)) && Math.max(...perCm) / Math.min(...perCm) < 1.01,
+    'a wider pipe at the same gas flow cools faster (k ∝ Ø) and exits colder', JSON.stringify(byDia.map(({ D, m }) => [D, m.flueCoolingPerM, m.exitFlueTempC])));
+
+  // (д) Вихід WS-1 реалістичний: мала піч на 5 м одностінної труби має вихід ВІДЧУТНО
+  // холодніший за еталонні 184 °C (а не однаковий для всієї серії), але не «кімнатний» (раніше
+  // ≈44–52 °C — з показником 1); вихід росте з розміром печі, велика піч гарячіша за еталон.
+  const ws1m = med[0], ws10m = med[med.length - 1];
+  ok(ws1m.exitFlueTempC >= 90 && ws1m.exitFlueTempC < dm.exitFlueTempC - 30 && ws10m.exitFlueTempC > dm.exitFlueTempC,
+    'WS-1 medium on 5 m: exit clearly below the default 184 °C but well above room temperature (not the old ≈50 °C); WS-10 hotter than the default', JSON.stringify({ ws1: ws1m.exitFlueTempC, def: dm.exitFlueTempC, ws10: ws10m.exitFlueTempC }));
+  ok(ws1m.draftPa < ws10m.draftPa && ws1m.draftPa > 5, 'WS-1 draws less than WS-10 on the same 5 m flue (a small stove cools its flue), but still draws', JSON.stringify({ ws1: ws1m.draftPa, ws10: ws10m.draftPa }));
+
+  // (е) ОДИН профіль T(z) для тяги, виходу і CREOSOTE_RISK: exit = 20 + (T_патрубка − 20)·e^(−k·H) − 6·повороти
+  // (в межах округлення метрик), а CREOSOTE_RISK спрацьовує рівно тоді, коли exit < 150 °C —
+  // на всіх 50 клітинках × 3 висоти. Підлога exit — кімнатна температура.
+  const profileBad = [], crBad = [];
+  let floorHit = 0;
+  for (const name of names) for (const mode of MODES) for (const H of [3, 5, 9]) {
+    const c = mkBare(name, mode); c.chimney.totalHeightM = H;
+    const r = evalOf(c), m = r.metrics;
+    const pred = 20 + (m.stackGasC - 20) * Math.exp(-m.flueCoolingPerM * H) - 6 * m.routeBends;
+    if (m.exitFlueTempC > 22 && Math.abs(pred - m.exitFlueTempC) > 1.5) profileBad.push(`${name}/${mode}/${H}:${pred.toFixed(1)}vs${m.exitFlueTempC}`);
+    if (m.exitFlueTempC < 20) profileBad.push(`${name}/${mode}/${H}:below-ambient`);
+    if (m.exitFlueTempC <= 20) floorHit++;
+    if (r.warnings.some((w) => w.code === 'CREOSOTE_RISK') !== (m.exitFlueTempC < 150)) crBad.push(`${name}/${mode}/${H}:${m.exitFlueTempC}`);
+  }
+  ok(profileBad.length === 0, 'exit temperature follows the same exponential profile as the draft (k from gas flow and Ø, ±1.5 °C) and never drops below room temperature', JSON.stringify({ profileBad: profileBad.slice(0, 5), floorHit }));
+  ok(crBad.length === 0, 'CREOSOTE_RISK fires exactly when the exit gas is below 150 °C (same profile) on 150 cells', JSON.stringify(crBad.slice(0, 5)));
+
+  // (ж) Патрубок масштабується тим самим множником: на малій печі він віддає в кімнату
+  // більшу частку тепла, ніж на великій (газу менше, тож труба остуджує його сильніше); top/up патрубка не має.
+  const gain = (name) => { const c = mkBare(name, 'medium'); c.chimney.outlet = 'rear'; c.chimney.connectorLengthCm = 30; return evalOf(c).metrics.roomPipeGainPct; };
+  ok(gain('ws1') > gain('ws6') && gain('ws6') > gain('ws10') && gain('ws10') > 0, 'rear connector: the smaller the stove, the larger the share of heat the bare pipe gives to the room', JSON.stringify({ ws1: gain('ws1'), ws6: gain('ws6'), ws10: gain('ws10') }));
+  ok(evalOf(mkBare('ws1', 'medium')).metrics.roomPipeGainPct === 0, 'top/up has no connector heat (cooling scale does not leak into it)');
+
+  // (з) Межа UI: піч, що ледь горить (топка ≈3.7 л, 0.06 кВт), дає скінченне k, у кілька разів
+  // більше за еталонне 0.12, і вихід майже кімнатної температури; тяга не нижче підлоги 1 Па.
+  const tinyCfg = mkBare('ws1', 'overnight');
+  Object.assign(tinyCfg.dimensions, { widthCm: 30, depthCm: 30, heightCm: 40, legHeightCm: 0 });
+  tinyCfg.materials.steelThicknessMm = 5; tinyCfg.materials.firebrickThicknessCm = 4;
+  const tinyM = evalOf(designInternals(normalizeConfig(tinyCfg))).metrics;
+  ok(Number.isFinite(tinyM.flueCoolingPerM) && tinyM.flueCoolingPerM > 0.5 && tinyM.exitFlueTempC >= 20 && tinyM.exitFlueTempC <= 40 && tinyM.draftPa >= 1, 'a near-dead tiny stove: k is several times the reference but finite, exit is near room temperature, draft stays above its 1 Pa floor', JSON.stringify({ k: tinyM.flueCoolingPerM, exit: tinyM.exitFlueTempC, draft: tinyM.draftPa }));
+}
+
+// 74. Вибір бафля: детермінований тайбрейк (крок E). Оцінка кандидата майже не залежить від
+// висоти бафля (стеля ККД 92 + округлення 0.1), тож нічиї реальні. Правило: усі в межах
+// SCORE_INDIFFERENCE від найкращого — рівні; серед рівних максимум secondaryCoverage, далі
+// найнижчий бафль, далі порядок перебору. CREOSOTE_RISK/DRAFT_WEAK не штрафуються (вони про
+// димохід, а не про геометрію). Тести: правило на синтетичному пулі + поведінка оптимізатора.
+{
+  const MODES = ['start-up', 'low', 'medium', 'high', 'overnight'];
+  const evalOf = (c) => PhysicsModel.evaluate(c);
+  const mkBare = (name, mode) => applyModePreset(applyModelPreset(normalizeConfig(clone(defaultConfig)), name), mode);
+  const cand = (score, coverage, heightCm, tag = '') => ({ score, coverage, config: { baffle: { heightCm } }, result: { tag } });
+  const permutations = (arr) => (arr.length <= 1 ? [arr] : arr.flatMap((x, i) => permutations([...arr.slice(0, i), ...arr.slice(i + 1)]).map((p) => [x, ...p])));
+
+  // (а) Правило. Смуга: 90 − SCORE_INDIFFERENCE. У смузі — висоти 40, 34, 28, 46 (на 0, 0.4, 0.8 і 0
+  // ширини від найкращого); кандидат h=22 з найвищим покриттям (на 1.2 ширини нижче) у смугу не потрапляє.
+  // Серед чотирьох найбільше покриття 1.3 мають 34, 28, 46, з них найнижчий бафль — 28. Результат не
+  // залежить від порядку в пулі (усі 120 перестановок). Зсуви виражено через саму смугу, а не числами.
+  ok(SCORE_INDIFFERENCE > 0 && SCORE_INDIFFERENCE < 1, 'the indifference band is positive and smaller than one score point', String(SCORE_INDIFFERENCE));
+  const SI = SCORE_INDIFFERENCE;
+  const pool = [cand(90, 1.2, 40), cand(90 - 0.4 * SI, 1.3, 34), cand(90 - 0.8 * SI, 1.3, 28), cand(90 - 1.2 * SI, 1.5, 22), cand(90, 1.3, 46)];
+  const winners = new Set(permutations(pool).map((p) => pickBaffleCandidate(p).config.baffle.heightCm));
+  ok(winners.size === 1 && winners.has(28), 'tie rule: within the band take the best secondary coverage, then the lowest baffle; a candidate outside the band loses; any pool order gives the same winner', JSON.stringify([...winners]));
+  ok(pickBaffleCandidate([cand(90, 1.3, 46), cand(90, 1.3, 34), cand(90, 1.3, 40)]).config.baffle.heightCm === 34, 'exact tie with equal coverage: the lowest baffle wins');
+  ok(pickBaffleCandidate([cand(90, 1.3, 34, 'first'), cand(90, 1.3, 34, 'second')]).result.tag === 'first', 'a complete tie falls back to the enumeration order (the first candidate)');
+  ok(pickBaffleCandidate([cand(88, 1.5, 22), cand(90, 1.0, 50)]).config.baffle.heightCm === 50, 'a clearly better score wins even against a higher coverage (the band is narrow)');
+  ok(pickBaffleCandidate([]) === null, 'an empty pool gives null');
+
+  // (б) Детермінізм оптимізатора: ту саму піч designInternals дає той самий бафль незалежно від
+  // того, який бафль був у конфігу до цього (стара/чужа геометрія, інший режим перед цим).
+  const stoves = [['ws1', 'overnight'], ['ws4', 'low'], ['ws6', 'medium'], ['ws9', 'high']];
+  const sig = (c) => JSON.stringify([c.baffle.heightCm, c.baffle.angleDeg, c.baffle.frontGapCm, c.baffle.airflowPct, c.chimney.diameterCm]);
+  const dependent = [];
+  for (const [name, mode] of stoves) {
+    const fresh = sig(designInternals(mkBare(name, mode)));
+    for (const [h, a] of [[30, 10], [80, -2], [52, 6]]) {
+      const seeded = mkBare(name, mode); Object.assign(seeded.baffle, { heightCm: h, angleDeg: a });
+      if (sig(designInternals(seeded)) !== fresh) dependent.push(`${name}/${mode} from baffle ${h}/${a}`);
+    }
+    if (sig(designInternals(mkBare(name, mode))) !== fresh) dependent.push(`${name}/${mode} repeat`);
+  }
+  ok(dependent.length === 0, 'the same stove always gets the same baffle and flue diameter, whatever baffle the config held before', JSON.stringify(dependent));
+
+  // (в) Бафль більше не «кодує» режим: на шляху UI (усі 10 моделей) висота бафля в усіх режимах
+  // однієї печі в межах одного кроку сітки (6 см) від medium, а потужність без впливу тяги в
+  // overnight — 25–40 % від medium (раніше low/overnight отримували бафль на 10–20 см вищий, топку
+  // на 40–50 % більшу, і overnight/medium на UI був 0.43–0.49 замість ≈0.31 на однаковій топці;
+  // з вужчою смугою 0.25 і показником охолодження 1 WS-3/WS-6/WS-7 overnight знову піднімали бафль на 6–12 см).
+  const spread = [], ratio = [], ratioOff = [];
+  for (const name of Object.keys(MODEL_PRESETS)) {
+    const ui = Object.fromEntries(MODES.map((m) => [m, uiCell(name, m)]));
+    const heights = MODES.map((m) => ui[m].cfg.baffle.heightCm);
+    if (Math.max(...heights) - ui.medium.cfg.baffle.heightCm > 6 || ui.medium.cfg.baffle.heightCm - Math.min(...heights) > 6) spread.push(`${name}:${heights}`);
+    const free = (e) => e.metrics.heatOutputKw / e.breakdown.draftFactor;
+    const q = free(ui.overnight.e) / free(ui.medium.e);
+    ratio.push(+q.toFixed(2));
+    if (q < 0.25 || q > 0.40) ratioOff.push(`${name}:${q.toFixed(2)}`);
+  }
+  ok(spread.length === 0, 'after Apply every mode of EVERY WS model keeps its baffle within one grid step (6 cm) of medium', JSON.stringify(spread));
+  ok(ratioOff.length === 0, 'after Apply overnight/medium (draft-free power) stays 0.25–0.40 on all ten models — the baffle no longer re-encodes the mode', JSON.stringify({ ratio, ratioOff }));
+
+  // (в2) Неперервність: крок висоти корпусу на 1 см не має змінювати потужність low/overnight стрибком.
+  // Раніше штраф 6 балів за SECONDARY_COLD перемикав бафль 30 → 43 см (ws2/low, висота 55 → 56 см:
+  // 0.76 → 1.54 кВт, ×2.03), а після зміни охолодження труби кроків > 15 % було ще більше.
+  const jumps = [];
+  let steps = 0, maxJump = 1;
+  for (const [name, mode] of [['ws2', 'low'], ['ws2', 'overnight'], ['ws4', 'low'], ['ws6', 'overnight']]) {
+    const seed = mkBare(name, mode);
+    let prev = null;
+    for (let dh = -8; dh <= 8; dh++) {
+      const c = clone(seed); c.dimensions.heightCm = seed.dimensions.heightCm + dh;
+      const kw = evalOf(designInternals(c)).metrics.heatOutputKw;
+      if (prev) { steps++; const q = Math.max(kw / prev, prev / kw); maxJump = Math.max(maxJump, q); if (q > 1.15) jumps.push(`${name}/${mode}@h${c.dimensions.heightCm}:${prev}->${kw}`); }
+      prev = kw;
+    }
+  }
+  ok(jumps.length === 0, 'power of low/overnight is continuous in the body height: no 1 cm step moves it by more than 15 % (no baffle cliffs)', JSON.stringify({ steps, maxJump: +maxJump.toFixed(2), jumps: jumps.slice(0, 4) }));
+
+  // (г) Попередження про димохід не керують геометрією: бафль (а отже й топка) не залежить від
+  // висоти димоходу, хоча на 2 м спрацьовує DRAFT_WEAK, а на 5–12 м у малої печі — CREOSOTE_RISK.
+  // Раніше оптимізатор «рятував» піч від креозоту більшою топкою (ws4 medium +33 % кВт).
+  const flueDriven = [];
+  for (const [name, mode] of [['ws1', 'low'], ['ws3', 'medium'], ['ws4', 'medium'], ['ws6', 'overnight']]) {
+    const hs = [2, 5, 12].map((H) => { const c = mkBare(name, mode); c.chimney.totalHeightM = H; return designInternals(c).baffle.heightCm; });
+    if (new Set(hs).size !== 1) flueDriven.push(`${name}/${mode}:${hs}`);
+  }
+  ok(flueDriven.length === 0, 'the baffle (firebox size) does not depend on chimney height: flue warnings no longer drive the geometry', JSON.stringify(flueDriven));
+
+  // (д) Піни: medium не зсунувся від тайбрейка (блок 66 тримає medium усієї серії).
+  const ws6mk = (m) => evalOf(designInternals(mkBare('ws6', m))).metrics;
+  ok(ws6mk('medium').heatOutputKw === 5.52 && ws6mk('medium').fireboxLiters === 97.9, 'ws6 medium after Apply is the default 5.52 kW / 97.9 L (pinned anchor unchanged)', JSON.stringify({ kw: ws6mk('medium').heatOutputKw, l: ws6mk('medium').fireboxLiters }));
+}
+
+// 75. РЕАЛЬНІ цифри шляху UI (REPORT §7). Блоки 69/72/74 міряють смуги й відношення режимів
+// «без впливу тяги» (burn·draftFactor/1.3, кВт/draftFactor); тут — те, що бачить користувач
+// після «Застосувати» (patch + режим + designInternals), 5 м одностінної труби, верхній вихід
+// «над піччю». Відомі винятки названо ЯВНО: нова деградація в іншій клітинці валить тест, і
+// усунення винятку теж (тоді список слід оновити разом із REPORT §7). Усі смуги й пороги — ОЦІНКИ.
+{
+  const MODES = ['start-up', 'low', 'medium', 'high', 'overnight'];
+  const BANDS = { 'start-up': [0.7, 1.2], low: [5, 7], medium: [3, 4.5], high: [1.5, 2.5], overnight: [8, 12] };
+  const names = Object.keys(MODEL_PRESETS).filter((n) => /^ws\d+$/.test(n)).sort((a, b) => +a.slice(2) - +b.slice(2));
+  const cell = (n, m) => uiCell(n, m).e;
+  const kw = (n, m) => cell(n, m).metrics.heatOutputKw;
+  const sameSet = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+
+  // (а) Час горіння повної закладки з реальною тягою. Поза смугою — лише overnight двох найменших
+  // печей (WS-1 13.5 год, WS-2 12.5 год), обидва ДОВШЕ за смугу: слабка тяга (6.1 / 6.6 Па) урізає
+  // потужність. Раніше (показник охолодження 1) таких клітинок було 8 з 50 (19.6 год на WS-1…WS-4).
+  const off = [], shorter = [];
+  for (const n of names) for (const m of MODES) {
+    const h = cell(n, m).metrics.burnTimeHours;
+    if (h < BANDS[m][0] - 1e-9 || h > BANDS[m][1] + 1e-9) { off.push(`${n}/${m}`); if (h < BANDS[m][0]) shorter.push(`${n}/${m}:${h}`); }
+  }
+  ok(sameSet(off, ['ws1/overnight', 'ws2/overnight']) && shorter.length === 0, 'REAL burn times after Apply: only overnight on WS-1/WS-2 is outside its band (known exception, longer — weak draft); the other 48 of 50 cells are inside', JSON.stringify({ off, shorter }));
+
+  // (б) Відношення потужностей режимів (фактичних, з тягою) до medium: overnight 0.25–0.40 скрізь,
+  // крім WS-1 (≈0.23: найслабша тяга серії); low ≈ 0.65 скрізь; high ≈ 1.45; start-up ≈ 1.6.
+  const q = (n, m) => kw(n, m) / kw(n, 'medium');
+  const ovnOff = names.filter((n) => q(n, 'overnight') < 0.25 || q(n, 'overnight') > 0.40);
+  ok(sameSet(ovnOff, ['ws1']), 'REAL overnight/medium power is 0.25–0.40 on WS-2…WS-10; WS-1 (≈0.23, weakest draft) is the one known exception', JSON.stringify({ ovnOff, ratios: names.map((n) => +q(n, 'overnight').toFixed(2)) }));
+  ok(names.every((n) => q(n, 'low') >= 0.55 && q(n, 'low') <= 0.75 && q(n, 'high') >= 1.35 && q(n, 'high') <= 1.6 && q(n, 'start-up') >= 1.5 && q(n, 'start-up') <= 1.8),
+    'REAL low / high / start-up power relative to medium is the same on every model (0.55–0.75 / 1.35–1.6 / 1.5–1.8)', JSON.stringify(names.map((n) => [+q(n, 'low').toFixed(2), +q(n, 'high').toFixed(2), +q(n, 'start-up').toFixed(2)])));
+
+  // (в) Розкид часу горіння по серії (max/min) у кожному режимі на реальній тязі: робочі режими
+  // практично не залежать від розміру, overnight ≈ 1.27× (слабка тяга WS-1/WS-2). Раніше low 1.77×, overnight 1.85×.
+  const spreadOf = (m) => { const b = names.map((n) => cell(n, m).metrics.burnTimeHours); return Math.max(...b) / Math.min(...b); };
+  const spreads = Object.fromEntries(MODES.map((m) => [m, +spreadOf(m).toFixed(2)]));
+  ok(['start-up', 'low', 'medium', 'high'].every((m) => spreads[m] <= 1.05) && spreads.overnight <= 1.35, 'REAL burn-time spread across WS-1…WS-10 (max/min): ≤ 1.05 in start-up/low/medium/high, ≤ 1.35 in overnight (was 1.77 / 1.85 in low / overnight)', JSON.stringify(spreads));
+
+  // (г) Тяга: робочі режими ≥ 8 Па на всіх 40 клітинках; overnight 6–10 Па (природно слабше), без тяги < 4 Па.
+  const draft = (n, m) => cell(n, m).metrics.draftPa;
+  const weakWorking = names.flatMap((n) => ['start-up', 'low', 'medium', 'high'].filter((m) => draft(n, m) < 8).map((m) => `${n}/${m}:${draft(n, m)}`));
+  const ovnDrafts = names.map((n) => draft(n, 'overnight'));
+  ok(weakWorking.length === 0 && Math.min(...ovnDrafts) >= 6 && Math.min(...ovnDrafts) < 8, 'REAL draft after Apply on 5 m: ≥ 8 Pa in the four working modes; overnight 6–10 Pa (the slow mode draws weaker by nature)', JSON.stringify({ weakWorking, ovnDrafts }));
+
+  // (д) CREOSOTE_RISK (danger) на реальному шляху: start-up/high — ніколи; medium — лише WS-1/WS-2
+  // (ВІДОМИЙ ВИНЯТОК: 1.2–1.7 кВт на голій 5-метровій одностінній трубі, вихід 124/136 °C —
+  // питання власнику в REPORT §7); low/overnight — на малих і середніх печах (чесна оцінка).
+  const crOf = (m) => names.filter((n) => cell(n, m).warnings.some((w) => w.code === 'CREOSOTE_RISK'));
+  ok(crOf('start-up').length === 0 && crOf('high').length === 0 && sameSet(crOf('medium'), ['ws1', 'ws2']) && crOf('low').length >= 8 && crOf('overnight').length >= 8,
+    'REAL CREOSOTE_RISK on 5 m: never in start-up/high; in medium only WS-1/WS-2 (known exception); in low/overnight on small and mid stoves', JSON.stringify(Object.fromEntries(MODES.map((m) => [m, crOf(m).map((n) => n.slice(2)).join(',')]))));
+  const dangerOther = names.flatMap((n) => MODES.filter((m) => cell(n, m).warnings.some((w) => w.level === 'danger' && w.code !== 'CREOSOTE_RISK')).map((m) => `${n}/${m}`));
+  ok(dangerOther.length === 0, 'after Apply no WS cell has any danger warning except CREOSOTE_RISK', JSON.stringify(dangerOther));
+
+  // (е) WS-6 після «Застосувати» — це defaultConfig: ті самі 14.3 Па / 184 °C / 5.52 кВт (патч більше не
+  // ставить 1 вигин), а жоден пресет не чіпає висоту й вигини труби (вони — властивість монтажу).
+  const w6 = cell('ws6', 'medium').metrics, dm = PhysicsModel.evaluate(designInternals(normalizeConfig(clone(defaultConfig)))).metrics;
+  ok(w6.draftPa === dm.draftPa && w6.exitFlueTempC === dm.exitFlueTempC && w6.heatOutputKw === dm.heatOutputKw && Math.abs(w6.draftPa - 14.3) <= 0.1, 'ws6 medium after Apply equals the default stove (draft, exit temperature, power)', JSON.stringify({ ws6: [w6.draftPa, w6.exitFlueTempC, w6.heatOutputKw], def: [dm.draftPa, dm.exitFlueTempC, dm.heatOutputKw] }));
+  const touched = names.filter((n) => { const c = normalizeConfig(clone(defaultConfig)); c.chimney.totalHeightM = 8; c.chimney.bends = 2; applyModelPreset(c, n); return c.chimney.totalHeightM !== 8 || c.chimney.bends !== 2; });
+  ok(touched.length === 0, 'no WS preset resets chimney height or bends (installation properties): the result does not depend on what was applied before', JSON.stringify(touched));
+
+  // (ж) Маршрут і вихід: потужність у medium майже не залежить від них (підпис пресета чесний для всіх
+  // чотирьох варіантів: ≥ 0.9 від top/up), а повільні режими малих печей на довшій холодній трубі
+  // (top/wall: +2 повороти і зайва труба в кімнаті) втрачають тягу й потужність — до −45 %. Це наслідок
+  // охолодження труби (REPORT §7), а не збій; межа 0.5 ловить нову деградацію.
+  const worst = { medium: 9, slow: 9 };
+  const bad = [];
+  for (const n of names) for (const m of ['medium', 'low', 'overnight']) {
+    const base = cell(n, m).metrics.heatOutputKw;
+    for (const outlet of ['top', 'rear']) for (const route of ['up', 'wall']) {
+      const c = clone(uiCell(n, m).cfg); c.chimney.outlet = outlet; c.chimney.route = route;
+      const ratio = PhysicsModel.evaluate(c).metrics.heatOutputKw / base;
+      if (m === 'medium') worst.medium = Math.min(worst.medium, ratio); else worst.slow = Math.min(worst.slow, ratio);
+      if ((m === 'medium' && ratio < 0.9) || ratio < 0.5) bad.push(`${n}/${m}/${outlet}/${route}:${ratio.toFixed(2)}`);
+    }
+  }
+  ok(bad.length === 0, 'power vs outlet/route: medium keeps ≥ 0.9 of top/up on every model and variant; low/overnight lose at most half', JSON.stringify({ worstMedium: +worst.medium.toFixed(2), worstSlow: +worst.slow.toFixed(2), bad: bad.slice(0, 5) }));
+  // Вихід більше не впирається в кімнатну температуру при ненульовій тязі: жодна з 150 клітинок
+  // «10 пресетів × 5 режимів × висоти 3, 5, 9 м» (раніше 8 клітинок із виходом 20 °C).
+  let floorHit = 0, cells150 = 0;
+  for (const n of names) for (const m of MODES) for (const H of [3, 5, 9]) { const c = clone(uiCell(n, m).cfg); c.chimney.totalHeightM = H; cells150++; if (PhysicsModel.evaluate(c).metrics.exitFlueTempC <= 20) floorHit++; }
+  ok(floorHit === 0, 'the exit temperature never sits on the 20 °C floor on any of the 150 cells (preset × mode × 3/5/9 m)', JSON.stringify({ floorHit, cells150 }));
+
+  // (з) Підпис попередження збігається з метрикою: CREOSOTE_RISK порівнює вже ЗАОКРУГЛЕНИЙ вихід
+  // (раніше при 149.6 °C писало «150°C < 150°C»). Скануємо висоту труби дрібним кроком на default-печі
+  // (вихід перетинає 150 °C) і на WS-4 medium.
+  const msgBad = [];
+  let crossed = 0;
+  for (const seed of [designInternals(normalizeConfig(clone(defaultConfig))), clone(uiCell('ws4', 'medium').cfg)]) {
+    for (let H = 2; H <= 12; H += 0.01) {
+      const c = clone(seed); c.chimney.totalHeightM = +H.toFixed(2);
+      const e = PhysicsModel.evaluate(c), cr = e.warnings.find((w) => w.code === 'CREOSOTE_RISK');
+      if (!!cr !== (e.metrics.exitFlueTempC < 150)) msgBad.push(`H${c.chimney.totalHeightM}:${e.metrics.exitFlueTempC}`);
+      if (cr && !(+cr.message.match(/на виході (\d+)°C/)[1] < 150)) msgBad.push(`H${c.chimney.totalHeightM}:msg`);
+      if (e.metrics.exitFlueTempC === 150) crossed++;
+    }
+  }
+  ok(msgBad.length === 0 && crossed > 0, 'CREOSOTE_RISK never reads "150°C < 150°C": it fires exactly when the displayed exit temperature is below 150 (scan of 2000 chimney heights)', JSON.stringify({ msgBad: msgBad.slice(0, 5), crossed }));
+
+  // (и) Не-нормалізований конфіг: NaN / рядок / undefined / null / '' у слайдерах дають скінченні метрики
+  // (раніше NaN доходив до λ, тяги й k), а −5 і 1e9 — теж скінченні.
+  const sliders = [['primaryAir', 'openPct'], ['operation', 'secondaryAirPct'], ['operation', 'flameIntensity'], ['airWash', 'gapCm'], ['airWash', 'intakePct'], ['airWash', 'slotWidthPct'], ['baffle', 'airflowPct'], ['baffle', 'frontGapCm'], ['baffle', 'heightCm'], ['baffle', 'angleDeg']];
+  const nonFinite = [];
+  let rawCells = 0;
+  for (const [sec, key] of sliders) for (const junk of [NaN, 'abc', undefined, null, '', -5, 1e9]) {
+    const c = normalizeConfig(clone(defaultConfig)); c[sec][key] = junk;
+    const m = PhysicsModel.evaluate(c).metrics;
+    rawCells++;
+    for (const [k, v] of Object.entries(m)) if (typeof v === 'number' && !Number.isFinite(v)) nonFinite.push(`${sec}.${key}=${String(junk)}:${k}`);
+  }
+  ok(nonFinite.length === 0, 'evaluate on a RAW (not normalised) config with NaN / "abc" / undefined / null / "" / −5 / 1e9 in any slider keeps every metric finite', JSON.stringify({ rawCells, nonFinite: nonFinite.slice(0, 5) }));
+
+  // (к) Підпис Φ у UI: статус порівнюється з тим самим округленням (2 знаки), що й напис
+  // (раніше Φ 0.504 показувало «Φ = 0.50» поруч із «Φ > 0.5»).
+  const appSrc = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+  ok(/const phiShown = \+phi\.toFixed\(2\)/.test(appSrc) && /inBand = phiShown >= 0\.4 && phiShown <= 0\.5/.test(appSrc) && /else if \(phiShown > 0\.5\)/.test(appSrc),
+    'the Φ gauge status uses the same 2-digit rounding as its label');
+}
+
+// 76. Рівень CREOSOTE_RISK: < 100 °C — danger, 100…150 °C — warn (код той самий і
+// спрацьовує рівно при виході < 150 °C). Medium на найменших пресетах (124/136 °C)
+// більше не дає червоного danger; холодні режими малих печей (44 °C) лишаються danger.
+{
+  const crLevel = (name, mode) => {
+    const c = applyModelPreset(normalizeConfig(clone(defaultConfig)), name);
+    applyModePreset(c, mode);
+    designInternals(c);
+    const r = PhysicsModel.evaluate(c);
+    const w = r.warnings.find((x) => x.code === 'CREOSOTE_RISK');
+    return { level: w ? w.level : null, exit: r.metrics.exitFlueTempC };
+  };
+  const m1 = crLevel('ws1', 'medium'), o1 = crLevel('ws1', 'overnight'), m6 = crLevel('ws6', 'medium');
+  ok(m1.level === 'warn' && m1.exit >= 100 && m1.exit < 150, 'WS-1 medium (exit 100…150 °C): CREOSOTE_RISK is a warn, not danger', JSON.stringify(m1));
+  ok(o1.level === 'danger' && o1.exit < 100, 'WS-1 overnight (exit < 100 °C): CREOSOTE_RISK stays danger', JSON.stringify(o1));
+  ok(m6.level === null && m6.exit >= 150, 'WS-6 medium: no CREOSOTE_RISK', JSON.stringify(m6));
 }
 
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);process.exit(fails === 0 ? 0 : 1);

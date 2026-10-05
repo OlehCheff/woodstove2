@@ -559,11 +559,14 @@ function renderPhiGauge(m) {
   // Мапа Φ → позиція 0–100% на шкалі: Φ=0.1 → 0, Φ=1.0 → 100%.
   const left = clamp((phi - 0.1) / 0.9, 0, 1) * 100;
   marker.style.left = `${left}%`;
-  const inBand = phi >= 0.4 && phi <= 0.5;
+  // Статус порівнюємо з тим самим округленням (2 знаки), що й підпис: інакше Φ 0.504
+  // показувало б «Φ = 0.50» поруч із «Φ > 0.5 — мало повітря».
+  const phiShown = +phi.toFixed(2);
+  const inBand = phiShown >= 0.4 && phiShown <= 0.5;
   marker.style.background = inBand ? '#22c55e' : '#f97316';
-  label.textContent = `Φ = ${phi.toFixed(2)}`;
+  label.textContent = `Φ = ${phiShown.toFixed(2)}`;
   if (inBand) status.innerHTML = `<span style="color:#86efac">${t('phiInBand')}</span>`;
-  else if (phi > 0.5) status.innerHTML = `<span>${t('phiRich')}</span>`;
+  else if (phiShown > 0.5) status.innerHTML = `<span>${t('phiRich')}</span>`;
   else status.innerHTML = `<span>${t('phiLean')}</span>`;
 }
 
