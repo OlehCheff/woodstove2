@@ -7,9 +7,13 @@
     "lint": "eslint js tests *.js",
     "smoke": "node tests/smoke.browser.mjs",
     "check": "npm run lint && npm test",
-    "serve": "npx serve ."
+    "serve": "npx serve .",
+    "bench": "node tests/bench.mjs"
   },
   "devDependencies": {
     "eslint": "^9.39.5"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

@@ -3,30 +3,44 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Woodstove 2 — Sprint 10</title>
+<title>Woodstove 2</title>
 <link rel="stylesheet" href="./css/styles.css">
+<!-- SRI для three@0.160.0 (jsDelivr). sha384 порахований із точних файлів за цими URL і звірений
+     з unpkg. Змінюєш версію three - перерахуй ВСІ п'ять хешів (див. tests: "SRI"), інакше модуль
+     не завантажиться. importmap integrity діє в браузерах, що її підтримують; для решти -
+     <link rel="modulepreload" integrity> нижче покриває два модулі, що вантажаться одразу. -->
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+},
+"integrity": {
+  "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js": "sha384-61S/Nu32S3E5+n+KpCOTb2eRYps6fVKm+9Gz1QBvSePFthb46f063Aa/qe/lykFZ",
+  "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js": "sha384-qlO/ZugKPxAQUAvTlQoo0QECzxJIJySZmCF/DHdb2Xn/hHndFwX/vfUAC9Hbk6LP",
+  "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/exporters/GLTFExporter.js": "sha384-+9EXeA3QCWZZAs5mVgcIc9Jas6GG02zkZCLLL1VZGGLl+/8OEgeCIR44lgyZwK0J",
+  "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/exporters/STLExporter.js": "sha384-asFNg7wL3Pl1xb8Wnx91cfhJVpmwKWIfOBKZaXNqPDWTLajmNiNQWXd5sP71UzcR",
+  "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/utils/TextureUtils.js": "sha384-40/u8P8J3Ow8H4TDPNg70OS3SxRjKMCskakuBKbkhfuHifPCzytpkQLT2W7FyGpH"
 } }
 </script>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" integrity="sha384-61S/Nu32S3E5+n+KpCOTb2eRYps6fVKm+9Gz1QBvSePFthb46f063Aa/qe/lykFZ" crossorigin="anonymous">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js" integrity="sha384-qlO/ZugKPxAQUAvTlQoo0QECzxJIJySZmCF/DHdb2Xn/hHndFwX/vfUAC9Hbk6LP" crossorigin="anonymous">
 </head>
 <body>
 <div id="canvas-container"></div>
+<div id="stack"><div id="toasts" role="status" aria-live="polite"></div><div id="notices" role="status" aria-live="polite"></div></div>
 <div id="drawing-overlay"></div>
 
 <div id="topbar">
   <button id="langToggle" class="ghost" title="UA / EN">EN</button>
   <button id="shareConfig" class="ghost" data-i18n="share">Поділитися</button>
-  <button id="screenshot" class="ghost" data-i18n="screenshot">Знімок</button>
-  <button id="exportGltf" class="ghost" title="Export scene as glTF">GLTF</button>
-  <button id="exportStl" class="ghost" title="Export scene as STL">STL</button>
+  <button id="screenshot" data-needs-3d class="ghost" data-i18n="screenshot">Знімок</button>
+  <button id="exportGltf" data-needs-3d class="ghost" title="Export scene as glTF">GLTF</button>
+  <button id="exportStl" data-needs-3d class="ghost" title="Export scene as STL">STL</button>
   <button id="showTour" class="ghost" data-i18n="tourBtn">Тур</button>
 </div>
 
 <aside id="panel">
-  <h1>🔥 Woodstove 2 · Sprint 10</h1>
+  <h1>🔥 Woodstove 2</h1>
   <p class="sub" data-i18n="subtitle">1 од. = 1 см · three@160 · модулі · дебаунс 120мс</p>
 
   <details open><summary data-i18n="secMode">Режим роботи / вид</summary><div class="body">
@@ -37,23 +51,23 @@
         <option value="overnight">overnight</option>
       </select></div>
     <div class="row"><label><span data-i18n="lblView">Вид</span></label>
-      <select id="viewMode">
+      <select id="viewMode" data-needs-3d>
         <option value="3d">3D view</option><option value="drawing-front">Drawing front</option>
         <option value="drawing-side">Drawing side</option><option value="drawing-top">Drawing top</option>
       </select></div>
-    <div class="row check"><input type="checkbox" id="showFirebrick"><label for="showFirebrick" data-i18n="showFirebrick">Шамот</label></div>
-    <div class="row check"><input type="checkbox" id="showBaffle"><label for="showBaffle" data-i18n="showBaffle">Бафль</label></div>
-    <div class="row check"><input type="checkbox" id="showAirChannels"><label for="showAirChannels" data-i18n="showAirChannels">Повітряні канали</label></div>
-    <div class="row check"><input type="checkbox" id="showChimney"><label for="showChimney" data-i18n="showChimney">Димохід</label></div>
-    <div class="row check"><input type="checkbox" id="showFlow"><label for="showFlow" data-i18n="flowVisible">Показувати потоки</label></div>
-    <div class="row check"><input type="checkbox" id="showSection"><label for="showSection" data-i18n="sectionView">Переріз (розріз)</label></div>
-    <div class="row check"><input type="checkbox" id="showThermal"><label for="showThermal" data-i18n="thermalZones">Температурні зони</label></div>
-    <div class="row check"><input type="checkbox" id="showShields"><label for="showShields" data-i18n="showShields">Теплові екрани</label></div>
-    <div class="row check"><input type="checkbox" id="showGrid" checked><label for="showGrid" data-i18n="showGrid">Сітка / осі</label></div>
-    <div class="row check"><input type="checkbox" id="animateFlow"><label for="animateFlow" data-i18n="flowAnimated">Анімувати потоки</label></div>
-    <div class="row check"><input type="checkbox" id="aeroFlow"><label for="aeroFlow" data-i18n="flowAero">Аеродинаміка (рух повітря)</label></div>
+    <div class="row check"><input type="checkbox" id="showFirebrick" data-needs-3d><label for="showFirebrick" data-i18n="showFirebrick">Шамот</label></div>
+    <div class="row check"><input type="checkbox" id="showBaffle" data-needs-3d><label for="showBaffle" data-i18n="showBaffle">Бафль</label></div>
+    <div class="row check"><input type="checkbox" id="showAirChannels" data-needs-3d><label for="showAirChannels" data-i18n="showAirChannels">Повітряні канали</label></div>
+    <div class="row check"><input type="checkbox" id="showChimney" data-needs-3d><label for="showChimney" data-i18n="showChimney">Димохід</label></div>
+    <div class="row check"><input type="checkbox" id="showFlow" data-needs-3d><label for="showFlow" data-i18n="flowVisible">Показувати потоки</label></div>
+    <div class="row check"><input type="checkbox" id="showSection" data-needs-3d><label for="showSection" data-i18n="sectionView">Переріз (розріз)</label></div>
+    <div class="row check"><input type="checkbox" id="showThermal" data-needs-3d><label for="showThermal" data-i18n="thermalZones">Температурні зони</label></div>
+    <div class="row check"><input type="checkbox" id="showShields" data-needs-3d><label for="showShields" data-i18n="showShields">Теплові екрани</label></div>
+    <div class="row check"><input type="checkbox" id="showGrid" data-needs-3d checked><label for="showGrid" data-i18n="showGrid">Сітка / осі</label></div>
+    <div class="row check"><input type="checkbox" id="animateFlow" data-needs-3d><label for="animateFlow" data-i18n="flowAnimated">Анімувати потоки</label></div>
+    <div class="row check"><input type="checkbox" id="aeroFlow" data-needs-3d><label for="aeroFlow" data-i18n="flowAero">Аеродинаміка (рух повітря)</label></div>
     <div class="row"><label>Explode <output id="explodeDistanceCm-v"></output></label>
-      <input type="range" id="explodeDistanceCm" min="5" max="40" step="1"></div>
+      <input type="range" id="explodeDistanceCm" data-needs-3d min="5" max="40" step="1"></div>
   </div></details>
 
   <details open><summary data-i18n="secProduct">Модель / проєкт</summary><div class="body">
@@ -212,14 +226,14 @@
   </div></details>
 
   <details><summary data-i18n="secCam">Камера</summary><div class="body">
-    <div class="row"><label><span data-i18n="fov">FOV</span> <output id="cameraFov-v"></output></label><input type="range" id="cameraFov" min="35" max="85" step="1"></div>
-    <div class="row"><label><span data-i18n="dist">Дистанція</span> <output id="cameraDistance-v"></output></label><input type="range" id="cameraDistance" min="140" max="500" step="5"></div>
-    <div class="row"><label><span data-i18n="focusY">Фокус Y</span> <output id="cameraTargetYCm-v"></output></label><input type="range" id="cameraTargetYCm" min="20" max="180" step="1"></div>
+    <div class="row"><label><span data-i18n="fov">FOV</span> <output id="cameraFov-v"></output></label><input type="range" id="cameraFov" data-needs-3d min="35" max="85" step="1"></div>
+    <div class="row"><label><span data-i18n="dist">Дистанція</span> <output id="cameraDistance-v"></output></label><input type="range" id="cameraDistance" data-needs-3d min="140" max="500" step="5"></div>
+    <div class="row"><label><span data-i18n="focusY">Фокус Y</span> <output id="cameraTargetYCm-v"></output></label><input type="range" id="cameraTargetYCm" data-needs-3d min="20" max="180" step="1"></div>
   </div></details>
 
   <div class="btns">
-    <button id="toggleDoor" data-i18n="openDoor">Відкрити дверця</button>
-    <button id="toggleExplode" class="ghost">Explode</button>
+    <button id="toggleDoor" data-needs-3d data-i18n="openDoor">Відкрити дверця</button>
+    <button id="toggleExplode" data-needs-3d class="ghost">Explode</button>
     <button id="resetConfig" class="ghost" data-i18n="reset">Скинути</button>
   </div>
   <div class="btns"><button id="printPdf" class="ghost" data-i18n="printPdf">Друк / PDF</button></div>
@@ -248,6 +262,16 @@
   <button id="closeTour" data-i18n="tourClose">Зрозуміло</button>
 </div></div>
 
-<script type="module" src="./js/app.js"></script>
+<script>
+// Завантаження модулів (three з CDN, SRI) може впасти: без цього сторінка лишається німою.
+function bootFailed() {
+  var uk = /^uk/i.test(navigator.language || '');
+  var el = document.createElement('div'); el.className = 'notice error';
+  el.textContent = uk ? 'Не вдалося завантажити застосунок (немає мережі, CDN недоступний або перевірка цілісності не пройшла). Перевірте з’єднання й оновіть сторінку.'
+    : 'The app failed to load (offline, CDN unreachable or the integrity check failed). Check your connection and reload.';
+  var box = document.getElementById('notices'); if (box) box.appendChild(el);
+}
+</script>
+<script type="module" src="./js/app.js" onerror="bootFailed()"></script>
 </body>
 </html>

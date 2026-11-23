@@ -2,9 +2,10 @@
 // Ідея: кожен тест дає відношення measured/predicted. Ми рахуємо глобальний
 // масштаб і поправку на режим, але з демпфуванням (shrinkage), щоб не
 // перенавчитися на малій вибірці. Це чесніше, ніж точне підганяння під 3 точки.
-import { PhysicsModel } from './physics-model.js';
+import { PhysicsModel, MODEL_VERSION } from './physics-model.js';
+import { OPERATION_MODES } from './config.js';
 
-const MODES = ['start-up', 'low', 'medium', 'high', 'overnight'];
+const MODES = OPERATION_MODES;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const round = (v, d = 4) => Math.round(v * 10 ** d) / 10 ** d;
 const mean = (arr) => arr.reduce((s, x) => s + x, 0) / arr.length;
@@ -14,7 +15,13 @@ const recomputeUncal = (cfg) => PhysicsModel.evaluate({
 }).metrics.heatOutputKw;
 
 export function emptyCalibration() {
-  return { enabled: false, damping: 0.75, globalScale: 1, modeScale: {}, samples: 0, updated: null };
+  return { enabled: false, damping: 0.75, globalScale: 1, modeScale: {}, samples: 0, updated: null, modelVersion: null };
+}
+
+// Чи калібрування зроблене проти ПОТОЧНОЇ версії моделі. Без версії (збережене до
+// версіювання) або з іншою - застаріле: масштаб = виміряне/прогноз старої моделі.
+export function isCalibrationCurrent(cal) {
+  return !!cal && cal.modelVersion === MODEL_VERSION;
 }
 
 // entries: [{ mode, predictedKw, measuredKw }, ...]
@@ -50,6 +57,7 @@ export function calibrateFromLog(entries, options = {}) {
     modeScale,
     samples: all.length,
     updated: new Date().toISOString(),
+    modelVersion: MODEL_VERSION,
   };
 }
 

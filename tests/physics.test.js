@@ -1,9 +1,11 @@
 // Швидкі тести PhysicsModel v5 — запуск: node tests/physics.test.js
 import { readFileSync } from 'node:fs';
-import { PhysicsModel, optimizeConfig, compareOutlets, fitAirToPhi, pickBaffleCandidate, SCORE_INDIFFERENCE } from '../js/physics-model.js';
-import { defaultConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, deepMerge, encodeConfig, decodeConfig, doorOpening, DOOR_OVERLAP_CM, MODEL_PRESETS, rearOutletLayout, bottomIntakeGeometry, bottomIntakeCollisions, legFootprints, secondaryHolePattern, SECONDARY_AREA_PER_LITER_CM2, INTAKE_MIN_STOP_PCT, SECONDARY_DRILLS_CM } from '../js/config.js';
+import { PhysicsModel, optimizeConfig, compareOutlets, fitAirToPhi, pickBaffleCandidate, SCORE_INDIFFERENCE, MODEL_VERSION } from '../js/physics-model.js';
+import { parseConfigText, parseShareValue, applyImported } from '../js/sanitize.js';
+import { bootState } from '../js/persist.js';
+import { defaultConfig, STORAGE_KEY, SCHEMA_VERSION, OPERATION_MODES, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, deepMerge, encodeConfig, decodeConfig, doorOpening, DOOR_OVERLAP_CM, MODEL_PRESETS, rearOutletLayout, bottomIntakeGeometry, bottomIntakeCollisions, legFootprints, secondaryHolePattern, SECONDARY_AREA_PER_LITER_CM2, INTAKE_MIN_STOP_PCT, SECONDARY_DRILLS_CM } from '../js/config.js';
 import { STR, WARN_TXT, WARN_ARG, VALIDATION_TXT, OUTLET_TXT, PROD_TXT } from '../js/i18n.js';
-import { calibrateFromLog, evaluateCalibration, detectJournalDesync, refreshLogPredictions, mergeCalibration, emptyCalibration, configSnapshot } from '../js/calibration.js';
+import { calibrateFromLog, isCalibrationCurrent, evaluateCalibration, detectJournalDesync, refreshLogPredictions, mergeCalibration, emptyCalibration, configSnapshot } from '../js/calibration.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF, bomGeometry, buildWeldPlan, buildFitPlan } from '../js/bom.js';
 import { steelStrain, stainlessStrain, fireclayStrain, filletA } from '../js/production.js';
 import { designInternals } from '../js/autodesign.js';
@@ -462,12 +464,17 @@ for (const p of Object.keys(PURPOSES)) ok(PURPOSES[p].kwPerM3 > 0 && PURPOSES[p]
   const c = designInternals(normalizeConfig(clone(defaultConfig)));
   applyModePreset(c, PURPOSES.workshop.mode); designInternals(c);
   const target = requiredPowerKw('workshop', 30);
-  const t0 = Date.now();
-  const best = sizeStoveForPower(target, c);
-  const ms = Date.now() - t0;
+  // Детермінована «швидкість»: рахуємо виклики PhysicsModel.evaluate, а не мілісекунди
+  // (годинник на завантаженій машині робив тест флакі). Час міряє `npm run bench`.
+  const origEvaluate = PhysicsModel.evaluate;
+  let evalCalls = 0;
+  PhysicsModel.evaluate = function (...args) { evalCalls++; return origEvaluate.apply(this, args); };
+  let best;
+  try { best = sizeStoveForPower(target, c); } finally { PhysicsModel.evaluate = origEvaluate; }
   const ratio = best.kw / target;
   ok(ratio >= 0.8 && ratio <= 1.2, 'workshop 30m3 room-fit within +-20%', JSON.stringify({ target, got: best.kw, ratio }));
-  ok(ms < 3000, 'room-fit click stays reasonably fast', JSON.stringify({ ms }));
+  // Зараз ~7300 викликів; межа з запасом ловить регрес «потроєний скан», не залежить від CPU.
+  ok(evalCalls > 0 && evalCalls < 12000, 'room-fit click does a bounded amount of work', JSON.stringify({ evalCalls }));
 }
 
 // 27. Minor #14: normalizeConfig не дає NaN на нечислових значеннях
@@ -2387,7 +2394,7 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
   // (к) Підпис Φ у UI: статус порівнюється з тим самим округленням (2 знаки), що й напис
   // (раніше Φ 0.504 показувало «Φ = 0.50» поруч із «Φ > 0.5»).
   const appSrc = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
-  ok(/const phiShown = \+phi\.toFixed\(2\)/.test(appSrc) && /inBand = phiShown >= 0\.4 && phiShown <= 0\.5/.test(appSrc) && /else if \(phiShown > 0\.5\)/.test(appSrc),
+  ok(/const phiShown = \+phi\.toFixed\(2\)/.test(appSrc) && /inBand = phiShown >= 0\.4 && phiShown <= 0\.5/.test(appSrc) && /phiShown > 0\.5 \? 'phiRich'/.test(appSrc),
     'the Φ gauge status uses the same 2-digit rounding as its label');
 }
 
@@ -2407,6 +2414,332 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
   ok(m1.level === 'warn' && m1.exit >= 100 && m1.exit < 150, 'WS-1 medium (exit 100…150 °C): CREOSOTE_RISK is a warn, not danger', JSON.stringify(m1));
   ok(o1.level === 'danger' && o1.exit < 100, 'WS-1 overnight (exit < 100 °C): CREOSOTE_RISK stays danger', JSON.stringify(o1));
   ok(m6.level === null && m6.exit >= 150, 'WS-6 medium: no CREOSOTE_RISK', JSON.stringify(m6));
+}
+
+// 77. Безпека даних: недовірений JSON (share-лінк, файл, localStorage) проходить
+// sanitize -> merge -> normalize без винятків, без підміни прототипів, зі скінченним
+// результатом; чуже калібрування не застосовується; калібрування іншої версії моделі
+// вимкнене; збережений конфіг без версій завантажується. Часу годинником не міряємо
+// (AGENTS.md): «обмежений час» тут = обмежені входи (ліміти LIMITS відхиляють величезне
+// ДО парсингу/обходу, що видно з reason).
+{
+  const hostileTexts = {
+    nullSections: JSON.stringify({ dimensions: null, materials: null, chimney: null, baffle: null, door: null, calibration: null, colors: null }),
+    numbersInObjectSlots: JSON.stringify({ dimensions: 5, materials: 'x', chimney: true, combustion: 7, thermal: [1, 2], testBurn: 'abc', room: 1e9 }),
+    arrays: JSON.stringify({ dimensions: [70, 55], chimney: { diameterCm: [15], heightCm: {} }, operation: { mode: ['medium'] } }),
+    protoDirect: '{"__proto__":{"polluted":1},"dimensions":{"widthCm":50,"__proto__":{"polluted2":1}},"constructor":{"prototype":{"polluted3":1}}}',
+    ctorPath: JSON.stringify({ constructor: { prototype: { polluted4: 1 } }, prototype: { x: 1 }, dimensions: { constructor: 'x', widthCm: 60 } }),
+    huge1e9: JSON.stringify({ dimensions: { widthCm: 1e9, depthCm: -1e9, heightCm: 1e308 }, chimney: { diameterCm: 1e9, totalHeightM: -1e9, bends: 1e9 } }),
+    stringsInNumbers: JSON.stringify({ dimensions: { widthCm: '70', depthCm: 'abc', heightCm: '' }, chimney: { outlet: 'x'.repeat(1000) } }),
+    longString: JSON.stringify({ chimney: { outlet: 'a'.repeat(2 * 1024 * 1024) } }),
+    hugeArray: JSON.stringify({ dimensions: { widthCm: 60 }, junk: new Array(300000).fill(1) }),
+    deep5000: '{"dimensions":' + '['.repeat(5000) + ']'.repeat(5000) + '}',
+    deepObj5000: '{"a":'.repeat(5000) + '1' + '}'.repeat(5000),
+    xssModeScale: JSON.stringify({ dimensions: { widthCm: 60 }, calibration: { enabled: true, globalScale: 1.5, samples: 3, modeScale: { '<img src=x onerror=alert(1)>': 1.1, medium: 1.1 } } }),
+    notStoveObject: JSON.stringify({ name: 'x', items: [1, 2, 3] }),
+    topArray: '[1,2,3]', topNull: 'null', topNumber: '42', topString: '"abc"',
+  };
+  const allFinite = (o) => Object.values(o).every((v) => (v !== null && typeof v === 'object') ? allFinite(v) : (typeof v !== 'number' || Number.isFinite(v)));
+  const hostileBad = [];
+  const outcomes = {};
+  for (const [name, text] of Object.entries(hostileTexts)) {
+    try {
+      const r = parseConfigText(text, { calibration: 'drop' });
+      outcomes[name] = r.ok ? 'ok' : r.reason;
+      if (r.ok) {
+        const c = applyImported(normalizeConfig(clone(defaultConfig)), r.patch);
+        if (!allFinite(c)) hostileBad.push(`${name}:nonFinite`);
+        if (Object.getPrototypeOf(c) !== Object.prototype || Object.getPrototypeOf(c.dimensions) !== Object.prototype) hostileBad.push(`${name}:proto`);
+        if (!PhysicsModel.evaluate(c).metrics || !allFinite(PhysicsModel.evaluate(c).metrics)) hostileBad.push(`${name}:metrics`);
+        if (c.calibration.enabled) hostileBad.push(`${name}:calibrationApplied`);
+      }
+      // той самий сирий JSON напряму в normalizeConfig (шлях без sanitize, напр. старі збережені дані)
+      let raw; try { raw = JSON.parse(text); } catch { raw = null; }
+      const n = normalizeConfig(deepMerge(clone(defaultConfig), raw));
+      if (!allFinite(n)) hostileBad.push(`${name}:rawNonFinite`);
+      if (typeof raw === 'object' && raw !== null) normalizeConfig(raw); // сирий об'єкт: лише «не кидає»
+    } catch (e) { hostileBad.push(`${name}:threw ${e.message}`); }
+  }
+  ok(hostileBad.length === 0, 'hostile payloads (null/number/string sections, arrays, __proto__, constructor, 1e9, 2 MB string, huge array, 5000-deep, XSS keys): sanitize+normalize never throw, stay finite, keep prototypes, never enable calibration', JSON.stringify({ hostileBad, outcomes }));
+  ok(Object.keys(Object.prototype).length === 0 && ({}).polluted === undefined && ({}).polluted2 === undefined && ({}).polluted3 === undefined && ({}).polluted4 === undefined, 'Object.prototype is untouched after all hostile payloads');
+  ok(outcomes.longString === 'tooLarge' && outcomes.hugeArray === 'tooLarge', 'oversized payloads (> 200 KB) are rejected by size before parsing/walking', JSON.stringify(outcomes));
+  ok(outcomes.deep5000 === 'tooComplex' && outcomes.deepObj5000 === 'tooComplex', '5000-deep nesting is rejected as too complex (no recursion)', JSON.stringify(outcomes));
+  ok(['notStoveObject', 'topArray', 'topNull', 'topNumber', 'topString', 'nullSections', 'numbersInObjectSlots', 'arrays'].every((k) => outcomes[k] === 'notStove'), 'JSON with no recognisable stove field is rejected as notStove (design stays, nothing imported)', JSON.stringify(outcomes));
+  ok(parseConfigText('{ not json', {}).reason === 'parse' && parseConfigText('', {}).reason === 'parse', 'malformed JSON is reported as a parse error');
+  ok(outcomes.protoDirect === 'ok' && outcomes.huge1e9 === 'ok', 'partially valid payloads still import their valid part', JSON.stringify(outcomes));
+
+  // 1e9 -> клемп normalizeConfig; рядки в числових слотах відкинуті санітайзером
+  const big = applyImported(null, parseConfigText(hostileTexts.huge1e9).patch);
+  ok(big.dimensions.widthCm === 140 && big.dimensions.depthCm === 30 && big.chimney.totalHeightM === 2 && big.chimney.bends === 4, 'extreme numbers are clamped by normalizeConfig bounds', JSON.stringify([big.dimensions, big.chimney.totalHeightM, big.chimney.bends]));
+  const strs = parseConfigText(hostileTexts.stringsInNumbers);
+  ok(strs.ok === false && strs.reason === 'notStove', 'numeric strings / over-long strings are not accepted into number/enum slots', JSON.stringify(strs));
+
+  // DOM-XSS: ключі modeScale — лише відомі режими, і в нормалізації теж
+  const xssRaw = JSON.parse(hostileTexts.xssModeScale);
+  const xssNorm = normalizeConfig(deepMerge(clone(defaultConfig), xssRaw));
+  ok(Object.keys(xssNorm.calibration.modeScale).every((k) => OPERATION_MODES.includes(k)) && !JSON.stringify(xssNorm).includes('<img'), 'normalizeConfig keeps only known modes as calibration.modeScale keys (no markup can reach innerHTML)', JSON.stringify(xssNorm.calibration.modeScale));
+  const xssStore = parseConfigText(hostileTexts.xssModeScale, { calibration: 'keep' });
+  ok(xssStore.ok && !JSON.stringify(xssStore.patch).includes('<img'), 'stored-config sanitizer also drops unknown modeScale keys');
+  const xssShare = parseShareValue(btoa(hostileTexts.xssModeScale).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
+  ok(xssShare.ok && xssShare.droppedCalibration === true && !('calibration' in xssShare.patch), 'a shared link that carries calibration: it is dropped from the patch and reported', JSON.stringify(xssShare.patch));
+
+  // deepMerge не міняє прототип
+  const dm = deepMerge({ a: 1 }, JSON.parse('{"__proto__":{"evil":1},"b":{"__proto__":{"evil2":1}},"constructor":5}'));
+  ok(Object.getPrototypeOf(dm) === Object.prototype && dm.evil === undefined && dm.b.evil2 === undefined && dm.constructor === Object && ({}).evil === undefined, 'deepMerge ignores __proto__/constructor keys: no prototype swap, no pollution');
+  ok(JSON.stringify(deepMerge({ x: { y: 1 } }, 'abc')) === '{"x":{"y":1}}' && JSON.stringify(deepMerge({ x: 1 }, [9, 9])) === '{"x":1}' && JSON.stringify(deepMerge({ s: 'ab' }, { s: { t: 1 } })) === '{"s":{"t":1}}', 'deepMerge: non-object patches change nothing; a string base is never spread into indices');
+
+  // normalizeConfig сам по собі стійкий до null / не-об'єктів
+  const weird = [null, undefined, 5, 'x', [], { dimensions: null, door: 3, combustion: 'x' }, { combustion: { tertiary: null, catalyst: 5 }, thermal: [] }];
+  const weirdBad = weird.filter((w) => { try { const n = normalizeConfig(w); return !allFinite(n); } catch { return true; } });
+  ok(weirdBad.length === 0, 'normalizeConfig accepts null / number / string / array / null sections without throwing and yields finite defaults', JSON.stringify(weirdBad));
+  ok(normalizeConfig({ colors: { steel: 'url(javascript:1)', floor: '#12345' } }).colors.steel === defaultConfig.colors.steel, 'colors that are not #rrggbb fall back to defaults');
+
+  // Share round-trip без калібрування автора
+  const author = normalizeConfig(clone(defaultConfig));
+  author.dimensions.widthCm = 64; author.chimney.outlet = 'rear'; author.door.hingeSide = 'right';
+  author.calibration = { enabled: true, damping: 0.75, globalScale: 1.5, modeScale: { medium: 1.1 }, samples: 4, updated: 'x', excludeStartUp: true, modelVersion: MODEL_VERSION };
+  const decoded = decodeConfig(encodeConfig(author));
+  ok(decoded && !('calibration' in decoded), 'encodeConfig no longer carries the author\'s calibration');
+  const recvCal = { ...emptyCalibration(), enabled: false };
+  const recipient = normalizeConfig(clone(defaultConfig)); recipient.calibration = recvCal;
+  const rt = parseShareValue(encodeConfig(author));
+  const received = rt.ok ? applyImported(recipient, rt.patch) : null;
+  ok(rt.ok && rt.droppedCalibration === false && received.dimensions.widthCm === 64 && received.chimney.outlet === 'rear' && received.door.hingeSide === 'right', 'share round-trip preserves the geometry', JSON.stringify(rt));
+  ok(received.calibration.enabled === false && received.calibration.globalScale === 1, 'received design does not inherit the author\'s calibration');
+  const oldStyle = parseShareValue(btoa(JSON.stringify(author)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
+  const oldRecv = applyImported(recipient, oldStyle.patch);
+  const kwOf = (cfg) => PhysicsModel.evaluate(cfg).metrics.heatOutputKw;
+  ok(oldStyle.ok && oldStyle.droppedCalibration === true && oldRecv.calibration.enabled === false, 'an OLD link with enabled calibration is reported as ignored and not applied', JSON.stringify({ dropped: oldStyle.droppedCalibration, cal: oldRecv.calibration }));
+  const sameGeom = clone(oldRecv); sameGeom.calibration = { ...oldRecv.calibration, enabled: false };
+  ok(kwOf(oldRecv) === kwOf(sameGeom) && kwOf({ ...oldRecv, calibration: author.calibration }) > kwOf(oldRecv) * 1.3, 'the power of a received design is NOT multiplied by the author\'s ×1.5', JSON.stringify({ recv: kwOf(oldRecv), withAuthorCal: kwOf({ ...oldRecv, calibration: author.calibration }) }));
+  ok(received.calibration !== recipient.calibration && JSON.stringify(received.calibration) === JSON.stringify(recipient.calibration), 'recipient keeps their own calibration (a copy, not an alias)');
+
+  // Версії: калібрування записує modelVersion; чужа версія / без версії - не застосовується
+  const calNew = calibrateFromLog([{ mode: 'medium', predictedKw: 5, measuredKw: 4 }]);
+  ok(calNew.modelVersion === MODEL_VERSION && MODEL_VERSION === 6 && isCalibrationCurrent(calNew) && !isCalibrationCurrent({ ...calNew, modelVersion: 5 }) && !isCalibrationCurrent({ ...calNew, modelVersion: null }), 'calibrateFromLog stamps MODEL_VERSION (6); other / missing version is not current');
+  class FakeStorage {
+    constructor(init = {}) { this.m = new Map(Object.entries(init)); this.writes = 0; }
+    getItem(k) { return this.m.has(k) ? this.m.get(k) : null; }
+    setItem(k, v) { this.writes++; this.m.set(k, String(v)); }
+    removeItem(k) { this.m.delete(k); }
+  }
+  const stored = (mv) => { const c = normalizeConfig(clone(defaultConfig)); c.calibration = { enabled: true, damping: 0.75, globalScale: 1.4, modeScale: { medium: 1.05 }, samples: 3, updated: '2026-01-01', excludeStartUp: true, modelVersion: mv }; return JSON.stringify(c); };
+  const sOld = new FakeStorage({ [STORAGE_KEY]: stored(5) });
+  const bOld = bootState({ hash: '', storage: sOld });
+  ok(bOld.config.calibration.enabled === false && bOld.notices.includes('calStaleNotice') && JSON.parse(sOld.getItem(STORAGE_KEY)).calibration.enabled === false && bOld.config.calibration.globalScale === 1.4, 'calibration made against model 5 is NOT applied on boot, notice raised once, disabled state persisted, record kept for re-calibration', JSON.stringify(bOld.notices));
+  const bOld2 = bootState({ hash: '', storage: sOld });
+  ok(!bOld2.notices.includes('calStaleNotice'), 'the stale-calibration notice is one-time (second boot is quiet)');
+  const bNone = bootState({ hash: '', storage: new FakeStorage({ [STORAGE_KEY]: stored(null) }) });
+  ok(bNone.config.calibration.enabled === false && bNone.notices.includes('calStaleNotice'), 'unversioned (pre-versioning) enabled calibration is treated as stale');
+  const bCur = bootState({ hash: '', storage: new FakeStorage({ [STORAGE_KEY]: stored(MODEL_VERSION) }) });
+  ok(bCur.config.calibration.enabled === true && bCur.config.calibration.globalScale === 1.4 && bCur.notices.length === 0, 'calibration of the current model version stays enabled');
+
+  // Існуючий користувач: збережений конфіг без schemaVersion / calibration.modelVersion
+  const legacyStored = clone(defaultConfig); legacyStored.dimensions.widthCm = 66;
+  delete legacyStored.calibration.modelVersion;
+  const bLegacy = bootState({ hash: '', storage: new FakeStorage({ [STORAGE_KEY]: JSON.stringify(legacyStored) }) });
+  ok(bLegacy.savedDesign === true && bLegacy.config.dimensions.widthCm === 66 && bLegacy.config.schemaVersion === SCHEMA_VERSION && bLegacy.notices.length === 0, 'an unversioned stored config loads without error, keeps the design and gets schemaVersion', JSON.stringify(bLegacy.notices));
+  const bFuture = bootState({ hash: '', storage: new FakeStorage({ [STORAGE_KEY]: JSON.stringify({ ...legacyStored, schemaVersion: 99, brandNew: { x: 1 } }) }) });
+  ok(bFuture.config.dimensions.widthCm === 66 && !('brandNew' in bFuture.config) && bFuture.config.schemaVersion === SCHEMA_VERSION, 'a stored config from a NEWER schema is read by the known shape, unknown keys ignored');
+
+  // Пошкоджене сховище / лінк: не падаємо, видаляємо ключ, повідомляємо
+  for (const bad of ['{ broken', '[]', '"x"', 'null', '{"dimensions":5}', JSON.stringify({ chimney: { outlet: 'a'.repeat(3e5) } })]) {
+    const st = new FakeStorage({ [STORAGE_KEY]: bad });
+    const b = bootState({ hash: '', storage: st });
+    ok(b.config.dimensions.widthCm >= 30 && b.notices.includes('bootCorrupt') && st.getItem(STORAGE_KEY) === null && b.savedDesign === false, `corrupt stored value ${bad.slice(0, 24)} falls back to defaults, key removed, notice raised`);
+  }
+  const stGood = new FakeStorage({ [STORAGE_KEY]: JSON.stringify(legacyStored) });
+  const bBadLink = bootState({ hash: '#config=' + btoa('{"a":1}'), storage: stGood });
+  ok(bBadLink.config.dimensions.widthCm === 66 && bBadLink.notices.includes('importErr_notStove') && bBadLink.clearHash === true && stGood.writes === 0, 'a non-stove share link keeps the current design, shows a message, clears the hash and writes nothing to storage');
+  const bGarbage = bootState({ hash: '#config=!!!not-base64!!!', storage: stGood });
+  ok(bGarbage.notices.includes('shareErr_parse') && !bGarbage.notices.includes('importErr_parse') && bGarbage.clearHash && bGarbage.config.dimensions.widthCm === 66, 'an undecodable link reports a parse error and keeps the design');
+  const bHuge = bootState({ hash: '#config=' + 'A'.repeat(300000), storage: stGood });
+  ok(bHuge.notices.includes('importErr_tooLarge') && bHuge.clearHash, 'an oversized link is rejected as too large');
+  const bOk = bootState({ hash: '#config=' + encodeConfig(author), storage: new FakeStorage() });
+  ok(bOk.config.dimensions.widthCm === 64 && bOk.savedDesign === true && bOk.clearHash && bOk.config.calibration.enabled === false && bOk.notices.length === 0, 'a valid new-style link loads the design, no calibration, no noise');
+  // Відкритий лінк зберігається одразу (F5 його не губить), попередній проєкт віддається для «Скасувати»
+  const stPrev = new FakeStorage({ [STORAGE_KEY]: JSON.stringify(legacyStored) });
+  const bSaved = bootState({ hash: '#config=' + encodeConfig(author), storage: stPrev });
+  const afterReload = bootState({ hash: '', storage: stPrev });
+  ok(bSaved.previous && bSaved.previous.dimensions.widthCm === 66 && bSaved.config.dimensions.widthCm === 64 && afterReload.config.dimensions.widthCm === 64 && afterReload.notices.length === 0, 'an opened share link is saved at once (reload keeps it) and the previous project is returned for Undo', String(afterReload.config.dimensions.widthCm));
+  ok(bBadLink.previous === null && bGarbage.previous === null && bootState({ hash: '', storage: stPrev }).previous === null, 'previous is null when no link was opened');
+  // Пошкоджений проєкт: сирий текст зберігається в резервному ключі
+  const stBad = new FakeStorage({ [STORAGE_KEY]: '{"dimensions": [1,2' });
+  bootState({ hash: '', storage: stBad });
+  ok(stBad.getItem(STORAGE_KEY) === null && stBad.getItem(STORAGE_KEY + '.corrupt') === '{"dimensions": [1,2', 'a corrupt stored project is removed but its raw text is kept under <key>.corrupt');
+  const bOldLink = bootState({ hash: '#config=' + btoa(JSON.stringify(author)), storage: new FakeStorage() });
+  ok(bOldLink.notices.includes('calibrationIgnored') && bOldLink.config.calibration.enabled === false, 'an old-style link with calibration tells the user once that it was ignored');
+  const bNoStore = bootState({ hash: '', storage: null });
+  ok(bNoStore.config.dimensions.widthCm > 0 && bNoStore.notices.length === 0, 'boot works with no localStorage at all');
+
+  // Усі ключі повідомлень існують в обох мовах
+  const noticeKeys = ['calStale', 'calStaleNotice', 'calibrationIgnored', 'calibrationIgnoredFile', 'bootCorrupt', 'bootFailed', 'noticeClose', 'importErr_parse', 'importErr_notStove', 'importErr_tooLarge', 'importErr_tooComplex', 'shareErr_parse', 'shareOpened', 'exportLoadFailed'];
+  ok(noticeKeys.every((k) => STR.uk[k] && STR.en[k]), 'every new notice key exists in uk and en');
+  ok(!/[А-Яа-яІіЇїЄєҐґ]/.test(STR.en.importErr_notStove + STR.en.calStaleNotice + STR.en.bootCorrupt + STR.en.shareErr_parse + STR.en.shareOpened + STR.en.exportLoadFailed), 'English notices contain no Cyrillic');
+}
+
+// ---------- Фаза 1b: безпека UI (екранування, журнал, тости, WebGL, SRI) ----------
+{
+  const { esc, html, raw, setHtml, writeHtml, isSafeHtml } = await import('../js/html.js');
+  const { parseJournal, appendEntry, JOURNAL_MAX, csvField, csvDate } = await import('../js/journal.js');
+  const { createToaster } = await import('../js/toast.js');
+  const jsDir = new URL('../js/', import.meta.url);
+  const readJs = (name) => readFileSync(new URL(name, jsDir), 'utf8');
+
+  // --- esc / html`` / raw ---
+  const evil = `"><img src=x onerror="window.__xss=1"><script>window.__xss=2</script>'\`&`;
+  const escaped = esc(evil);
+  ok(!/[<>"'`]/.test(escaped) && escaped.includes('&lt;img') && escaped.includes('&amp;'), 'esc() removes every markup-significant character');
+  ok(esc(null) === '' && esc(undefined) === '' && esc(0) === '0' && esc(12.5) === '12.5', 'esc() is safe for null/undefined/numbers');
+  const frag = html`<li class="${evil}">${evil}</li>`;
+  ok(isSafeHtml(frag) && !String(frag).includes('<img') && !String(frag).includes('<script') && String(frag).startsWith('<li class="&quot;&gt;&lt;img') && String(frag).endsWith('</li>'), 'html`` escapes interpolations in both content and attribute position');
+  ok(String(html`<b>${html`<i>${'<x>'}</i>`}</b>`) === '<b><i>&lt;x&gt;</i></b>', 'nested html`` is not double-escaped, its own values are escaped');
+  ok(String(html`${[html`<i>${'a&b'}</i>`, '<s>']}`) === '<i>a&amp;b</i>&lt;s&gt;', 'arrays join: SafeHtml parts kept, plain strings escaped');
+  ok(String(html`${raw('<b>x</b>')}`) === '<b>x</b>' && String(html`${'<b>x</b>'}`) === '&lt;b&gt;x&lt;/b&gt;', 'raw() is the only way to keep markup');
+  const fakeEl = { innerHTML: '' };
+  setHtml(fakeEl, '<img src=x onerror=1>');
+  ok(fakeEl.innerHTML === '&lt;img src=x onerror=1&gt;', 'setHtml() with a plain string renders it as text, not markup');
+  setHtml(fakeEl, html`<b>${'<i>'}</b>`);
+  ok(fakeEl.innerHTML === '<b>&lt;i&gt;</b>', 'setHtml() with html`` keeps the template markup and escapes the data');
+  let written = '';
+  writeHtml({ write: (x) => { written += x; } }, '<script>1</script>');
+  ok(written === '&lt;script&gt;1&lt;/script&gt;', 'writeHtml() escapes plain strings too');
+
+  // --- журнал: толерантний розбір і не мовчазне обрізання ---
+  ok(parseJournal(null).length === 0 && parseJournal('{broken').length === 0 && parseJournal('{"a":1}').length === 0 && parseJournal('"x"').length === 0, 'parseJournal: junk (null, bad JSON, object, string) gives an empty journal instead of throwing');
+  ok(parseJournal('[1,"a",null,[2],{"mode":"low"}]').length === 1, 'parseJournal keeps only object entries');
+  const fullLog = Array.from({ length: JOURNAL_MAX }, (_, i) => ({ ts: i }));
+  const ap = appendEntry(fullLog, { ts: 999 });
+  ok(ap.log.length === JOURNAL_MAX && ap.dropped.length === 1 && ap.dropped[0].ts === 0 && ap.log[JOURNAL_MAX - 1].ts === 999 && ap.all.length === JOURNAL_MAX + 1, 'appendEntry on a full journal drops exactly the oldest entry and reports it (nothing is lost silently)');
+  const ap2 = appendEntry(fullLog.slice(0, 5), { ts: 1 });
+  ok(ap2.dropped.length === 0 && ap2.log.length === 6, 'appendEntry below the limit drops nothing');
+
+  // --- CSV: недовірені поля журналу ---
+  ok(csvField('a,b') === '"a,b"' && csvField('say "hi"') === '"say ""hi"""' && csvField('l1\nl2') === '"l1\nl2"' && csvField(null) === '' && csvField(12.5) === '12.5' && csvField(-3) === '-3', 'csvField quotes commas, quotes and newlines (RFC 4180) and leaves numbers alone');
+  ok(csvField('=HYPERLINK("x")') === `"'=HYPERLINK(""x"")"` && csvField('+1') === "'+1" && csvField('-1+2') === "'-1+2" && csvField('@SUM(A1)') === "'@SUM(A1)", 'csvField neutralises spreadsheet formulas (= + - @) with a leading apostrophe');
+  ok(csvDate(0) === '1970-01-01T00:00:00.000Z' && csvDate('x') === '' && csvDate(NaN) === '' && csvDate(1e20) === '' && csvDate(undefined) === '', 'csvDate returns "" for invalid timestamps instead of throwing RangeError');
+
+  // --- тости: таймер, заміна, дія, пауза (фейковий DOM і таймери, без годинника) ---
+  const mkEl = (tag) => ({
+    tag, children: [], listeners: {}, className: '', textContent: '', removed: false, focused: false,
+    appendChild(c) { this.children.push(c); return c; },
+    addEventListener(n, f) { this.listeners[n] = f; },
+    remove() { this.removed = true; },
+    focus() { this.focused = true; },
+    querySelector() { return this.children.find((c) => c.tag === 'button') || null; },
+  });
+  const rootEl = mkEl('div'); rootEl.appendChild = function (c) { this.children.push(c); return c; };
+  const timers = new Map(); let tid = 0;
+  const tst = createToaster(rootEl, { doc: { createElement: mkEl }, setT: (f, ms) => { timers.set(++tid, { f, ms }); return tid; }, clearT: (id) => timers.delete(id) });
+  const closes = [];
+  tst.show({ message: 'one', autoMs: 9000, onClose: (r) => closes.push('one:' + r), actions: [{ label: 'Undo' }] });
+  ok(tst.isOpen() && timers.size === 1 && [...timers.values()][0].ms === 9000, 'toast arms a single auto-dismiss timer of the requested length');
+  const first = rootEl.children[0];
+  first.listeners.mouseenter();
+  ok(timers.size === 0, 'hovering a toast pauses its timer (WCAG 2.2.1)');
+  first.listeners.mouseleave();
+  ok(timers.size === 1, 'leaving the toast re-arms the timer');
+  tst.show({ message: 'two', autoMs: 0, focusFirst: true, onClose: (r) => closes.push('two:' + r), actions: [{ label: 'No' }, { label: 'Yes', primary: true, onClick: () => closes.push('yes-clicked') }] });
+  ok(first.removed && closes.join() === 'one:replaced' && timers.size === 0, 'a new toast replaces the old one (reason "replaced") and a sticky toast (autoMs 0) arms no timer');
+  const second = rootEl.children[1];
+  ok(second.children[1].focused, 'confirm toast puts focus on its first (safe) button');
+  second.children[2].listeners.click();
+  ok(closes.join() === 'one:replaced,two:action,yes-clicked' && !tst.isOpen() && second.removed, 'clicking an action closes the toast first, then runs the action');
+  let langNow = 'uk';
+  tst.show({ message: () => 'msg-' + langNow, autoMs: 0, actions: [{ label: () => 'ok-' + langNow }] });
+  const tr = rootEl.children[rootEl.children.length - 1];
+  langNow = 'en'; tst.retranslate();
+  ok(tr.children[0].textContent === 'msg-en' && tr.children[1].textContent === 'ok-en', 'retranslate() re-evaluates message and button labels of the open toast');
+  tst.dismiss();
+  tst.show({ message: 'x', autoMs: 5, actions: [] });
+  [...timers.values()][0].f();
+  ok(!tst.isOpen(), 'the auto-dismiss timer closes the toast');
+  tst.show({ message: 'keep', autoMs: 0, actions: [{ label: 'CSV', keepOpen: true, onClick: () => closes.push('csv') }] });
+  rootEl.children[rootEl.children.length - 1].children[1].listeners.click();
+  ok(tst.isOpen() && closes.at(-1) === 'csv', 'keepOpen action (CSV export) leaves the toast on screen');
+
+  // --- статична перевірка: жодного небезпечного sink-а поза js/html.js ---
+  const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[\s;{}(])\/\/.*$/gm, '$1');
+  // Повертає список порушень у вихідному тексті (порожній = чисто).
+  function findUnsafeSinks(src, { allowRaw = [] } = {}) {
+    const code = stripComments(src);
+    const bad = [];
+    const rules = [
+      [/\.(inner|outer)HTML\s*\+?=(?!=)/, 'direct innerHTML/outerHTML assignment'],
+      [/insertAdjacentHTML\s*\(/, 'insertAdjacentHTML'],
+      [/\.write(ln)?\s*\(/, 'document.write'],
+      [/\beval\s*\(|new\s+Function\s*\(/, 'eval / new Function'],
+      [/setHtml\s*\(\s*[^,()]+,\s*[`'"]/, 'setHtml() given a raw string/template instead of html``'],
+      [/setHTMLUnsafe|parseHTMLUnsafe|createContextualFragment|\bsrcdoc\b|\bDOMParser\b/, 'other HTML-parsing sink'],
+      [/\[\s*['"`](inner|outer)/i, 'bracket access to innerHTML/outerHTML'],
+      [/\[\s*['"`][A-Za-z]*['"`]\s*\+/, 'computed property name built by concatenation'],
+    ];
+    for (const [re, label] of rules) if (re.test(code)) bad.push(label);
+    // raw() дозволений лише в конкретному РЯДКУ (весь рядок має збігтися з allow-list, а не
+    // лише ім'я змінної): те саме raw(li) деінде не проходить.
+    for (const m of code.matchAll(/\braw\(([^)]*)\)/g)) {
+      const ls = code.lastIndexOf('\n', m.index) + 1;
+      const le = code.indexOf('\n', m.index);
+      const line = code.slice(ls, le === -1 ? code.length : le).trim();
+      if (!allowRaw.some((re) => re.test(line))) bad.push('raw() outside allow-list: ' + m[0].slice(0, 40));
+    }
+    return bad;
+  }
+  // Самоперевірка сканера: він має ловити саме те, що було вразливістю.
+  ok(findUnsafeSinks('el.innerHTML = `<b>${x}</b>`;').length === 1, 'sink scanner flags an innerHTML template assignment');
+  ok(findUnsafeSinks('el.innerHTML += x').length === 1 && findUnsafeSinks('a.insertAdjacentHTML("beforeend", x)').length === 1 && findUnsafeSinks('w.document.write(x)').length === 1, 'sink scanner flags innerHTML+=, insertAdjacentHTML and document.write');
+  ok(findUnsafeSinks('setHtml(el, `<b>${x}</b>`)').length === 1 && findUnsafeSinks('setHtml(el, html`<b>${x}</b>`)').length === 0, 'sink scanner flags setHtml() with a plain template but accepts html``');
+  ok(findUnsafeSinks('const a = raw(user)').length === 1 && findUnsafeSinks('// el.innerHTML = x\nconst b = 1; /* document.write(x) */').length === 0, 'sink scanner flags unlisted raw() and ignores comments');
+  ok(findUnsafeSinks('ul["inner"+"HTML"] = x').length >= 1 && findUnsafeSinks("ul['innerHTML'] = x").length >= 1 && findUnsafeSinks('ul.setHTMLUnsafe(x)').length === 1 && findUnsafeSinks('el.srcdoc = x').length === 1 && findUnsafeSinks('new DOMParser()').length === 1, 'sink scanner flags bracket/concatenated innerHTML, setHTMLUnsafe, srcdoc and DOMParser');
+  const RAW_ALLOW = [
+    // TOUR: статичні константи i18n.js (весь рядок, не лише ім'я змінної)
+    /^if \(ol\) setHtml\(ol, html`\$\{TOUR\[lang\]\.map\(\(li\) => html`<li>\$\{raw\(li\)\}<\/li>`\)\}`\);$/,
+    // друк: статичний скрипт звіту (з знімком і без)
+    /^const printJs = dataUrl \? raw\(`<script>document\.getElementById\('repImg'\)[^`]*`\) : raw\('<script>window\.print\(\)<\\\/script>'\);$/,
+  ];
+  const jsFiles = ['app.js', 'autodesign.js', 'bom.js', 'calibration.js', 'config.js', 'exporters.js', 'journal.js', 'persist.js', 'physics-model.js', 'production.js', 'room.js', 'sanitize.js', 'stove-builder.js', 'toast.js', 'i18n.js'];
+  for (const f of jsFiles) {
+    const bad = findUnsafeSinks(readJs(f), { allowRaw: f === 'app.js' ? RAW_ALLOW : [] });
+    ok(bad.length === 0, `js/${f}: no unescaped HTML sinks`, bad.join('; '));
+  }
+  const htmlSrc = stripComments(readJs('html.js'));
+  ok((htmlSrc.match(/\.innerHTML\s*=/g) || []).length === 1 && (htmlSrc.match(/\.write\(/g) || []).length === 1, 'js/html.js is the ONLY place with an innerHTML assignment and a document.write (one each)');
+  // Нові модулі не мають ховатися від сканера: будь-який js/*.js має бути в списку.
+  const { readdirSync } = await import('node:fs');
+  const allJs = readdirSync(jsDir).filter((f) => f.endsWith('.js') && f !== 'html.js').sort();
+  ok(JSON.stringify(allJs) === JSON.stringify([...jsFiles].sort()), 'every js/*.js module is covered by the sink scanner (add new modules to the list)', allJs.filter((f) => !jsFiles.includes(f)).join(','));
+
+  // --- i18n: усі t('key') з app.js є в обох мовах; нові ключі без кирилиці в EN ---
+  const appSrc = readJs('app.js');
+  const usedKeys = new Set([...appSrc.matchAll(/\bt\('([A-Za-z0-9_]+)'\)/g)].map((m) => m[1]));
+  ['noticeClose', 'undoBtn', 'confirmCancel', 'csvBtn', 'confirmResetMsg', 'confirmResetYes', 'confirmClearLogMsg', 'confirmClearLogYes', 'undoReset', 'undoClearLog', 'undoImport', 'undoPreset', 'undoFitRoom', 'undoRedesign', 'undoCalReset', 'undoCalibrate', 'undoRestored', 'journalTruncated', 'webglUnavailable', 'webglDisabledReason', 'shareErr_parse', 'shareOpened', 'exportLoadFailed'].forEach((k) => usedKeys.add(k));
+  const missingKeys = [...usedKeys].filter((k) => !(STR.uk[k] && STR.en[k]));
+  ok(missingKeys.length === 0, 'every t(key) used in app.js (and the new UI keys) exists in both uk and en', missingKeys.join(','));
+  const newEn = ['undoBtn', 'confirmCancel', 'csvBtn', 'confirmResetMsg', 'confirmResetYes', 'confirmClearLogMsg', 'confirmClearLogYes', 'undoReset', 'undoClearLog', 'undoImport', 'undoPreset', 'undoFitRoom', 'undoRedesign', 'undoCalReset', 'undoCalibrate', 'undoRestored', 'journalTruncated', 'webglUnavailable', 'webglDisabledReason'].map((k) => STR.en[k]).join(' ');
+  ok(!/[А-Яа-яІіЇїЄєҐґ]/.test(newEn), 'new English UI strings contain no Cyrillic');
+  const rawLineRe = RAW_ALLOW[0];
+  ok(findUnsafeSinks('if (ol) setHtml(ol, html`${TOUR[lang].map((li) => html`<li>${raw(li)}</li>`)}`);', { allowRaw: [rawLineRe] }).length === 0 && findUnsafeSinks('setHtml(ul, html`<li>${raw(li)}</li>`);', { allowRaw: [rawLineRe] }).length === 1, 'raw(li) is allowed only on the TOUR line, the same variable name elsewhere is flagged');
+  ok(STR.uk.journalTruncated.includes('${max}') && STR.en.journalTruncated.includes('${max}'), 'journalTruncated carries the ${max} placeholder in both languages');
+
+  // --- index.html: SRI і 3D-елементи ---
+  const indexSrc = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const importmap = JSON.parse(indexSrc.match(/<script type="importmap">([\s\S]*?)<\/script>/)[1]);
+  const threeBase = importmap.imports['three/addons/'].replace('examples/jsm/', '');
+  ok(/three@\d+\.\d+\.\d+\//.test(threeBase) && importmap.imports.three.startsWith(threeBase), 'three is pinned to an exact version in the importmap (no @latest / ranges)');
+  const integ = importmap.integrity || {};
+  const needed = [importmap.imports.three, ...['controls/OrbitControls.js', 'exporters/GLTFExporter.js', 'exporters/STLExporter.js', 'utils/TextureUtils.js'].map((x) => importmap.imports['three/addons/'] + x)];
+  ok(needed.every((u) => /^sha384-[A-Za-z0-9+/]{64}$/.test(integ[u] || '')), 'importmap integrity has a sha384 for three.module.js and every examples/jsm module that is loaded', needed.filter((u) => !integ[u]).join(','));
+  // Усі three/addons/... імпорти з js/*.js мають хеш (щоб новий імпорт без SRI не пройшов).
+  const addonImports = new Set();
+  for (const f of jsFiles) for (const m of readJs(f).matchAll(/['"]three\/addons\/([^'"]+)['"]/g)) addonImports.add(importmap.imports['three/addons/'] + m[1]);
+  ok([...addonImports].every((u) => integ[u]), 'every three/addons module imported by js/*.js has an SRI hash', [...addonImports].filter((u) => !integ[u]).join(','));
+  const preloads = [...indexSrc.matchAll(/<link rel="modulepreload" href="([^"]+)" integrity="([^"]+)"/g)];
+  ok(preloads.length >= 2 && preloads.every((m) => integ[m[1]] === m[2]), 'modulepreload links carry the same hash as the importmap (fallback for browsers without importmap integrity)');
+  const needs3d = [...indexSrc.matchAll(/<[a-z]+[^>]*\bid="([A-Za-z0-9_]+)"[^>]*\bdata-needs-3d/g)].map((m) => m[1]);
+  ok(['viewMode', 'toggleDoor', 'toggleExplode', 'screenshot', 'exportGltf', 'exportStl', 'cameraFov', 'showSection'].every((id) => needs3d.includes(id)), '3D-only controls are marked data-needs-3d (disabled when WebGL is missing)');
+  ok(!['operationMode', 'exportBom', 'exportDrawing', 'exportDxf', 'shareConfig', 'langToggle', 'fitRoom', 'saveJson', 'resetConfig'].some((id) => needs3d.includes(id)), 'calculation/export/share controls are NOT disabled without WebGL');
+  ok(/id="toasts"[^>]*role="status"[^>]*aria-live="polite"/.test(indexSrc), 'toast container is an accessible live region (role=status, aria-live=polite)');
+  ok(/const renderer = createRenderer\(\)/.test(appSrc) && /try\s*\{\s*const r = new THREE\.WebGLRenderer/.test(appSrc), 'WebGLRenderer is created inside try/catch (no top-level throw)');
 }
 
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);process.exit(fails === 0 ? 0 : 1);

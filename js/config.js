@@ -227,7 +227,7 @@ export const defaultConfig = {
   // збільшена піч лишалась із крихітними дверцятами назавжди.
   door: { widthCm: 42, heightCm: 38, preferredWidthCm: 42, preferredHeightCm: 38, frameThicknessCm: 3, glassInsetCm: 2, openAngleDeg: 70, hingeSide: 'left', isOpen: false },
   camera: { fov: 50, distance: 270, targetY: 60 },
-  calibration: { enabled: false, damping: 0.75, globalScale: 1, modeScale: {}, samples: 0, updated: null, excludeStartUp: true },
+  calibration: { enabled: false, damping: 0.75, globalScale: 1, modeScale: {}, samples: 0, updated: null, excludeStartUp: true, modelVersion: null },
   room: { purpose: 'room', inputMode: 'volume', volumeM3: 60, areaM2: 30, ceilingM: 2.7 },
   colors: {
     steel: '#3a3d43', steelRoughness: 0.34, steelMetalness: 0.78,
@@ -236,11 +236,56 @@ export const defaultConfig = {
   },
 };
 
-export function deepMerge(base, patch) {
-  const out = Array.isArray(base) ? [...base] : { ...(base || {}) };
-  for (const k of Object.keys(patch || {})) {
+// Версія формату збереженого/експортованого конфігу. 1 = без поля (усе, що було до
+// цієї версії); 2 = додано schemaVersion і calibration.modelVersion. Завантажувач
+// (persist.js) читає й старі, і невідомі форми: усе, чого нема в схемі, відкидається.
+export const SCHEMA_VERSION = 2;
+
+// Усі режими роботи — єдине джерело (калібрування, санітизація modeScale).
+export const OPERATION_MODES = Object.keys(OPERATION_PRESETS);
+
+// Допустимі значення рядкових полів (шлях -> набір). normalizeConfig і sanitize.js
+// беруть їх звідси, щоб списки не розходились.
+export const CONFIG_ENUMS = {
+  'chimney.outlet': ['top', 'rear'],
+  'chimney.route': ['up', 'wall'],
+  'door.hingeSide': ['left', 'right'],
+  'operation.mode': OPERATION_MODES,
+  'testBurn.loadMode': ['auto', 'manual'],
+  'testBurn.woodSpecies': ['birch', 'oak', 'pine', 'spruce', 'alder'],
+  viewMode: ['3d', 'drawing-front', 'drawing-side', 'drawing-top'],
+  'room.purpose': ['sauna', 'room', 'workshop'],
+  'room.inputMode': ['volume', 'area'],
+};
+export const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+// Повна форма конфігу: defaultConfig + поля, які створює normalizeConfig, але яких
+// нема в defaultConfig (combustion, chimney.totalHeightM/bends). Типи беруться з
+// прикладних значень. Це «білий список» для sanitize.js.
+export const CONFIG_SCHEMA = {
+  ...defaultConfig,
+  chimney: { ...defaultConfig.chimney, totalHeightM: 5, bends: 0 },
+  combustion: {
+    washAsSecondary: true,
+    tertiary: { enabled: false, holeCount: 8, holeDiameterCm: 0.5 },
+    catalyst: { enabled: false, lightoffC: 260, areaCm2: 120 },
+  },
+};
+
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+// Ключі, якими JSON ззовні може підмінити прототип. Ніколи не копіюємо.
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+// Глибина злиття обмежена: легітимний конфіг має <=4 рівні, а патч ззовні недовірений.
+export function deepMerge(base, patch, depth = 0) {
+  const out = Array.isArray(base) ? [...base] : { ...(isObj(base) ? base : {}) };
+  // Патч не-об'єкт (число, рядок, масив, null) нічого не змінює: Object.keys("abc")
+  // раніше розсипав рядок на ключі 0,1,2.
+  if (!isObj(patch) || depth > 32) return out;
+  for (const k of Object.keys(patch)) {
+    if (FORBIDDEN_KEYS.has(k)) continue; // out['__proto__'] = ... міняло прототип результату
     const v = patch[k];
-    if (v && typeof v === 'object' && !Array.isArray(v)) out[k] = deepMerge(base?.[k] || {}, v);
+    if (isObj(v)) out[k] = deepMerge(base?.[k], v, depth + 1);
     else out[k] = v;
   }
   return out;
@@ -262,7 +307,21 @@ const PI_C = Math.PI;
 const round1 = (v) => Math.round(v * 10) / 10;
 const round2 = (v) => Math.round(v * 100) / 100;
 
+// Гарантує, що кожна секція зі схеми - звичайний об'єкт. `cfg.x ??= {}` не рятує,
+// коли x = null/число/рядок/масив (з share-лінка чи JSON): тоді `cfg.x.y` кидало
+// TypeError, і ініціалізація падала мовчки. Реальна причина - довіра до форми входу.
+function ensureShape(target, schema) {
+  for (const key of Object.keys(schema)) {
+    if (!isObj(schema[key])) continue;
+    if (!isObj(target[key])) target[key] = {};
+    ensureShape(target[key], schema[key]);
+  }
+}
+
 export function normalizeConfig(cfg) {
+  if (!isObj(cfg)) cfg = {};
+  ensureShape(cfg, CONFIG_SCHEMA);
+  cfg.schemaVersion = SCHEMA_VERSION;
   cfg.dimensions.widthCm = clamp(+cfg.dimensions.widthCm || 70, 30, 140);
   cfg.dimensions.depthCm = clamp(+cfg.dimensions.depthCm || 55, 30, 120);
   cfg.dimensions.heightCm = clamp(+cfg.dimensions.heightCm || 95, 40, 180);
@@ -282,8 +341,8 @@ export function normalizeConfig(cfg) {
   // Вихід труби: 'top' (крізь кришку) або 'rear' (комір у задній панелі).
   // Маршрут: 'up' (вертикаль над піччю крізь стелю) або 'wall' (у стінний
   // димохід позаду). Будь-яке інше/пошкоджене значення — безпечний дефолт.
-  cfg.chimney.outlet = cfg.chimney.outlet === 'rear' ? 'rear' : 'top';
-  cfg.chimney.route = cfg.chimney.route === 'wall' ? 'wall' : 'up';
+  cfg.chimney.outlet = CONFIG_ENUMS['chimney.outlet'].includes(cfg.chimney.outlet) ? cfg.chimney.outlet : 'top';
+  cfg.chimney.route = CONFIG_ENUMS['chimney.route'].includes(cfg.chimney.route) ? cfg.chimney.route : 'up';
   // Горизонтальний одностінний патрубок від печі до вертикалі. 15–150 см —
   // фізичні межі UI; норма (СНиП 41-01/ДБН, NFPA 211) радить ≤40 см, тому
   // довший патрубок дає попередження CONNECTOR_LONG, а не мовчазний клемп.
@@ -339,8 +398,8 @@ export function normalizeConfig(cfg) {
   cfg.explode.enabled = Boolean(cfg.explode.enabled);
   cfg.explode.distanceCm = clamp(+cfg.explode.distanceCm || 18, 5, 40);
 
-  if (!OPERATION_PRESETS[cfg.operation.mode]) cfg.operation.mode = 'medium';
-  if (!['3d', 'drawing-front', 'drawing-side', 'drawing-top'].includes(cfg.viewMode)) cfg.viewMode = '3d';
+  if (typeof cfg.operation.mode !== 'string' || !Object.hasOwn(OPERATION_PRESETS, cfg.operation.mode)) cfg.operation.mode = 'medium';
+  if (!CONFIG_ENUMS.viewMode.includes(cfg.viewMode)) cfg.viewMode = '3d';
   cfg.operation.secondaryAirPct = clamp(safeNum(cfg.operation.secondaryAirPct, 55), 0, 100);
   cfg.operation.flameIntensity = clamp(safeNum(cfg.operation.flameIntensity, 0.62), 0, 1);
 
@@ -364,7 +423,7 @@ export function normalizeConfig(cfg) {
   cfg.camera.fov = clamp(+cfg.camera.fov || 50, 35, 85);  cfg.camera.distance = clamp(+cfg.camera.distance || 270, 140, 500);
   cfg.camera.targetY = clamp(+cfg.camera.targetY || 60, 20, 180);
   cfg.testBurn.loadMode = cfg.testBurn.loadMode === 'manual' ? 'manual' : 'auto';
-  cfg.testBurn.woodSpecies = ['birch', 'oak', 'pine', 'spruce', 'alder'].includes(cfg.testBurn.woodSpecies) ? cfg.testBurn.woodSpecies : 'birch';
+  cfg.testBurn.woodSpecies = CONFIG_ENUMS['testBurn.woodSpecies'].includes(cfg.testBurn.woodSpecies) ? cfg.testBurn.woodSpecies : 'birch';
   cfg.testBurn.woodMoisturePct = clamp(+cfg.testBurn.woodMoisturePct || 15, 8, 35);
   cfg.testBurn.loadKg = clamp(+cfg.testBurn.loadKg || 8, 1, 30);
   cfg.testBurn.measuredBurnHours = clamp(+cfg.testBurn.measuredBurnHours || 7.5, 0.1, 30);
@@ -378,11 +437,26 @@ export function normalizeConfig(cfg) {
   cfg.calibration.enabled = Boolean(cfg.calibration.enabled);
   cfg.calibration.damping = clamp(safeNum(cfg.calibration.damping, 0.75), 0, 1);
   cfg.calibration.globalScale = clamp(+cfg.calibration.globalScale || 1, 0.5, 2);
-  cfg.calibration.modeScale = cfg.calibration.modeScale && typeof cfg.calibration.modeScale === 'object' ? cfg.calibration.modeScale : {};
-  cfg.calibration.samples = Math.max(0, Math.round(+cfg.calibration.samples || 0));
+  // modeScale: лише відомі режими й скінченні числа в межах +-20 % (як у calibrateFromLog).
+  // Довільні ключі потрапляли в innerHTML панелі калібрування (DOM-XSS через share-лінк).
+  const rawModeScale = isObj(cfg.calibration.modeScale) ? cfg.calibration.modeScale : {};
+  cfg.calibration.modeScale = {};
+  for (const m of OPERATION_MODES) {
+    const v = rawModeScale[m];
+    if (Object.hasOwn(rawModeScale, m) && typeof v === 'number' && Number.isFinite(v)) cfg.calibration.modeScale[m] = clamp(v, 0.8, 1.2);
+  }
+  cfg.calibration.samples = clamp(Math.round(+cfg.calibration.samples || 0), 0, 100000);
+  // Версія моделі, проти якої зроблено калібрування (null = невідомо: до версіювання).
+  const calModel = Math.round(+cfg.calibration.modelVersion);
+  cfg.calibration.modelVersion = calModel >= 1 && calModel <= 1e6 ? calModel : null;
+  cfg.calibration.updated = typeof cfg.calibration.updated === 'string' && cfg.calibration.updated.length <= 40 ? cfg.calibration.updated : null;
   cfg.calibration.excludeStartUp = cfg.calibration.excludeStartUp !== false;
-  cfg.room ??= {};
-  cfg.room.purpose = ['sauna', 'room', 'workshop'].includes(cfg.room.purpose) ? cfg.room.purpose : 'room';
+  // Кольори йдуть у THREE.Color/CSS: лише #rrggbb, інше - значення за замовчуванням.
+  for (const [k, def] of Object.entries(defaultConfig.colors)) {
+    if (typeof def === 'string') cfg.colors[k] = typeof cfg.colors[k] === 'string' && COLOR_RE.test(cfg.colors[k]) ? cfg.colors[k] : def;
+    else cfg.colors[k] = clamp(safeNum(cfg.colors[k], def), 0, 1);
+  }
+  cfg.room.purpose = CONFIG_ENUMS['room.purpose'].includes(cfg.room.purpose) ? cfg.room.purpose : 'room';
   cfg.room.inputMode = cfg.room.inputMode === 'area' ? 'area' : 'volume';
   cfg.room.volumeM3 = clamp(+cfg.room.volumeM3 || 60, 3, 1000);
   cfg.room.areaM2 = clamp(+cfg.room.areaM2 || 30, 2, 500);
@@ -658,26 +732,6 @@ export function bottomIntakeCollisions(cfg) {
   return issues;
 }
 
-// Чи є збережена конфігурація в localStorage. app.js розрізняє «перший запуск»
-// (треба повне автопроєктування) і «збережена/поділена геометрія» (бафль
-// користувача авторитетний, оптимізатор його не рухає).
-export function hasStoredConfig() {
-  for (const key of [STORAGE_KEY, ...LEGACY_KEYS]) {
-    try { if (localStorage.getItem(key)) return true; } catch { /* ignore */ }
-  }
-  return false;
-}
-
-export function loadConfig() {
-  for (const key of [STORAGE_KEY, ...LEGACY_KEYS]) {
-    try {
-      const raw = localStorage.getItem(key);
-      if (raw) return normalizeConfig(deepMerge(structuredClone(defaultConfig), JSON.parse(raw)));
-    } catch { /* ignore */ }
-  }
-  return normalizeConfig(structuredClone(defaultConfig));
-}
-
 export function saveConfig(cfg) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); } catch { /* ignore */ }
 }
@@ -787,21 +841,26 @@ export function validateConfig(cfg) {
   return { valid: errors.length === 0, errors, warnings };
 }
 
+// Посилання НЕ несе калібрування автора: воно множило потужність одержувача без
+// його відома. Калібрування - властивість журналу конкретної людини, а не печі.
 export function encodeConfig(cfg) {
-  const bytes = new TextEncoder().encode(JSON.stringify(cfg));
+  const { calibration: _calibration, ...shareable } = cfg || {};
+  const bytes = new TextEncoder().encode(JSON.stringify(shareable));
   let binary = '';
   bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+// base64url -> текст JSON. Кидає на некоректному вході (викликач ловить).
+export function decodeConfigText(value) {
+  const v = String(value);
+  const binary = atob(v.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - v.length % 4) % 4));
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
 export function decodeConfig(value) {
-  try {
-    const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4));
-    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-    return JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(decodeConfigText(value)); } catch { return null; }
 }
 
 export function applyModePreset(cfg, modeName) {

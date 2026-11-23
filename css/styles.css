@@ -103,3 +103,26 @@ button:active{transform:translateY(1px)}
 .hint{font-size:12px;opacity:.85;margin:4px 0}
 .hint.ok{color:#86efac}
 .hint.warn{color:#fcd34d}
+
+/* Неблокуючі повідомлення (помилка імпорту, відновлення зі збою, ігнороване калібрування) */
+/* Один фіксований стовпчик: тости над повідомленнями, не перекриваються (раніше два незалежні fixed). */
+#stack{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:35;display:flex;flex-direction:column;gap:8px;width:min(620px,calc(100vw - 24px));pointer-events:none}
+#notices{display:flex;flex-direction:column;gap:8px;pointer-events:none}
+#notices .notice{pointer-events:auto;display:flex;gap:10px;align-items:flex-start;background:#1b2230;border:1px solid #4f8cff;color:#e8ecf4;border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.4;box-shadow:0 6px 24px rgba(0,0,0,.45)}
+#notices .notice.error{border-color:#f87171}
+#notices .notice span{flex:1}
+#notices .notice button{flex:0 0 auto;padding:0 6px;min-width:32px;min-height:32px;line-height:1.2;font-size:18px}
+
+/* Тости: підтвердження небезпечних дій і «Скасувати» (js/toast.js). Вище за #notices. */
+#toasts{display:flex;flex-direction:column;gap:8px;pointer-events:none}
+#toasts .toast{pointer-events:auto;display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;background:#1b2230;border:1px solid #4f8cff;color:#e8ecf4;border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.4;box-shadow:0 6px 24px rgba(0,0,0,.45)}
+#toasts .toast.warn{border-color:#f59e0b}
+#toasts .toast-text{flex:1 1 260px}
+#toasts .toast-btn{flex:0 0 auto}
+#toasts .toast-btn.primary{background:#4f8cff;color:#fff;border-color:#4f8cff}
+
+/* Без WebGL: повідомлення замість полотна і вимкнені 3D-елементи керування. */
+#no-webgl{position:absolute;top:50%;left:calc(50% + 183px);transform:translate(-50%,-50%);max-width:min(520px,calc(100vw - 420px));padding:18px 20px;border:1px solid var(--warn);border-radius:12px;background:rgba(27,34,48,.94);color:var(--txt);font-size:14px;line-height:1.5;text-align:center}
+[data-needs-3d][disabled]{opacity:.45;cursor:not-allowed}
+/* Вузький екран: панель займає низ, тож повідомлення - угорі, над усім (z-index вище за панель). */
+@media (max-width:760px){#no-webgl{position:fixed;z-index:40;left:50%;top:64px;bottom:auto;transform:translateX(-50%);width:calc(100vw - 32px);max-width:none}}

@@ -12,6 +12,7 @@ npm run check     # lint + тести (обов'язково)
 npm run lint      # ESLint: no-undef (ловить невизначені змінні, як clamp())
 npm test          # node tests/physics.test.js — фізика, BOM, калібрування, автопроєкт
 npm run smoke     # опційний: headless-браузер (Playwright), інакше SKIPPED
+npm run bench     # опційний: вимірювання часу (tests/bench.mjs); у check часових перевірок немає
 ```
 
 ## Навіщо lint
@@ -34,6 +35,7 @@ SMOKE_URL=http://localhost:3000/ npm run smoke   # локально (npx serve .
 ## Правила змін
 
 - Не комітити без `npm run check`.
+- У тестах не міряти час годинником (флакі на завантаженій машині): рахувати операції, а час — у `tests/bench.mjs`.
 - Нові поля конфігу — додавати в `normalizeConfig` (безпечні межі, без NaN).
 - Нові ключі UI — перевіряти, що `t('key')` і `data-i18n` є в **обох** словниках (`uk`,`en`).
 - Публічні рендер-кроки в `app.js` обгортати в `safe(...)`, щоб одна панель не валила 3D.

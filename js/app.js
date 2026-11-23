@@ -1,15 +1,20 @@
 // woodstove2 app: сцена + UI + креслення SVG + тур + експорт
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { defaultConfig, loadConfig, saveConfig, hasStoredConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, rearOutletLayout, encodeConfig, decodeConfig, deepMerge, getByPath, setByPath, OPERATION_PRESETS, MODEL_PRESETS } from './config.js';
-import { PhysicsModel, compareOutlets, fitAirToPhi } from './physics-model.js';
+import { defaultConfig, saveConfig, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, rearOutletLayout, encodeConfig, getByPath, setByPath, OPERATION_PRESETS, MODEL_PRESETS } from './config.js';
+import { PhysicsModel, compareOutlets, fitAirToPhi, MODEL_VERSION } from './physics-model.js';
+import { bootState } from './persist.js';
+import { parseConfigText, applyImported, LIMITS } from './sanitize.js';
 import { buildStove, disposeGroup } from './stove-builder.js';
 import { exportGLTF, exportSTL } from './exporters.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from './bom.js';
-import { calibrateFromLog, evaluateCalibration, detectJournalDesync, refreshLogPredictions, emptyCalibration, mergeCalibration, configSnapshot } from './calibration.js';
+import { calibrateFromLog, isCalibrationCurrent, evaluateCalibration, detectJournalDesync, refreshLogPredictions, emptyCalibration, mergeCalibration, configSnapshot } from './calibration.js';
 import { designInternals } from './autodesign.js';
 import { PURPOSES, requiredPowerKw, roomVolume, sizeStoveForPower, evaluateRoom } from './room.js';
 import { STR, WARN_TXT, WARN_ARG, VALIDATION_TXT, OUTLET_TXT, TOUR, getLang, setLang } from './i18n.js';
+import { html, raw, setHtml, writeHtml } from './html.js';
+import { JOURNAL_KEY, JOURNAL_MAX, parseJournal, appendEntry, csvField, csvDate } from './journal.js';
+import { createToaster } from './toast.js';
 
 let lang = getLang();
 const t = (k) => (STR[lang] && STR[lang][k]) || STR.uk[k] || k;
@@ -18,22 +23,41 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 // зривати побудову 3D-сцени (інцидент: один ReferenceError ховав піч повністю).
 const safe = (fn, label = '') => { try { return fn(); } catch (e) { console.error('step failed' + (label ? ' [' + label + ']' : '') + ':', e); } };
 
-let config = loadConfig();
-let savedDesign = hasStoredConfig(); // піч уже спроєктована раніше
-const sharedValue = location.hash.startsWith('#config=') ? decodeConfig(location.hash.slice(8)) : null;
-if (sharedValue) {
-  config = normalizeConfig(deepMerge(structuredClone(defaultConfig), sharedValue));
-  savedDesign = true;
-  // Прибираємо #config з адреси, інакше він перекриватиме подальші правки та «Скинути» після F5.
-  try { history.replaceState(null, '', location.pathname + location.search); } catch { /* ignore */ }
-}
-// Збережена або поділена піч — авторитетна: похідні розміри доводимо, але
-// бафль НЕ перепідбираємо. Інакше F5 мовчки давав іншу піч, ніж була в сесії:
-// повітря/вологість/димохід у сесії оптимізатор не запускають, а завантаження
-// запускало (інший бафль → інший діаметр труби → інші кВт і ККД).
-config = designInternals(config, { keepBaffle: savedDesign });
+// Старт: збережений конфіг / share-лінк -> санітизація -> міграція -> designInternals.
+// Усе в try-catch (persist.js): збій дає типову піч і повідомлення, а не порожню панель.
+// Збережена або поділена піч авторитетна: бафль НЕ перепідбираємо (інакше F5 мовчки
+// давав іншу піч, ніж у сесії).
+const boot = bootState({ hash: location.hash });
+let config = boot.config;
+// Прибираємо #config з адреси завжди (і після помилки): інакше він перекриватиме
+// подальші правки та «Скинути» після F5.
+if (boot.clearHash) { try { history.replaceState(null, '', location.pathname + location.search); } catch { /* ignore */ } }
 const cache = new Map(); // кеш матеріалів
 const COMPARE_KEY = 'woodstove2CompareV1';
+
+// Неблокуючі повідомлення (#notices). Текст береться за ключем і перекладається
+// при зміні мови (data-notice), тож uk/en завжди актуальні.
+function showNotice(key, kind = 'info') {
+  const box = document.getElementById('notices');
+  if (!box) return;
+  if ([...box.children].some((n) => n.dataset.notice === key)) return; // без дублів
+  const el = document.createElement('div');
+  el.className = 'notice' + (kind === 'error' ? ' error' : '');
+  el.dataset.notice = key;
+  const text = document.createElement('span'); text.textContent = t(key);
+  const close = document.createElement('button'); close.type = 'button'; close.className = 'ghost';
+  close.textContent = '×'; close.title = t('noticeClose'); close.setAttribute('aria-label', t('noticeClose'));
+  close.addEventListener('click', () => el.remove());
+  el.append(text, close);
+  box.appendChild(el);
+}
+const noticeKind = (key) => (key.startsWith('importErr_') || key.startsWith('shareErr_') || key === 'bootFailed' ? 'error' : 'info');
+function retranslateNotices() {
+  document.querySelectorAll('#notices .notice').forEach((el) => {
+    el.querySelector('span').textContent = t(el.dataset.notice);
+    el.querySelector('button').title = t('noticeClose');
+  });
+}
 
 // ---------- сцена ----------
 const container = document.getElementById('canvas-container');
@@ -41,18 +65,46 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0f1115);
 const camera = new THREE.PerspectiveCamera(config.camera.fov, innerWidth / innerHeight, 0.5, 4000);
 camera.position.set(190, 170, 220);
-const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.localClippingEnabled = true;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-container.appendChild(renderer.domElement);
+// WebGL може бути недоступним (вимкнене апаратне прискорення, старий пристрій, віддалений
+// стіл, політика браузера): конструктор тоді кидає виняток. Раніше це валило весь модуль -
+// порожня сторінка, хоча фізика, BOM і калькулятор приміщення WebGL не потребують.
+// Тепер renderer = null, а все 3D-залежне вимикається (див. HAS_3D нижче).
+function createRenderer() {
+  try {
+    const r = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    r.setSize(innerWidth, innerHeight);
+    r.setPixelRatio(Math.min(devicePixelRatio, 2));
+    r.shadowMap.enabled = true;
+    r.shadowMap.type = THREE.PCFSoftShadowMap;
+    r.localClippingEnabled = true;
+    r.toneMapping = THREE.ACESFilmicToneMapping;
+    container.appendChild(r.domElement);
+    return r;
+  } catch (e) { console.warn('WebGL unavailable, 3D disabled:', e && e.message); return null; }
+}
+const renderer = createRenderer();
+const HAS_3D = renderer !== null;
 
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true; controls.dampingFactor = 0.08;
-controls.minDistance = 80; controls.maxDistance = 800;
+let controls = null;
+if (HAS_3D) {
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.dampingFactor = 0.08;
+  controls.minDistance = 80; controls.maxDistance = 800;
+}
+// Без WebGL на місці полотна - зрозуміле повідомлення, а 3D-елементи керування
+// (позначені data-needs-3d) вимикаються з поясненням. Викликається і при зміні мови.
+function applyNo3dState() {
+  if (HAS_3D) return;
+  let msg = document.getElementById('no-webgl');
+  if (!msg) {
+    msg = document.createElement('div'); msg.id = 'no-webgl'; msg.setAttribute('role', 'alert');
+    container.appendChild(msg);
+  }
+  msg.textContent = t('webglUnavailable');
+  document.querySelectorAll('[data-needs-3d]').forEach((el) => {
+    el.disabled = true; el.setAttribute('aria-disabled', 'true'); el.title = t('webglDisabledReason');
+  });
+}
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.55));
 const key = new THREE.DirectionalLight(0xffffff, 1.6);
@@ -81,6 +133,7 @@ let explodeCur = config.explode.enabled ? 1 : 0, explodeTarget = explodeCur;
 const doorOpenAngle = () => (config.door.hingeSide === 'right' ? 1 : -1) * THREE.MathUtils.degToRad(config.door.openAngleDeg);
 
 function rebuildStove() {
+  if (!HAS_3D) return; // без WebGL сцену не будуємо (фізика/BOM від неї не залежать)
   if (stove) { scene.remove(stove); disposeGroup(stove); }
   const built = buildStove(config, cache);
   stove = built.group; refs = built.refs;
@@ -180,6 +233,7 @@ function applyExplode(snap = 0) {
 
 // ---------- камера / види ----------
 function syncCamera(reposition = true) {
+  if (!controls) return;
   camera.fov = config.camera.fov; camera.updateProjectionMatrix();
   const ty = THREE.MathUtils.clamp(config.camera.targetY, config.dimensions.legHeightCm + 10, config.dimensions.legHeightCm + config.dimensions.heightCm);
   controls.target.set(0, ty, 0);
@@ -200,6 +254,9 @@ function applyViewMode() {
   const overlay = document.getElementById('drawing-overlay');
   const m = config.viewMode;
   document.getElementById('viewMode').value = m;
+  // Без WebGL видові режими (вони спираються на камеру/контроли) не працюють; збережений
+  // viewMode не чіпаємо, щоб він повернувся на пристрої з WebGL.
+  if (!HAS_3D) { overlay.style.display = 'none'; return; }
   if (m === '3d') { overlay.style.display = 'none'; controls.enabled = true; camera.up.set(0, 1, 0); syncCamera(true); applyGrid(); return; }
   const def = DRAW_DEFS[m]; if (!def) return;
   controls.enabled = false;
@@ -260,12 +317,18 @@ function renderOverlaySVG() {
       svg.appendChild(c);
     }
     const tx = (a.x + b.x) / 2, ty = (a.y + b.y) / 2 - 14;
+    // Підпис будуємо через DOM (textContent), а не розміткою: dm.t містить переклад і числа.
     const label = document.createElementNS(svgNS, 'g');
-    label.innerHTML = `<rect x="${tx - 52}" y="${ty - 12}" width="104" height="24" rx="6" fill="rgba(10,13,18,.9)" stroke="#4f8cff"/><text x="${tx}" y="${ty + 5}" text-anchor="middle" font-size="12" fill="#fff">${dm.t}</text>`;
+    const rect = document.createElementNS(svgNS, 'rect');
+    for (const [k, v] of Object.entries({ x: tx - 52, y: ty - 12, width: 104, height: 24, rx: 6, fill: 'rgba(10,13,18,.9)', stroke: '#4f8cff' })) rect.setAttribute(k, v);
+    const text = document.createElementNS(svgNS, 'text');
+    for (const [k, v] of Object.entries({ x: tx, y: ty + 5, 'text-anchor': 'middle', 'font-size': 12, fill: '#fff' })) text.setAttribute(k, v);
+    text.textContent = dm.t;
+    label.append(rect, text);
     svg.appendChild(label);
   }
   const ov = document.getElementById('drawing-overlay');
-  ov.innerHTML = ''; ov.appendChild(svg);
+  ov.replaceChildren(svg);
 }
 
 // ---------- фізика ----------
@@ -301,8 +364,8 @@ function renderPhysics() {
   }, 'intakeMetrics');
   const roomPipeEl = document.getElementById('m-room-pipe');
   if (roomPipeEl) roomPipeEl.textContent = `${r.metrics.roomPipeGainPct}% (Σ ${r.metrics.efficiencyWithPipePct}%)`;
-  const ul = document.getElementById('warnings'); ul.innerHTML = '';
-  if (!r.warnings.length) ul.innerHTML = `<li>${t('noIssues')}</li>`;
+  const ul = document.getElementById('warnings'); ul.replaceChildren();
+  if (!r.warnings.length) { const li = document.createElement('li'); li.textContent = t('noIssues'); ul.appendChild(li); }
   for (const wmsg of r.warnings) {
     const li = document.createElement('li'); li.className = wmsg.level;
     li.textContent = `[${wmsg.code}] ${warnText(wmsg.code, wmsg.message, r.metrics)}`;
@@ -344,9 +407,10 @@ function renderValidation() {
   const list = document.getElementById('validationList');
   if (!list) return;
   const result = validateConfig(config);
-  list.innerHTML = '';
+  list.replaceChildren();
   if (result.valid && !result.warnings.length) {
-    list.innerHTML = `<li class="ok">✓ ${t('validConfig')}</li>`;
+    const li = document.createElement('li'); li.className = 'ok'; li.textContent = `✓ ${t('validConfig')}`;
+    list.appendChild(li);
     return;
   }
   result.errors.forEach((item) => {
@@ -388,31 +452,90 @@ function renderTestBurn() {
   if (recommendation) recommendation.textContent = `${t('recommendedLoad')}: ${predicted.metrics.recommendedLoadKg} kg · ${t('maxLoad')}: ${predicted.metrics.maxLoadKg} kg`;
   const tempSummary = `${test.flueTempC}°C / ${test.stoveTopTempC}°C / ${test.glassTempC}°C · smoke ${test.smokeOpacityPct}%`;
   if (!r.hasMeasurement) {
-    target.innerHTML = `<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} kW · ${predicted.metrics.efficiencyPct}%</div>
+    setHtml(target, html`<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} kW · ${predicted.metrics.efficiencyPct}%</div>
       <div><b>${t('fuelInput')}:</b> ${r.fuelInputPowerKw.toFixed(2)} kW · ${r.fuelEnergyKwh.toFixed(1)} kWh</div>
-      <div class="sub">${t('needUsefulHeat')} · ${tempSummary}</div>`;
+      <div class="sub">${t('needUsefulHeat')} · ${tempSummary}</div>`);
     return;
   }
   const statusClass = Math.abs(r.errorPct) <= 15 ? '' : 'bad';
-  target.innerHTML = `<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} kW · ${predicted.metrics.efficiencyPct}%</div>
+  setHtml(target, html`<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} kW · ${predicted.metrics.efficiencyPct}%</div>
     <div><b>${t('measured')}:</b> ${r.measuredPower.toFixed(2)} kW · ${r.measuredEfficiency.toFixed(1)}%</div>
     <div>${tempSummary}</div>
-    <div class="${statusClass}"><b>${t('error')}:</b> ${r.errorPct >= 0 ? '+' : ''}${r.errorPct.toFixed(1)}%</div>`;
+    <div class="${statusClass}"><b>${t('error')}:</b> ${r.errorPct >= 0 ? '+' : ''}${r.errorPct.toFixed(1)}%</div>`);
 }
 
-const TEST_LOG_KEY = 'woodstove2TestLogV1';
+const TEST_LOG_KEY = JOURNAL_KEY;
 function getTestLog() {
-  try { return JSON.parse(localStorage.getItem(TEST_LOG_KEY)) || []; } catch { return []; }
+  try { return parseJournal(localStorage.getItem(TEST_LOG_KEY)); } catch { return []; }
+}
+function setRawJournal(raw) {
+  try { if (raw === null || raw === undefined) localStorage.removeItem(TEST_LOG_KEY); else localStorage.setItem(TEST_LOG_KEY, raw); } catch { /* ignore */ }
+}
+
+// ---------- підтвердження та скасування ----------
+// Тости (js/toast.js): підтвердження небезпечної дії і 9-секундне «Скасувати», що відновлює
+// знімок ЦІЛКОМ - конфіг, журнал, камеру й анімаційний стан (explode). Знімок один і живе в
+// памʼяті: нова дія замінює попередній.
+const UNDO_MS = 9000;
+const toaster = createToaster(document.getElementById('toasts'));
+function takeSnapshot() {
+  let journal = null;
+  try { journal = localStorage.getItem(TEST_LOG_KEY); } catch { /* ignore */ }
+  return { config: structuredClone(config), journal, explodeTarget, cam: camera.position.toArray() };
+}
+function restoreSnapshot(snap) {
+  config = snap.config;
+  setRawJournal(snap.journal);
+  explodeTarget = snap.explodeTarget; explodeCur = explodeTarget;
+  camera.position.fromArray(snap.cam);
+  saveConfig(config); cache.clear();
+  safe(syncUI, 'undo.syncUI'); safe(rebuildStove, 'undo.rebuild'); safe(renderPhysics, 'undo.physics');
+  safe(applyViewMode, 'undo.view'); safe(() => syncCamera(false), 'undo.camera');
+  safe(syncDoorBtn); safe(syncExplodeBtn);
+  toaster.show({ message: () => t('undoRestored'), autoMs: 3500 });
+}
+// «Скасувати» повертає знімок на момент дії, тож пізніші правки загубились би мовчки.
+// Тому будь-яка наступна правка в панелі (input/change у фазі перехоплення, ще ДО обробника
+// нової дії) закриває вікно скасування: що видно на екрані, те й можна повернути.
+let undoOpen = false;
+function offerUndo(msgKey, snap, extraActions = []) {
+  undoOpen = true;
+  toaster.show({
+    message: () => t(msgKey), autoMs: UNDO_MS,
+    onClose: () => { undoOpen = false; },
+    actions: [{ label: () => t('undoBtn'), primary: true, onClick: () => restoreSnapshot(snap) }, ...extraActions],
+  });
+}
+// Крок підтвердження: тост без таймера з двома кнопками. Фокус - на безпечній «Ні».
+function confirmThen(msgKey, yesKey, action) {
+  const opener = document.activeElement; // після закриття тосту фокус вертається на кнопку-ініціатор
+  const back = () => { if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus(); };
+  toaster.show({
+    message: () => t(msgKey), kind: 'warn', autoMs: 0, focusFirst: true,
+    onClose: (reason) => { if (reason !== 'replaced') back(); },
+    actions: [
+      { label: () => t('confirmCancel') },
+      { label: () => t(yesKey), primary: true, onClick: action },
+    ],
+  });
+}
+// Дія, що змінює проєкт: знімок до, виконати, показати «Скасувати».
+function withUndo(msgKey, action) {
+  const snap = takeSnapshot();
+  action();
+  offerUndo(msgKey, snap);
 }
 function renderTestLog() {
   const ul = document.getElementById('testLog');
   if (!ul) return;
   const log = getTestLog();
-  ul.innerHTML = log.slice(-8).reverse().map((e) => {
+  // Записи журналу - недовірені дані (localStorage), усе йде через html`` (екранування).
+  const rows = log.slice(-8).reverse().map((e) => {
     const dev = e.deviationPct >= 0 ? '+' : '';
-    return `<li><b>${new Date(e.ts).toLocaleDateString()}</b> · ${e.mode} · ${e.species} · ${e.moisturePct}%<br>
+    return html`<li><b>${new Date(e.ts).toLocaleDateString()}</b> · ${e.mode} · ${e.species} · ${e.moisturePct}%<br>
       ${t('predicted')}: ${e.predictedKw} kW → ${t('measured')}: ${e.measuredKw} kW <span class="${Math.abs(e.deviationPct) <= 15 ? '' : 'bad'}">(${dev}${e.deviationPct}%)</span></li>`;
-  }).join('') || `<li class="sub">${t('noTestsYet')}</li>`;
+  });
+  setHtml(ul, rows.length ? html`${rows}` : html`<li class="sub">${t('noTestsYet')}</li>`);
 }
 function calibrateModel() {
   const log = getTestLog();
@@ -424,20 +547,33 @@ function calibrateModel() {
   return true;
 }
 
-function saveTestToLog() {  const r = computeTestBurn();
+function saveTestToLog() {
+  const r = computeTestBurn();
   if (!r.hasMeasurement) { renderTestBurn(); return; }
+  const snap = takeSnapshot(); // до запису: «Скасувати» повертає журнал як був
   const uncal = PhysicsModel.evaluate({ ...config, calibration: { ...config.calibration, enabled: false } }).metrics.heatOutputKw;
-  const log = getTestLog();
-  log.push({
+  const entry = {
     ts: Date.now(), mode: r.predicted.mode, species: config.testBurn.woodSpecies,
     moisturePct: config.testBurn.woodMoisturePct, loadKg: r.loadKg, burnHours: config.testBurn.measuredBurnHours,
     usefulHeatKwh: r.measuredHeatKwh, predictedKw: +uncal.toFixed(2),
     predictedEffPct: r.predicted.metrics.efficiencyPct, measuredKw: +r.measuredPower.toFixed(2),
     measuredEffPct: +r.measuredEfficiency.toFixed(1), deviationPct: +r.errorPct.toFixed(1),
-    config: configSnapshot(config), modelVersion: 5,
-  });
-  try { localStorage.setItem(TEST_LOG_KEY, JSON.stringify(log.slice(-30))); } catch { /* ignore */ }
+    config: configSnapshot(config), modelVersion: MODEL_VERSION,
+  };
+  const { log, dropped, all } = appendEntry(getTestLog(), entry, JOURNAL_MAX);
+  try { localStorage.setItem(TEST_LOG_KEY, JSON.stringify(log)); } catch { /* ignore */ }
   renderTestLog();
+  // Обрізання журналу не мовчазне: кажемо, скільки відкинуто, і даємо вивантажити повний CSV
+  // (до обрізання) або скасувати збереження.
+  if (dropped.length) {
+    toaster.show({
+      message: () => t('journalTruncated').replace('${max}', JOURNAL_MAX), kind: 'warn', autoMs: 14000,
+      actions: [
+        { label: () => t('undoBtn'), primary: true, onClick: () => restoreSnapshot(snap) },
+        { label: () => t('csvBtn'), keepOpen: true, onClick: () => exportTestLogCsv(all) },
+      ],
+    });
+  }
 }
 function renderCalibrationSummary() {
   const target = document.getElementById('calibrationResult');
@@ -450,31 +586,38 @@ function renderCalibrationSummary() {
     .filter(([, v]) => v <= 0.8001 || v >= 1.1999)
     .map(([m]) => m);
   if (!cal.enabled || !stats) {
-    target.innerHTML = cal.samples > 0
-      ? `<span class="sub">${t('calibrationSaved')} (${cal.samples})</span>${sync.count ? ` · <span class="bad">${t('calDesync').replace('${count}', sync.count)}</span>` : ''}`
-      : `<span class="sub">${t('calibrationNeedsLog')}</span>`;
+    const staleNote = cal.samples > 0 && !isCalibrationCurrent(cal) ? html` · <span class="bad">${t('calStale')}</span>` : '';
+    const desyncPart = sync.count ? html` · <span class="bad">${t('calDesync').replace('${count}', sync.count)}</span>` : '';
+    setHtml(target, cal.samples > 0
+      ? html`<span class="sub">${t('calibrationSaved')} (${cal.samples})</span>${staleNote}${desyncPart}`
+      : html`<span class="sub">${t('calibrationNeedsLog')}</span>`);
     return;
   }
   const modeRows = Object.entries(cal.modeScale || {})
     .filter(([, v]) => Math.abs(v - 1) > 0.001)
     .map(([m, v]) => `${m} ×${v}${clamped.includes(m) ? ` (${t('calClamped')})` : ''}`).join(' · ');
-  const clampedNote = clamped.length ? `<br><span class="sub">${t('calClampedNote')} ${clamped.join(', ')}</span>` : '';
-  const desyncNote = sync.count ? `<br><span class="bad">${t('calDesync').replace('${count}', sync.count)}</span>` : '';
-  target.innerHTML = `<b>${t('calibrationApplied')}</b> · ${stats.samples} ${t('calibrationSamples')}${config.calibration.excludeStartUp ? ` (${t('calExcludeStartUp')})` : ''}<br>
+  const clampedNote = clamped.length ? html`<br><span class="sub">${t('calClampedNote')} ${clamped.join(', ')}</span>` : '';
+  const desyncNote = sync.count ? html`<br><span class="bad">${t('calDesync').replace('${count}', sync.count)}</span>` : '';
+  const excl = config.calibration.excludeStartUp ? html` (${t('calExcludeStartUp')})` : '';
+  setHtml(target, html`<b>${t('calibrationApplied')}</b> · ${stats.samples} ${t('calibrationSamples')}${excl}<br>
     ${t('calibrationGlobal')}: ×${cal.globalScale}${modeRows ? ' · ' + modeRows : ''}${clampedNote}<br>
-    ${t('calibrationDev')}: ${stats.beforeMaxAbsPct}% → <b>${stats.afterMaxAbsPct}%</b> ${t('calibrationMax')} · ${stats.beforeMeanAbsPct}% → <b>${stats.afterMeanAbsPct}%</b> ${t('calibrationMean')}${desyncNote}`;
+    ${t('calibrationDev')}: ${stats.beforeMaxAbsPct}% → <b>${stats.afterMaxAbsPct}%</b> ${t('calibrationMax')} · ${stats.beforeMeanAbsPct}% → <b>${stats.afterMeanAbsPct}%</b> ${t('calibrationMean')}${desyncNote}`);
 }
 
 function resetCalibration() {
-  config.calibration = mergeCalibration(emptyCalibration(), config.calibration);
-  saveConfig(config);
-  renderPhysics();
+  // Калібрування відновлюється з журналу, тож без підтвердження, але зі «Скасувати».
+  withUndo('undoCalReset', () => {
+    config.calibration = mergeCalibration(emptyCalibration(), config.calibration);
+    saveConfig(config);
+    renderPhysics();
+  });
 }
 
-function exportTestLogCsv() {  const log = getTestLog();
+function exportTestLogCsv(fullLog = null) {
+  const log = Array.isArray(fullLog) ? fullLog : getTestLog();
   if (!log.length) return;
   const header = 'date,mode,species,moisturePct,loadKg,burnHours,usefulHeatKwh,predictedKw,predictedEffPct,measuredKw,measuredEffPct,deviationPct';
-  const rows = log.map((e) => [new Date(e.ts).toISOString(), e.mode, e.species, e.moisturePct, e.loadKg, e.burnHours, e.usefulHeatKwh, e.predictedKw, e.predictedEffPct, e.measuredKw, e.measuredEffPct, e.deviationPct].join(','));
+  const rows = log.map((e) => [csvDate(e.ts), e.mode, e.species, e.moisturePct, e.loadKg, e.burnHours, e.usefulHeatKwh, e.predictedKw, e.predictedEffPct, e.measuredKw, e.measuredEffPct, e.deviationPct].map(csvField).join(','));
   const blob = new Blob([header + '\n' + rows.join('\n')], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = `woodstove-test-log-${Date.now()}.csv`; a.click();
@@ -485,8 +628,7 @@ function syncModelOptions() {
   const select = document.getElementById('modelPreset');
   if (!select) return;
   const selected = select.value || 'ws6';
-  select.innerHTML = Object.entries(MODEL_PRESETS)
-    .map(([id, preset]) => `<option value="${id}">${t(preset.labelKey)}</option>`).join('');
+  setHtml(select, html`${Object.entries(MODEL_PRESETS).map(([id, preset]) => html`<option value="${id}">${t(preset.labelKey)}</option>`)}`);
   select.value = MODEL_PRESETS[selected] ? selected : 'ws6';
 }
 
@@ -514,11 +656,12 @@ function getCompareMetrics(cfg) {
 function renderCompare() {
   const target = document.getElementById('compareContent');
   const saved = getSavedCompare();
-  if (!saved) { target.innerHTML = `<p class="sub">${t('compareNone')}</p>`; return; }
+  if (!saved) { setHtml(target, html`<p class="sub">${t('compareNone')}</p>`); return; }
   const before = getCompareMetrics(saved);
   const current = getCompareMetrics(config);
-  const rows = Object.keys(current).map((key) => `<tr><td>${key}</td><td>${before[key]}</td><td>${current[key]}</td></tr>`).join('');
-  target.innerHTML = `<table class="compare-table"><thead><tr><th></th><th>${t('compareSaved')}</th><th>${t('compareCurrent')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+  // Збережене порівняння - недовірені дані (localStorage), тож значення екрануються.
+  const rows = Object.keys(current).map((key) => html`<tr><td>${key}</td><td>${before[key]}</td><td>${current[key]}</td></tr>`);
+  setHtml(target, html`<table class="compare-table"><thead><tr><th></th><th>${t('compareSaved')}</th><th>${t('compareCurrent')}</th></tr></thead><tbody>${rows}</tbody></table>`);
 }
 
 function downloadBlob(blob, filename) {
@@ -565,9 +708,10 @@ function renderPhiGauge(m) {
   const inBand = phiShown >= 0.4 && phiShown <= 0.5;
   marker.style.background = inBand ? '#22c55e' : '#f97316';
   label.textContent = `Φ = ${phiShown.toFixed(2)}`;
-  if (inBand) status.innerHTML = `<span style="color:#86efac">${t('phiInBand')}</span>`;
-  else if (phiShown > 0.5) status.innerHTML = `<span>${t('phiRich')}</span>`;
-  else status.innerHTML = `<span>${t('phiLean')}</span>`;
+  const phiSpan = document.createElement('span');
+  if (inBand) phiSpan.style.color = '#86efac';
+  phiSpan.textContent = t(inBand ? 'phiInBand' : (phiShown > 0.5 ? 'phiRich' : 'phiLean'));
+  status.replaceChildren(phiSpan);
 }
 
 function autoPhi() {
@@ -586,7 +730,7 @@ function renderRoomSummary() {
   const target = document.getElementById('roomResult');
   if (!target) return;
   const r = evaluateRoom(config);
-  target.innerHTML = `${t('roomVolume')}: <b>${r.volume} m³</b> · ${t('roomNeed')}: <b>${r.targetKw} kW</b> · ${t('roomActual')}: <b>${r.actualKw} kW</b> <span class="${r.enough ? 'ok' : 'bad'}">${r.enough ? t('roomEnough') : t('roomNotEnough')}</span>`;
+  setHtml(target, html`${t('roomVolume')}: <b>${r.volume} m³</b> · ${t('roomNeed')}: <b>${r.targetKw} kW</b> · ${t('roomActual')}: <b>${r.actualKw} kW</b> <span class="${r.enough ? 'ok' : 'bad'}">${r.enough ? t('roomEnough') : t('roomNotEnough')}</span>`);
 }
 
 function fitRoomToStove() {
@@ -605,15 +749,16 @@ function fitRoomToStove() {
 function renderAutoSummary(r = null) {  const target = document.getElementById('autoSummary');
   if (!target) return;
   const m = (r || PhysicsModel.evaluate(config)).metrics;
-  target.innerHTML = `<b>${t('autoTitle')}</b> · ${t('kEff')} <b>${m.efficiencyPct}%</b> · ${t('autoBaffle')} <b>${config.baffle.heightCm} ${t('unitCm')}</b> · ${t('autoChimney')} <b>Ø${config.chimney.diameterCm} ${t('unitCm')} × ${config.chimney.heightCm} ${t('unitCm')}</b> · ${t('autoInsulation')} <b>${config.thermal.insulationThicknessCm} ${t('unitCm')}</b> · ${t('autoSecondary')} <b>${config.secondaryAir.holeCount}×Ø${config.secondaryAir.holeDiameterCm}</b>`;
+  setHtml(target, html`<b>${t('autoTitle')}</b> · ${t('kEff')} <b>${m.efficiencyPct}%</b> · ${t('autoBaffle')} <b>${config.baffle.heightCm} ${t('unitCm')}</b> · ${t('autoChimney')} <b>Ø${config.chimney.diameterCm} ${t('unitCm')} × ${config.chimney.heightCm} ${t('unitCm')}</b> · ${t('autoInsulation')} <b>${config.thermal.insulationThicknessCm} ${t('unitCm')}</b> · ${t('autoSecondary')} <b>${config.secondaryAir.holeCount}×Ø${config.secondaryAir.holeDiameterCm}</b>`);
   renderPhiGauge(m);
 }
 
 function renderBomSummary(physicsResult = null) {  const target = document.getElementById('bomSummary');
   if (!target) return;
   const bom = buildBOM(config, physicsResult, lang);
-  target.innerHTML = `${t('bomSteel')}: <b>${bom.totals.steelMassKg} kg</b> · ${t('bomArea')}: <b>${bom.totals.steelAreaM2} m²</b> · ${t('bomBrick')}: <b>${bom.totals.brickMassKg} kg</b> · ${t('bomInsulation')}: <b>${bom.totals.insulationMassKg} kg</b> · ${t('bomTotal')}: <b>${bom.totals.totalMassKg} kg</b><br>
-    ${t('bomCut')}: <b>${bom.totals.cutAreaM2} m²</b> · ${t('bomWeld')}: <b>${bom.totals.weldMeters} m</b> · ${t('bomPurchased')}: <b>${bom.totals.purchasedCount}</b> · <span class="est">${t('bomEstimate')}</span>${bom.fitIssues > 0 ? `<br><span class="bad">${t('bomFitIssues').replace('${count}', bom.fitIssues)}</span>` : ''}`;
+  const fitNote = bom.fitIssues > 0 ? html`<br><span class="bad">${t('bomFitIssues').replace('${count}', bom.fitIssues)}</span>` : '';
+  setHtml(target, html`${t('bomSteel')}: <b>${bom.totals.steelMassKg} kg</b> · ${t('bomArea')}: <b>${bom.totals.steelAreaM2} m²</b> · ${t('bomBrick')}: <b>${bom.totals.brickMassKg} kg</b> · ${t('bomInsulation')}: <b>${bom.totals.insulationMassKg} kg</b> · ${t('bomTotal')}: <b>${bom.totals.totalMassKg} kg</b><br>
+    ${t('bomCut')}: <b>${bom.totals.cutAreaM2} m²</b> · ${t('bomWeld')}: <b>${bom.totals.weldMeters} m</b> · ${t('bomPurchased')}: <b>${bom.totals.purchasedCount}</b> · <span class="est">${t('bomEstimate')}</span>${fitNote}`);
 }
 
 function shareConfig() {
@@ -628,6 +773,7 @@ function shareConfig() {
 }
 
 function downloadScreenshot() {
+  if (!HAS_3D) return;
   try {
     const dataUrl = renderer.domElement.toDataURL('image/png');
     const link = document.createElement('a');
@@ -638,13 +784,17 @@ function downloadScreenshot() {
 
 function printReport() {
   try {
-    const dataUrl = renderer.domElement.toDataURL('image/png');
+    // Без WebGL друкуємо таблицю показників без знімка сцени.
+    const dataUrl = HAS_3D ? renderer.domElement.toDataURL('image/png') : '';
     const report = window.open('', '_blank');
     if (!report) return;
     try { report.opener = null; } catch { /* ignore */ }
     const metrics = getCompareMetrics(config);
-    const rows = Object.entries(metrics).map(([key, value]) => `<tr><td>${key}</td><td>${value}</td></tr>`).join('');
-    report.document.write(`<!doctype html><html lang="${lang}"><head><title>${t('title')}</title><style>body{font:14px Arial;color:#172033;padding:24px}h1{font-size:22px}img{max-width:100%;background:#101318;border-radius:10px}table{border-collapse:collapse;margin-top:14px}td{border-bottom:1px solid #ddd;padding:7px 14px 7px 0}</style></head><body><h1>🔥 Woodstove 2</h1><p>${new Date().toLocaleString()}</p><img id="repImg" src="${dataUrl}"><table>${rows}</table><p style="font-size:12px;color:#8a4b00;max-width:760px">${t('transitionDisclaimer')}</p><p style="font-size:12px;color:#555">${t('bomProdNote')}</p><script>document.getElementById('repImg').onload=function(){window.print()}<\/script></body></html>`);
+    const rows = Object.entries(metrics).map(([key, value]) => html`<tr><td>${key}</td><td>${value}</td></tr>`);
+    // Статичний <script> і <style> - константи з коду (raw); усе динамічне екранується в html``.
+    const img = dataUrl ? html`<img id="repImg" src="${dataUrl}">` : '';
+    const printJs = dataUrl ? raw(`<script>document.getElementById('repImg').onload=function(){window.print()}<\/script>`) : raw('<script>window.print()<\/script>');
+    writeHtml(report.document, html`<!doctype html><html lang="${lang}"><head><title>${t('title')}</title><style>body{font:14px Arial;color:#172033;padding:24px}h1{font-size:22px}img{max-width:100%;background:#101318;border-radius:10px}table{border-collapse:collapse;margin-top:14px}td{border-bottom:1px solid #ddd;padding:7px 14px 7px 0}</style></head><body><h1>🔥 Woodstove 2</h1><p>${new Date().toLocaleString()}</p>${img}<table>${rows}</table><p style="font-size:12px;color:#8a4b00;max-width:760px">${t('transitionDisclaimer')}</p><p style="font-size:12px;color:#555">${t('bomProdNote')}</p>${printJs}</body></html>`);
     report.document.close();
   } catch(e) { console.error('Print report failed:', e); alert(lang === 'en' ? 'Print failed' : 'Друк не вдався'); }
 }
@@ -743,8 +893,10 @@ function applyI18n() {
   document.getElementById('exportGltf').title = lang === 'en' ? 'Export scene as glTF' : 'Експорт сцени в glTF';
   document.getElementById('exportStl').title = lang === 'en' ? 'Export scene as STL' : 'Експорт сцени в STL';
   const ol = document.getElementById('tourList');
-  if (ol) ol.innerHTML = TOUR[lang].map((li) => `<li>${li}</li>`).join('');
-  syncModelOptions(); syncDoorBtn(); syncExplodeBtn(); syncUI(); renderPhysics();
+  // TOUR - статичні константи з i18n.js із <b>; єдине місце, де raw() виправданий.
+  if (ol) setHtml(ol, html`${TOUR[lang].map((li) => html`<li>${raw(li)}</li>`)}`);
+  syncModelOptions(); syncDoorBtn(); syncExplodeBtn(); syncUI(); renderPhysics(); retranslateNotices();
+  applyNo3dState();
 }
 function syncDoorBtn() {
   document.getElementById('toggleDoor').textContent = config.door.isOpen ? t('closeDoor') : t('openDoor');
@@ -793,6 +945,9 @@ function renderModeHint() {
   const el = document.getElementById('modeHint'); if (!el) return;
   el.textContent = `${config.operation.mode} · primary ${Math.round(config.primaryAir.openPct)}% · secondary ${Math.round(config.operation.secondaryAirPct)}% · air-wash ${Math.round(config.airWash.intakePct)}%`;
 }
+// Динамічний імпорт експортера може впасти (немає мережі, CDN, SRI не збігся): кажемо про це.
+function exportFailed(e) { console.error('export failed:', e); showNotice('exportLoadFailed', 'error'); }
+
 function bindUI() {
   for (const [id, path] of Object.entries(controlMap)) {
     const el = document.getElementById(id); if (!el) continue;
@@ -858,21 +1013,23 @@ function bindUI() {
     config.door.hingeSide = e.target.value === 'right' ? 'right' : 'left';
     normalizeConfig(config); saveConfig(config); rebuildStove();
   });
-  document.getElementById('applyPreset').addEventListener('click', () => {
+  // «Застосувати» замінює габарити й внутрішню геометрію пресетом: без підтвердження
+  // (дію явно обрано), але зі «Скасувати» на 9 с.
+  document.getElementById('applyPreset').addEventListener('click', () => withUndo('undoPreset', () => {
     const presetName = document.getElementById('modelPreset').value;
     config = applyModelPreset(config, presetName);
     applyModePreset(config, config.operation.mode);
     designInternals(config);
     saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
-  });
+  }));
   // Збережена піч завантажується з keepBaffle (геометрія авторитетна), тож після
   // оновлення фізики бафль/отвори/Ø труби лишаються старими. Ця кнопка —
   // явне повне перепроєктування під поточні габарити (той самий шлях, що в
   // першого запуску): один клік, жодних прихованих змін під час перетягування.
-  document.getElementById('redesignInternals').addEventListener('click', () => {
+  document.getElementById('redesignInternals').addEventListener('click', () => withUndo('undoRedesign', () => {
     designInternals(config);
     saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
-  });
+  }));
   document.getElementById('loadMode').addEventListener('change', (e) => {
     config.testBurn.loadMode = e.target.value === 'manual' ? 'manual' : 'auto';
     saveConfig(config); syncUI(); renderTestBurn();
@@ -898,7 +1055,7 @@ function bindUI() {
     config.room.inputMode = e.target.value === 'area' ? 'area' : 'volume';
     normalizeConfig(config); saveConfig(config); updateRoomRows(); renderRoomSummary();
   });
-  document.getElementById('fitRoom').addEventListener('click', fitRoomToStove);
+  document.getElementById('fitRoom').addEventListener('click', () => withUndo('undoFitRoom', fitRoomToStove));
   document.getElementById('showFlow').addEventListener('change', (e) => {
     config.flow.visible = e.target.checked; saveConfig(config); applyVisibility();
   });
@@ -940,7 +1097,9 @@ function bindUI() {
     explodeTarget = config.explode.enabled ? 1 : 0;
     syncExplodeBtn();
   });
-  document.getElementById('resetConfig').addEventListener('click', () => {
+  // «Скинути» знищує весь поточний проєкт (і калібрування в ньому): спершу підтвердження,
+  // потім 9 с на «Скасувати» (знімок конфігу + журналу в памʼяті).
+  document.getElementById('resetConfig').addEventListener('click', () => confirmThen('confirmResetMsg', 'confirmResetYes', () => withUndo('undoReset', () => {
     localStorage.removeItem('woodstove2ConfigV1');
     config = designInternals(normalizeConfig(structuredClone(defaultConfig)));
     // Explode й камера — стан анімації поза config, «Скинути» мав його
@@ -950,9 +1109,12 @@ function bindUI() {
     camera.position.set(190, 170, 220);
     cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
     syncCamera(true); syncDoorBtn(); syncExplodeBtn();
-  });
+  })));
   document.getElementById('saveJson').addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+    // Без калібрування: імпорт його однаково відкидає (воно особисте, див. sanitize.js), тож файл
+    // не обіцяє більше, ніж відновить. Калібрування відновлюється з журналу.
+    const { calibration: _cal, ...exportable } = config;
+    const blob = new Blob([JSON.stringify(exportable, null, 2)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
     a.download = `woodstove-${Date.now()}.json`; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1500);
@@ -960,13 +1122,23 @@ function bindUI() {
   document.getElementById('loadJson').addEventListener('click', () => document.getElementById('fileJson').click());
   document.getElementById('fileJson').addEventListener('change', async (e) => {
     const f = e.target.files?.[0]; if (!f) return;
-    try {
-      const parsed = JSON.parse(await f.text());
-      // Файл, збережений користувачем, — теж готова геометрія: бафль лишаємо.
-      config = designInternals(normalizeConfig(deepMerge(structuredClone(defaultConfig), parsed)), { keepBaffle: true });
-      saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
-    } catch { alert(lang === 'en' ? 'Invalid JSON' : 'Невалідний JSON'); }
     e.target.value = '';
+    // Невалідний/завеликий/чужий файл НЕ замінює поточну піч і нічого не пише в localStorage.
+    const reject = (reason) => showNotice(`importErr_${reason}`, 'error');
+    if (f.size > LIMITS.maxBytes) { reject('tooLarge'); return; }
+    let text;
+    try { text = await f.text(); } catch { reject('parse'); return; }
+    const r = parseConfigText(text, { calibration: 'drop' });
+    if (!r.ok) { reject(r.reason); return; }
+    const snap = takeSnapshot(); // імпорт замінює поточний проєкт: даємо «Скасувати»
+    try {
+      // Файл, збережений користувачем, - теж готова геометрія: бафль лишаємо.
+      // Калібрування з файлу відкинуто, власне калібрування користувача лишається.
+      config = designInternals(applyImported(config, r.patch), { keepBaffle: true });
+      saveConfig(config); cache.clear(); syncUI(); rebuildStove(); renderPhysics(); applyViewMode();
+      if (r.droppedCalibration) showNotice('calibrationIgnoredFile');
+      offerUndo('undoImport', snap);
+    } catch (err) { console.error('import failed', err); config = snap.config; saveConfig(config); reject('notStove'); }
   });
   document.getElementById('shareConfig').addEventListener('click', shareConfig);
   document.getElementById('screenshot').addEventListener('click', downloadScreenshot);
@@ -989,17 +1161,24 @@ function bindUI() {
     saveConfig(config); saveTestToLog(); renderTestBurn();
   });
   document.getElementById('exportTestCsv').addEventListener('click', exportTestLogCsv);
-  document.getElementById('calibrateModel').addEventListener('click', calibrateModel);
+  document.getElementById('calibrateModel').addEventListener('click', () => {
+    const snap = takeSnapshot();
+    if (calibrateModel()) offerUndo('undoCalibrate', snap);
+  });
   document.getElementById('resetCalibration').addEventListener('click', resetCalibration);
+  // Очищення журналу незворотне без знімка: підтвердження + «Скасувати» (повертає сирий журнал).
   document.getElementById('clearTestLog').addEventListener('click', () => {
-    localStorage.removeItem(TEST_LOG_KEY); renderTestLog();
+    if (!getTestLog().length) return;
+    confirmThen('confirmClearLogMsg', 'confirmClearLogYes', () => withUndo('undoClearLog', () => {
+      localStorage.removeItem(TEST_LOG_KEY); renderTestLog(); renderCalibrationSummary();
+    }));
   });
   document.getElementById('langToggle').addEventListener('click', () => {
-    lang = lang === 'en' ? 'uk' : 'en'; setLang(lang); applyI18n();
+    lang = lang === 'en' ? 'uk' : 'en'; setLang(lang); applyI18n(); toaster.retranslate();
     if (config.viewMode !== '3d') renderOverlaySVG();
   });
-  document.getElementById('exportGltf').addEventListener('click', () => exportGLTF(buildExportModel()));
-  document.getElementById('exportStl').addEventListener('click', () => exportSTL(buildExportModel()));
+  document.getElementById('exportGltf').addEventListener('click', () => { if (stove) exportGLTF(buildExportModel()).catch(exportFailed); });
+  document.getElementById('exportStl').addEventListener('click', () => { if (stove) exportSTL(buildExportModel()).catch(exportFailed); });
   document.getElementById('exportBom').addEventListener('click', exportBomCsv);
   document.getElementById('exportDrawing').addEventListener('click', exportDrawingSvg);
   document.getElementById('exportDxf').addEventListener('click', exportDxf);
@@ -1011,6 +1190,7 @@ function bindUI() {
 // ---------- цикл ----------
 const clock = new THREE.Clock();
 function animate() {
+  if (!HAS_3D) return;
   requestAnimationFrame(animate);
   const t = clock.getElapsedTime();
   doorCur += (doorTarget - doorCur) * 0.12;
@@ -1075,6 +1255,7 @@ function animate() {
 }
 
 addEventListener('resize', () => {
+  if (!HAS_3D) return;
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
   if (config.viewMode !== '3d') renderOverlaySVG();
@@ -1082,5 +1263,13 @@ addEventListener('resize', () => {
 
 // ---------- старт ----------
 safe(bindUI, 'bindUI'); safe(applyI18n, 'applyI18n');
+for (const key of boot.notices) safe(() => showNotice(key, noticeKind(key)), 'notice');
+// Поділена піч відкрита і збережена одразу; попередній проєкт повертається «Скасувати».
+if (boot.previous) safe(() => {
+  const snap = takeSnapshot(); snap.config = boot.previous;
+  offerUndo('shareOpened', snap);
+}, 'shareOpened');
+safe(() => document.getElementById('panel').addEventListener('input', () => { if (undoOpen) toaster.dismiss('edit'); }, true), 'undoGuard');
+safe(() => document.getElementById('panel').addEventListener('change', () => { if (undoOpen) toaster.dismiss('edit'); }, true), 'undoGuard');
 safe(rebuildStove, 'rebuildStove'); safe(applyViewMode, 'applyViewMode');
 animate();
