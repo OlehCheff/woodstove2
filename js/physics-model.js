@@ -1,4 +1,5 @@
 // PhysicsModel v5 — оціночна airflow/thermal модель, не CFD і не сертифікація.
+import { EFFICIENCY_LOW_PCT, CREOSOTE_WARN_C, CREOSOTE_DANGER_C, CONNECTOR_MAX_CM, STEEL_THIN_MM, PHI_RICH_WARN, PHI_LEAN_INFO, PHI_TARGET } from './thresholds.js';
 import { OPERATION_PRESETS, rearOutletLayout, bottomIntakeGeometry, INTAKE_MIN_STOP_PCT, INTAKE_SLOT_RATIO } from './config.js';
 
 // Розмір закладки (fillFactor) лежить в OPERATION_PRESETS (config.js), а не тут:
@@ -214,6 +215,8 @@ const STARTUP_LONG_H = 1.8;
 // fuelBedAir, охолодження труби, тайбрейк бафля, два доданки у ККД), тож поточна
 // модель = 6, а збережені калібрування без версії вважаються застарілими.
 export const MODEL_VERSION = 6;
+// Стеля ККД моделі, %: усе вище для дров-печі вважаємо неправдоподібним (оцінка, не норма).
+export const EFF_MAX_PCT = 88;
 
 export const PhysicsModel = {
   evaluate(config) {
@@ -442,7 +445,7 @@ export const PhysicsModel = {
     // Недопал при нестачі повітря рахуємо ПІСЛЯ стелі 92, як і каталізатор:
     // «сирий» ККД згоряння в робочих режимах ~100, і стеля поглинула б поправку.
     const incompleteCombustionLossPct = clamp((LAMBDA_RICH - lambda) * 15, 0, 8);
-    const efficiencyPct = clamp(combustionEfficiencyPct - incompleteCombustionLossPct - flueLossPct + catalystBonus, 35, 88);
+    const efficiencyPct = clamp(combustionEfficiencyPct - incompleteCombustionLossPct - flueLossPct + catalystBonus, 35, EFF_MAX_PCT);
     // Температура димових газів на ВИХОДІ з труби: експоненційне охолодження вздовж
     // каналу (наближення до температури довкілля), а не лінійне — лінійна форма
     // перетинала нуль і давала однакові 40°C для будь-якої печі на довгих трубах.
@@ -515,10 +518,10 @@ export const PhysicsModel = {
     const warnings = [];
     if (primaryPct < 18 && secondaryPct < 20)
       warnings.push({ level: 'warn', code: 'SMOKE_RISK', message: 'Ризик димлення: замало первинного і вторинного повітря.' });
-    if (heatOutputKw > 9.0 && steelMm <= 4)
-      warnings.push({ level: 'danger', code: 'OVERHEAT_RISK', message: 'Перегрів: висока потужність при сталі ≤4 мм.' });
-    if (efficiencyPct < 58 && mode !== 'overnight')
-      warnings.push({ level: 'warn', code: 'INEFFICIENT_MODE', message: 'Неефективний режим: ККД < 58%.' });
+    if (heatOutputKw > 9.0 && steelMm <= STEEL_THIN_MM)
+      warnings.push({ level: 'danger', code: 'OVERHEAT_RISK', message: `Перегрів: висока потужність при сталі ≤${STEEL_THIN_MM} мм.` });
+    if (efficiencyPct < EFFICIENCY_LOW_PCT && mode !== 'overnight')
+      warnings.push({ level: 'warn', code: 'INEFFICIENT_MODE', message: `Неефективний режим: ККД < ${EFFICIENCY_LOW_PCT}%.` });
     if (washGap < 0.9 && flame > 0.75)
       warnings.push({ level: 'warn', code: 'DIRTY_GLASS', message: 'Закопчення скла: вузький air-wash при сильному полум’ї.' });
     // Порівнюємо з тим самим округленням, що показує повідомлення (1 знак): інакше при 7.96 Па
@@ -537,20 +540,23 @@ export const PhysicsModel = {
       warnings.push({ level: 'warn', code: 'AIRWASH_LOW', message: 'Недостатнє покриття скла повітряною завісою.' });
     if (mode === 'start-up' && burnTimeHours > STARTUP_LONG_H)
       warnings.push({ level: 'info', code: 'STARTUP_LONG', message: 'Start-up з довгим горінням — перевірте подачу повітря.' });
-    if (bodyTempC > 420 && steelMm <= 4)
-      warnings.push({ level: 'danger', code: 'STEEL_OVERHEAT', message: `Корпус ~${round(bodyTempC, 0)}°C при сталі ≤4 мм: збільшіть ізоляцію або товщину сталі.` });
+    if (bodyTempC > 420 && steelMm <= STEEL_THIN_MM)
+      warnings.push({ level: 'danger', code: 'STEEL_OVERHEAT', message: `Корпус ~${round(bodyTempC, 0)}°C при сталі ≤${STEEL_THIN_MM} мм: збільшіть ізоляцію або товщину сталі.` });
     if (moisturePct > 22)
       warnings.push({ level: 'warn', code: 'WET_WOOD', message: `Вологість ${round(moisturePct, 0)}% знижує температуру допалювання та ККД.` });
     if (!secondaryActive)
       warnings.push({ level: 'warn', code: 'SECONDARY_INACTIVE', message: `Вторинне горіння не запалюється: зона ${round(combustionTempC, 0)}°C < ${round(secondaryIgnitionC, 0)}°C.` });
-    if (equivalenceRatio > 0.55 && mode !== 'overnight')
-      warnings.push({ level: 'warn', code: 'MIX_RICH', message: `Замало повітря (Φ=${round(equivalenceRatio, 2)}): дим і CO. Додайте вторинне/третинне повітря.` });
+    // Φ порівнюємо з тим самим округленням (2 знаки), що в повідомленні й на Φ-датчику (phiGaugeState).
+    // Φ для порогів — ОДНЕ округлення (2 знаки), те саме віддається в metrics.equivalenceRatio2 для Φ-датчика.
+    const phi2 = round(equivalenceRatio, 2);
+    if (phi2 > PHI_RICH_WARN && mode !== 'overnight')
+      warnings.push({ level: 'warn', code: 'MIX_RICH', message: `Замало повітря (Φ=${phi2}): дим і CO. Додайте вторинне/третинне повітря.` });
     // Поріг 0.35, а не 0.33: Φ = 1/λ, а λ = 1.4 + 1.6·airMix; повністю відкрита
     // піч дає airMix = 1.5 (1/AIR_OPEN_REF), тобто λ = 3.8 і Φ ≈ 0.26.
     // Start-up навмисно гонить усі входи навстіж (розпал, тяга), тож Φ ≈ 0.32 там
     // норма, а не помилка — як MIX_RICH для overnight.
-    if (equivalenceRatio < 0.35 && mode !== 'start-up')
-      warnings.push({ level: 'info', code: 'MIX_LEAN', message: `Багато повітря (Φ=${round(equivalenceRatio, 2)}): зона охолоджується, зайві втрати.` });
+    if (phi2 < PHI_LEAN_INFO && mode !== 'start-up')
+      warnings.push({ level: 'info', code: 'MIX_LEAN', message: `Багато повітря (Φ=${phi2}): зона охолоджується, зайві втрати.` });
     // Порівняння з тим самим округленням (до °C), що в повідомленні, інакше при 149.6 °C
     // писало б «Димові гази на виході 150°C < 150°C».
     // Рівень: < 100 °C — danger (поверхня труби стабільно нижче точки роси кислих
@@ -558,8 +564,8 @@ export const PhysicsModel = {
     // практика — 150 °C це рекомендований мінімум на виході з печі, не поріг
     // поломки). Код той самий, тож усе, що спрацьовує «рівно коли вихід < 150 °C»,
     // лишилось незмінним.
-    if (round(exitFlueTempC, 0) < 150)
-      warnings.push({ level: round(exitFlueTempC, 0) < CREOSOTE_DANGER_C ? 'danger' : 'warn', code: 'CREOSOTE_RISK', message: `Димові гази на виході ${round(exitFlueTempC, 0)}°C < 150°C: конденсат і креозот.` });
+    if (round(exitFlueTempC, 0) < CREOSOTE_WARN_C)
+      warnings.push({ level: round(exitFlueTempC, 0) < CREOSOTE_DANGER_C ? 'danger' : 'warn', code: 'CREOSOTE_RISK', message: `Димові гази на виході ${round(exitFlueTempC, 0)}°C < ${CREOSOTE_WARN_C}°C: конденсат і креозот.` });
     // Примітка: це стаціонарна модель без часової осі, тож "не прогрітий" тут
     // означає "зона на сталому режимі холодніша за поріг", а не "перші хвилини
     // після розпалу". Мінімальна досяжна зона в межах UI ~590°C, тож поріг
@@ -572,8 +578,8 @@ export const PhysicsModel = {
       warnings.push({ level: 'info', code: 'CATALYST_COLD', message: `Каталізатор не прогрітий (${round(combustionTempC, 0)}°C < ${round(catalystLightoffC, 0)}°C) — байпас відкрито.` });
     // Норма патрубка печі ~0.4 м; довша горизонталь збирає сажу, гасить тягу
     // й вимагає більших відступів до горючих (NFPA 211 — 457 мм).
-    if (roomPipeM > 0 && connectorM > 0.4)
-      warnings.push({ level: 'warn', code: 'CONNECTOR_LONG', message: `Горизонтальний патрубок ${round(connectorM * 100, 0)} см > 40 см: сажа, втрата тяги, більший відступ до горючих.` });
+    if (roomPipeM > 0 && connectorM > CONNECTOR_MAX_CM / 100)
+      warnings.push({ level: 'warn', code: 'CONNECTOR_LONG', message: `Горизонтальний патрубок ${round(connectorM * 100, 0)} см > ${CONNECTOR_MAX_CM} см: сажа, втрата тяги, більший відступ до горючих.` });
 
     return {
       version: 5,
@@ -596,7 +602,7 @@ export const PhysicsModel = {
         recommendedLoadKg: round(recommendedLoadKg, 1), maxLoadKg: round(maxLoadKg, 1), loadingVolumePct: round(fillFactor * 100, 0),
         calibrationFactor: round(calibrationFactor, 3),
         secondaryActive, catalystActive,
-        equivalenceRatio: round(equivalenceRatio, 3), lambda: round(lambda, 2),
+        equivalenceRatio: round(equivalenceRatio, 3), equivalenceRatio2: phi2, lambda: round(lambda, 2),
         exitFlueTempC: round(exitFlueTempC, 0),
         secondaryTotalAreaCm2: round(secondaryTotalAreaCm2, 2), tertiaryAreaCm2: round(tertiaryAreaCm2, 2),
         secondaryAirPct: round(secondaryPct, 0),
@@ -701,7 +707,6 @@ export const SCORE_INDIFFERENCE = 0.5;
 // +40 %) тільки заради зникнення цього попередження. Користувач бачить їх як є; у оцінці
 // кандидата вони не штрафуються.
 // Поріг рівня danger для CREOSOTE_RISK (ОЦІНКА, не вимір): нижче — danger, між ним і 150 °C — warn.
-const CREOSOTE_DANGER_C = 100;
 const MODE_FLUE_WARNINGS = new Set(['CREOSOTE_RISK', 'DRAFT_WEAK', 'SECONDARY_COLD']);
 // pool — масив { score, coverage, config, result }; експортовано для тестів правила.
 export function pickBaffleCandidate(pool) {
@@ -809,7 +814,7 @@ const HOLD_BURN_RATE_W = 0.1;
 // Нічию розв'язуємо меншим зсувом від поточних положень: 1e-5 на 1 % ходу — це
 // не зсуває мету більш ніж на ≈0.003, але не дає тюнеру без потреби крутити все.
 // Чиста функція (app.js лише застосовує результат), щоб її можна було тестувати.
-export function fitAirToPhi(config, target = 0.45) {
+export function fitAirToPhi(config, target = PHI_TARGET) {
   const p0 = +config?.primaryAir?.openPct || 0;
   const s0 = +config?.operation?.secondaryAirPct || 0;
   const w0 = +config?.airWash?.intakePct || 0;

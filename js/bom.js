@@ -8,6 +8,7 @@ import {
   DESIGN_TEMP_C, FIT_MM, gapPerSideMm, filletA, stitch, weldSymbolSVG, ceilTo,
 } from './production.js';
 import { PROD_TXT, STR } from './i18n.js';
+import { BLANK_ALLOWANCE, BLANK_ALLOWANCE_PCT } from './thresholds.js';
 
 const round = (v, d = 1) => Math.round(v * 10 ** d) / 10 ** d;
 const clampBom = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -416,7 +417,7 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
     tertP.fitRef = fTert?.id || null;
   }
   if (cfg.combustion && cfg.combustion.catalyst && cfg.combustion.catalyst.enabled) {
-    add('Каталітичний стільник', 1, cfg.chimney.diameterCm, cfg.chimney.diameterCm, 2.5, 'каталізатор', `${cfg.combustion.catalyst.cellsPerCm2 || 62} cell/cm²`, 'purchased');
+    add('Каталітичний стільник', 1, cfg.chimney.diameterCm, cfg.chimney.diameterCm, 2.5, 'каталізатор', '', 'purchased');
   }
   // Air-wash: суцільна щілина над склом + флоп-заслінка + бокова ручка.
   const washW = Math.max(12, Math.min(w - steelCm * 3, doorW + 6));
@@ -514,7 +515,7 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
       glassMassKg: round(glassMass, 2),
       totalMassKg: round(steelMass + brickMass + glassMass + insMass, 1),
       steelAreaM2: round(cutAreaCm2 / 10000, 2),
-      cutAreaM2: round((cutAreaCm2 * 1.12) / 10000, 2), // +12% на розкладку металу (nesting)
+      cutAreaM2: round((cutAreaCm2 * BLANK_ALLOWANCE) / 10000, 2), // площа заготовок із запасом (оцінка), НЕ довжина/площа різу й не результат розкладки
       // Джерело — план швів (12 груп ISO 2553), а не сума per-деталь weldCm:
       // деталі поза планом (напр. нижній вхід) у офіційний підсумок не входять.
       weldMeters: weldPlan.totalM,
@@ -529,10 +530,13 @@ export function buildBOM(cfg, physicsResult = null, lang = 'uk') {
   };
 }
 
+// Запас до площі заготовок (BLANK_ALLOWANCE, thresholds.js) — константа-ОЦІНКА, плоска
+// надбавка; реальної розкладки (nesting) у коді немає.
+
 export function bomToCsv(bom, lang = 'uk') {
   const head = lang === 'en'
-    ? 'Part,Qty,Width cm,Height cm,Thickness cm,Type,Cut area cm2,Mass kg,Material,Weld cm,Note'
-    : 'Деталь,К-ть,Ширина см,Висота см,Товщина см,Тип,Площа різу см2,Маса кг,Матеріал,Шов см,Примітка';
+    ? 'Part,Qty,Width cm,Height cm,Thickness cm,Type,Blank area cm2,Mass kg,Material,Weld cm,Note'
+    : 'Деталь,К-ть,Ширина см,Висота см,Товщина см,Тип,Площа заготовки см2,Маса кг,Матеріал,Шов см,Примітка';
   const kindTxt = lang === 'en'
     ? { sheet: 'sheet', bar: 'bar', tube: 'developed', purchased: 'purchased' }
     : { sheet: 'лист', bar: 'планка', tube: 'розгортка', purchased: 'покупна' };
@@ -551,8 +555,8 @@ export function bomToCsv(bom, lang = 'uk') {
   // короткий "РАЗОМ,,сталь Х кг,..." рядок ламав табличні парсери, які
   // очікують однакову кількість полів у кожному рядку CSV.
   const summary = lang === 'en'
-    ? `steel ${bom.totals.steelMassKg} kg, brick ${bom.totals.brickMassKg} kg, glass ${bom.totals.glassMassKg} kg, cut ${bom.totals.cutAreaM2} m2, weld ${bom.totals.weldMeters} m, purchased ${bom.totals.purchasedCount} pcs, total ${bom.totals.totalMassKg} kg (estimate)`
-    : `сталь ${bom.totals.steelMassKg} кг, шамот ${bom.totals.brickMassKg} кг, скло ${bom.totals.glassMassKg} кг, різ ${bom.totals.cutAreaM2} м2, шов ${bom.totals.weldMeters} м, покупних ${bom.totals.purchasedCount} шт, загалом ${bom.totals.totalMassKg} кг (оцінка)`;
+    ? `steel ${bom.totals.steelMassKg} kg, brick ${bom.totals.brickMassKg} kg, glass ${bom.totals.glassMassKg} kg, blanks ${bom.totals.cutAreaM2} m2 (+${BLANK_ALLOWANCE_PCT}% allowance), weld ${bom.totals.weldMeters} m, purchased ${bom.totals.purchasedCount} pcs, total ${bom.totals.totalMassKg} kg (estimate)`
+    : `сталь ${bom.totals.steelMassKg} кг, шамот ${bom.totals.brickMassKg} кг, скло ${bom.totals.glassMassKg} кг, заготовки ${bom.totals.cutAreaM2} м2 (+${BLANK_ALLOWANCE_PCT}% запас), шов ${bom.totals.weldMeters} м, покупних ${bom.totals.purchasedCount} шт, загалом ${bom.totals.totalMassKg} кг (оцінка)`;
   const totalsRow = [lang === 'en' ? 'TOTAL' : 'РАЗОМ', '', '', '', '', '', '', '', '', '', summary].map(esc).join(',');
   // Виробничий шар (блок G): ще 2 рядки по 11 полів — довідка про допуски й
   // дисклеймер стаціонарної моделі. Ті самі 11 колонок, решта полів порожні

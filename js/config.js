@@ -127,7 +127,7 @@ export const MODEL_PRESETS = {
       combustion: {
         washAsSecondary: true,
         tertiary: { enabled: false, holeCount: 8, holeDiameterCm: 0.5 },
-        catalyst: { enabled: false, lightoffC: 260, areaCm2: 120 },
+        catalyst: { enabled: false, lightoffC: 260 },
       },
       door: { widthCm: 42, heightCm: 38 },
       baffle: { heightCm: 52, angleDeg: -2, frontGapCm: 4, airflowPct: 45 },
@@ -268,7 +268,7 @@ export const CONFIG_SCHEMA = {
   combustion: {
     washAsSecondary: true,
     tertiary: { enabled: false, holeCount: 8, holeDiameterCm: 0.5 },
-    catalyst: { enabled: false, lightoffC: 260, areaCm2: 120 },
+    catalyst: { enabled: false, lightoffC: 260 },
   },
 };
 
@@ -357,7 +357,9 @@ export function normalizeConfig(cfg) {
   cfg.combustion.catalyst ??= {};
   cfg.combustion.catalyst.enabled = Boolean(cfg.combustion.catalyst.enabled);
   cfg.combustion.catalyst.lightoffC = clamp(+cfg.combustion.catalyst.lightoffC || 260, 150, 500);
-  cfg.combustion.catalyst.areaCm2 = clamp(+cfg.combustion.catalyst.areaCm2 || 120, 40, 400);
+  // Міграція: поле areaCm2 було мертвим (жодного споживача) і прибране зі схеми;
+  // старі збережені/імпортовані значення мовчки відкидаємо, без помилки.
+  delete cfg.combustion.catalyst.areaCm2;
 
   cfg.baffle.heightCm = clamp(+cfg.baffle.heightCm || 58, 20, 120);
   cfg.baffle.angleDeg = clamp(+cfg.baffle.angleDeg || 0, -20, 30);
@@ -431,7 +433,8 @@ export function normalizeConfig(cfg) {
   cfg.testBurn.flueTempC = clamp(+cfg.testBurn.flueTempC || 260, 20, 800);
   cfg.testBurn.stoveTopTempC = clamp(+cfg.testBurn.stoveTopTempC || 420, 20, 1000);
   cfg.testBurn.glassTempC = clamp(+cfg.testBurn.glassTempC || 180, 20, 600);
-  cfg.testBurn.smokeOpacityPct = clamp(+cfg.testBurn.smokeOpacityPct || 5, 0, 100);
+  // safeNum, а не `|| 5`: 0 % — коректне значення («дим вимкнено»), а не «не задано».
+  cfg.testBurn.smokeOpacityPct = clamp(safeNum(cfg.testBurn.smokeOpacityPct, 5), 0, 100);
 
   cfg.calibration ??= {};
   cfg.calibration.enabled = Boolean(cfg.calibration.enabled);

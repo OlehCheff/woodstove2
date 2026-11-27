@@ -3,13 +3,16 @@ import { readFileSync } from 'node:fs';
 import { PhysicsModel, optimizeConfig, compareOutlets, fitAirToPhi, pickBaffleCandidate, SCORE_INDIFFERENCE, MODEL_VERSION } from '../js/physics-model.js';
 import { parseConfigText, parseShareValue, applyImported } from '../js/sanitize.js';
 import { bootState } from '../js/persist.js';
-import { defaultConfig, STORAGE_KEY, SCHEMA_VERSION, OPERATION_MODES, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, deepMerge, encodeConfig, decodeConfig, doorOpening, DOOR_OVERLAP_CM, MODEL_PRESETS, rearOutletLayout, bottomIntakeGeometry, bottomIntakeCollisions, legFootprints, secondaryHolePattern, SECONDARY_AREA_PER_LITER_CM2, INTAKE_MIN_STOP_PCT, SECONDARY_DRILLS_CM } from '../js/config.js';
+import { CONFIG_SCHEMA, defaultConfig, STORAGE_KEY, SCHEMA_VERSION, OPERATION_MODES, normalizeConfig, applyModePreset, applyModelPreset, validateConfig, deepMerge, encodeConfig, decodeConfig, doorOpening, DOOR_OVERLAP_CM, MODEL_PRESETS, rearOutletLayout, bottomIntakeGeometry, bottomIntakeCollisions, legFootprints, secondaryHolePattern, SECONDARY_AREA_PER_LITER_CM2, INTAKE_MIN_STOP_PCT, SECONDARY_DRILLS_CM } from '../js/config.js';
 import { STR, WARN_TXT, WARN_ARG, VALIDATION_TXT, OUTLET_TXT, PROD_TXT } from '../js/i18n.js';
 import { calibrateFromLog, isCalibrationCurrent, evaluateCalibration, detectJournalDesync, refreshLogPredictions, mergeCalibration, emptyCalibration, configSnapshot } from '../js/calibration.js';
 import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF, bomGeometry, buildWeldPlan, buildFitPlan } from '../js/bom.js';
 import { steelStrain, stainlessStrain, fireclayStrain, filletA } from '../js/production.js';
 import { designInternals } from '../js/autodesign.js';
-import { requiredPowerKw, sizeStoveForPower, evaluateRoom, PURPOSES } from '../js/room.js';
+import { requiredPowerKw, sizeStoveForPower, evaluateRoom, PURPOSES, OVERSIZE_RATIO } from '../js/room.js';
+import { computeTestBurnCore, checkTestBurnPlausibility } from '../js/test-burn.js';
+import { TB_TXT } from '../js/i18n.js';
+import * as TH from '../js/thresholds.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const round = (v, d = 1) => Math.round(v * 10 ** d) / 10 ** d;
@@ -2394,7 +2397,7 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
   // (к) Підпис Φ у UI: статус порівнюється з тим самим округленням (2 знаки), що й напис
   // (раніше Φ 0.504 показувало «Φ = 0.50» поруч із «Φ > 0.5»).
   const appSrc = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
-  ok(/const phiShown = \+phi\.toFixed\(2\)/.test(appSrc) && /inBand = phiShown >= 0\.4 && phiShown <= 0\.5/.test(appSrc) && /phiShown > 0\.5 \? 'phiRich'/.test(appSrc),
+  ok(/const phiShown = phi2/.test(appSrc) && /const phi2 = m\.equivalenceRatio2/.test(appSrc) && /phiGaugeState\(phiShown, mode\)/.test(appSrc) && !/phiShown > 0\.5/.test(appSrc) && !/\+phi\.toFixed\(2\)/.test(appSrc),
     'the Φ gauge status uses the same 2-digit rounding as its label');
 }
 
@@ -2697,7 +2700,7 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
     // друк: статичний скрипт звіту (з знімком і без)
     /^const printJs = dataUrl \? raw\(`<script>document\.getElementById\('repImg'\)[^`]*`\) : raw\('<script>window\.print\(\)<\\\/script>'\);$/,
   ];
-  const jsFiles = ['app.js', 'autodesign.js', 'bom.js', 'calibration.js', 'config.js', 'exporters.js', 'journal.js', 'persist.js', 'physics-model.js', 'production.js', 'room.js', 'sanitize.js', 'stove-builder.js', 'toast.js', 'i18n.js'];
+  const jsFiles = ['app.js', 'autodesign.js', 'bom.js', 'calibration.js', 'config.js', 'exporters.js', 'journal.js', 'persist.js', 'physics-model.js', 'production.js', 'room.js', 'test-burn.js', 'sanitize.js', 'stove-builder.js', 'toast.js', 'i18n.js', 'thresholds.js'];
   for (const f of jsFiles) {
     const bad = findUnsafeSinks(readJs(f), { allowRaw: f === 'app.js' ? RAW_ALLOW : [] });
     ok(bad.length === 0, `js/${f}: no unescaped HTML sinks`, bad.join('; '));
@@ -2740,6 +2743,340 @@ for (const name of Object.keys(MODEL_PRESETS)) for (const m of ['start-up', 'low
   ok(!['operationMode', 'exportBom', 'exportDrawing', 'exportDxf', 'shareConfig', 'langToggle', 'fitRoom', 'saveJson', 'resetConfig'].some((id) => needs3d.includes(id)), 'calculation/export/share controls are NOT disabled without WebGL');
   ok(/id="toasts"[^>]*role="status"[^>]*aria-live="polite"/.test(indexSrc), 'toast container is an accessible live region (role=status, aria-live=polite)');
   ok(/const renderer = createRenderer\(\)/.test(appSrc) && /try\s*\{\s*const r = new THREE\.WebGLRenderer/.test(appSrc), 'WebGLRenderer is created inside try/catch (no top-level throw)');
+}
+
+
+// --- Кластер A: Test Burn і стан кімнати ---
+{
+  const pred = PhysicsModel.evaluate(base);
+  const tb = (o) => ({ ...base.testBurn, loadMode: 'manual', loadKg: 7.8, measuredBurnHours: 7.5, ...o });
+  const over = computeTestBurnCore(pred, tb({ measuredUsefulHeatKwh: 100 }));
+  ok(over.overUnity && over.measuredEfficiency === null && over.measuredEfficiencyRawPct > 100, 'Test Burn: віддача > палива -> overUnity, ККД не клампиться до 100');
+  ok(checkTestBurnPlausibility(over).some((i) => i.code === 'TB_OVER_UNITY' && i.severity === 'error'), 'Test Burn: TB_OVER_UNITY (error)');
+  const fuel = 7.8 * pred.metrics.woodEnergyKwhKg;
+  const good = computeTestBurnCore(pred, tb({ measuredUsefulHeatKwh: fuel * 0.7 }));
+  ok(!good.overUnity && Math.abs(good.measuredEfficiency - 70) < 0.5 && checkTestBurnPlausibility(good).length === 0, 'Test Burn: нормальний ввід без попереджень');
+  ok(checkTestBurnPlausibility(computeTestBurnCore(pred, tb({ measuredUsefulHeatKwh: fuel * 0.95 }))).some((i) => i.code === 'TB_EFF_HIGH'), 'Test Burn: ККД вище стелі моделі -> TB_EFF_HIGH');
+  ok(checkTestBurnPlausibility(computeTestBurnCore(pred, tb({ loadKg: pred.metrics.maxLoadKg + 5, measuredUsefulHeatKwh: 0 }))).some((i) => i.code === 'TB_LOAD_OVER_MAX'), 'Test Burn: закладка > max топки -> TB_LOAD_OVER_MAX');
+  ok(checkTestBurnPlausibility(computeTestBurnCore(pred, tb({ glassTempC: 400, stoveTopTempC: 300, measuredUsefulHeatKwh: 0 }))).some((i) => i.code === 'TB_TEMP_ORDER'), 'Test Burn: скло гарячіше за верх -> TB_TEMP_ORDER');
+  const auto = computeTestBurnCore(pred, { ...tb({ measuredUsefulHeatKwh: 10 }), loadMode: 'auto' });
+  ok(auto.fuelBasis === 'recommended' && checkTestBurnPlausibility(auto).some((i) => i.code === 'TB_FUEL_AUTO'), 'Test Burn: auto-режим підписує паливо як модельну закладку');
+  const codes = ['TB_OVER_UNITY', 'TB_EFF_HIGH', 'TB_FUEL_AUTO', 'TB_LOAD_OVER_MAX', 'TB_TEMP_ORDER'];
+  ok(codes.every((c) => typeof TB_TXT.uk[c] === 'function' && typeof TB_TXT.en[c] === 'function'), 'TB_TXT має всі коди в uk і en');
+  ok(STR.uk.roomOversized && STR.en.roomOversized && STR.uk.moistureHint && STR.en.moistureHint && STR.uk.modelBurnHours && STR.en.modelBurnHours && STR.uk.testSaveBlocked && STR.en.testSaveBlocked, 'нові ключі кластера A є в обох мовах');
+  // Вологість впливає на модель, тож UI-обробник мусить викликати renderPhysics (не лише renderTestBurn).
+  const dry = PhysicsModel.evaluate({ ...base, testBurn: { ...base.testBurn, woodMoisturePct: 8 } }).metrics;
+  const wet = PhysicsModel.evaluate({ ...base, testBurn: { ...base.testBurn, woodMoisturePct: 35 } }).metrics;
+  ok(dry.efficiencyPct > wet.efficiencyPct && dry.burnTimeHours > wet.burnTimeHours, 'вологість змінює ККД і час горіння моделі');
+  const appSrcA = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+  ok(/id === 'woodMoisturePct'\) \{ renderPhysics\(\)/.test(appSrcA) && !/woodMoisturePct: 1/.test(appSrcA), 'обробник слайдера вологості викликає renderPhysics');
+  // Кімната
+  const bigStove = evaluateRoom({ ...base, room: { ...base.room, inputMode: 'volume', volumeM3: 20, purpose: 'room' } });
+  ok(bigStove.status === 'oversized' && bigStove.ratio > OVERSIZE_RATIO && bigStove.enough, 'evaluateRoom: велика піч у малій кімнаті -> oversized');
+  const lowRoom = evaluateRoom({ ...base, room: { ...base.room, inputMode: 'volume', volumeM3: 500, purpose: 'room' } });
+  ok(lowRoom.status === 'low' && !lowRoom.enough, 'evaluateRoom: мала піч у великій кімнаті -> low');
+  const okRoom = evaluateRoom({ ...base, room: { ...base.room, inputMode: 'volume', volumeM3: Math.round(bigStove.actualKw * 14 / 1.2), purpose: 'room' } });
+  ok(okRoom.status === 'ok', 'evaluateRoom: підібраний обʼєм -> ok', JSON.stringify(okRoom));
+}
+
+// B. Кластер «статуси»: один вердикт, пороги з констант, Φ-датчик = список «Проблеми».
+{
+  const MODES = ['start-up', 'low', 'medium', 'high', 'overnight'];
+  const names = Object.keys(MODEL_PRESETS);
+  // (1) configVerdict: чиста логіка
+  const V = TH.configVerdict;
+  ok(V({ errors: [], warnings: [] }, []).level === 'ok', 'verdict: порожньо -> ok');
+  ok(V({ errors: [], warnings: [] }, [{ level: 'info' }]).level === 'ok', 'verdict: info не знімає «ok»');
+  ok(V({ errors: [], warnings: [] }, [{ level: 'warn' }]).level === 'warn', 'verdict: physics warn -> warn');
+  ok(V({ errors: [], warnings: [{}] }, []).level === 'warn', 'verdict: geometry warning -> warn');
+  ok(V({ errors: [], warnings: [] }, [], 2).level === 'warn', 'verdict: fitIssues -> warn');
+  ok(V({ errors: [], warnings: [] }, [{ level: 'warn' }, { level: 'danger' }]).level === 'danger', 'verdict: danger переважає warn');
+  ok(V({ errors: [{}], warnings: [] }, [{ level: 'danger' }]).level === 'error', 'verdict: errors переважають danger');
+  // (2) інваріант на 50 клітинках: «ok» => жодних errors/danger/warn; danger у списку => не «ok»
+  const bad = []; let sawDanger = 0; let roomNotOk = 0;
+  for (const n of names) for (const m of MODES) {
+    const { cfg, e } = uiCell(n, m);
+    const val = validateConfig(cfg);
+    const v = V(val, e.warnings, 0, evaluateRoom(cfg).status);
+    const hasDanger = e.warnings.some((w) => w.level === 'danger');
+    const hasWarn = e.warnings.some((w) => w.level === 'warn');
+    if (hasDanger) sawDanger++;
+    if (hasDanger && (v.level === 'ok' || v.level === 'warn')) bad.push(`${n}/${m}:danger->${v.level}`);
+    if (v.level === 'ok' && (hasDanger || hasWarn || !val.valid)) bad.push(`${n}/${m}:ok-but-issues`);
+    const rs = evaluateRoom(cfg).status;
+    if (rs !== 'ok') roomNotOk++;
+    if (rs !== 'ok' && v.level === 'ok') bad.push(`${n}/${m}:ok-but-room-${rs}`);
+  }
+  ok(sawDanger > 0 && roomNotOk > 0 && bad.length === 0, 'verdict: банер «коректна» ніколи не поруч із danger/warn/«піч завелика|замала» у 50 клітинках', JSON.stringify({ sawDanger, bad: bad.slice(0, 4) }));
+  const appSrcB = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+  ok(/configVerdict\(validateConfig\(config\), r\.warnings, bom \? bom\.fitIssues : 0, room \? room\.status : 'ok'\)/.test(appSrcB) && !/result\.valid && !result\.warnings\.length/.test(appSrcB), 'app.js: банер і «Проблем не виявлено» йдуть від configVerdict, а не від result.valid');
+  for (const l of ['uk', 'en']) ok(['validConfigNotes', 'validConfigDanger', 'validConfigErrors', 'noPhysicsWarnings'].every((k) => STR[l][k]), `ключі вердикту є в ${l}`);
+
+  // (3) Φ-датчик <=> MIX_* у списку: «ризик» (tone warn) рівно тоді, коли попередження є
+  const cells = names.flatMap((n) => MODES.map((m) => ({ n, m, e: uiCell(n, m).e })));
+  for (const n of ['ws1', 'ws5', 'ws10']) for (const m of MODES) {
+    const base0 = uiCell(n, m).cfg;
+    for (const w of [10, 40, 100]) for (const p of [10, 50, 95]) {
+      const cfg = clone(base0); cfg.airWash.intakePct = w; cfg.primaryAir.openPct = p;
+      cells.push({ n, m, e: PhysicsModel.evaluate(cfg) });
+    }
+  }
+  const badPhi = [];
+  for (const { n, m, e } of cells) {
+    const st = TH.phiGaugeState(e.metrics.equivalenceRatio2, m);
+    const rich = e.warnings.some((w) => w.code === 'MIX_RICH');
+    const lean = e.warnings.some((w) => w.code === 'MIX_LEAN');
+    if ((st.key === 'phiRich') !== rich || (st.key === 'phiLean') !== lean || (st.tone === 'warn') !== (rich || lean)) badPhi.push(`${n}/${m}:phi=${e.metrics.equivalenceRatio}:${st.key}:${rich}/${lean}`);
+  }
+  ok(badPhi.length === 0, 'Φ-датчик каже «ризик»/«забагато повітря» лише коли в «Проблемах» є MIX_RICH/MIX_LEAN (і навпаки)', JSON.stringify(badPhi.slice(0, 4)));
+  ok(TH.phiGaugeState(0.61, 'overnight').key === 'phiModeRich' && TH.phiGaugeState(0.32, 'start-up').key === 'phiModeOpen', 'Φ-датчик: overnight/start-up навмисні режими без «ризик»');
+  ok(TH.phiGaugeState(0.51, 'low').tone === 'soft' && TH.phiGaugeState(0.37, 'medium').tone === 'soft' && TH.phiGaugeState(0.45, 'medium').tone === 'ok', 'Φ-датчик: буфер 0.35–0.4 / 0.5–0.55 нейтральний, зона зелена');
+
+  // (4) Числа в текстах = константи, КОЖЕН код за власним очікуваним набором (а не спільним Set):
+  // підміна «58» на інше дозволене число (напр. 40) тепер ловиться.
+  const S = (...v) => new Set(v.map(String));
+  const expectedWarn = {
+    OVERHEAT_RISK: S(TH.STEEL_THIN_MM), STEEL_OVERHEAT: S(TH.STEEL_THIN_MM), INEFFICIENT_MODE: S(TH.EFFICIENCY_LOW_PCT),
+    SECONDARY_INTAKE_LOW: S(INTAKE_MIN_STOP_PCT), CREOSOTE_RISK: S(TH.CREOSOTE_WARN_C), CONNECTOR_LONG: S(TH.CONNECTOR_MAX_CM),
+  };
+  const expectedStr = {
+    phiInBand: S(TH.PHI_BAND_MIN, TH.PHI_BAND_MAX), phiRich: S(TH.PHI_RICH_WARN), phiLean: S(TH.PHI_LEAN_INFO),
+    phiRichSoft: S(TH.PHI_BAND_MIN, TH.PHI_BAND_MAX, TH.PHI_RICH_WARN), phiModeRich: S(TH.PHI_RICH_WARN),
+    phiLeanSoft: S(TH.PHI_BAND_MIN, TH.PHI_BAND_MAX, TH.PHI_LEAN_INFO), phiModeOpen: S(TH.PHI_LEAN_INFO), phiAuto: S(TH.PHI_TARGET),
+    bomCut: S(TH.BLANK_ALLOWANCE_PCT), roomOversized: S(),
+  };
+  const numsOf = (str) => (String(str).replace(/Φ=\S+/g, '').match(/\d+(?:\.\d+)?/g) || []);
+  const stray = []; let checked = 0;
+  for (const l of ['uk', 'en']) {
+    const texts = [];
+    for (const [code, v] of Object.entries(WARN_TXT[l])) texts.push([`WARN.${code}`, typeof v === 'function' ? v(123457) : v, expectedWarn[code] || S()]);
+    texts.push(['VAL.CONNECTOR_LONG', VALIDATION_TXT[l].CONNECTOR_LONG({ length: 123457 }), S(TH.CONNECTOR_MAX_CM)]);
+    for (const [k, exp] of Object.entries(expectedStr)) texts.push([k, STR[l][k], exp]);
+    texts.push(['TB_HOURS_SHORT', TB_TXT[l].TB_HOURS_SHORT({ hours: 123457, min: TH.TB_BURN_HOURS_MIN }), S(TH.TB_BURN_HOURS_MIN)]);
+    for (const [k, txt, exp] of texts) { checked++; for (const nn of numsOf(txt)) if (nn !== '123457' && !exp.has(nn)) stray.push(`${l}.${k}:${nn}`); }
+    ok(STR[l].intakeNote.includes(`${INTAKE_MIN_STOP_PCT} %`), `intakeNote (${l}): поріг повзуна збігається з INTAKE_MIN_STOP_PCT`);
+  }
+  ok(stray.length === 0 && checked > 20, 'числа в текстах порогів = очікувані константи КОЖНОГО коду (62 vs 58, 40 vs 58 тощо)', JSON.stringify(stray));
+  // TB_TXT: числа лише з values - жодних захардкоджених у шаблонах (крім фізичної межі 100 %)
+  const tbStray = [];
+  for (const l of ['uk', 'en']) for (const [code, fn] of Object.entries(TB_TXT[l])) {
+    const v = { eff: 123457, max: 123457, kg: 123457, glass: 123457, top: 123457, hours: 123457, min: 123457, fuelKw: 123457, grossKw: 123457, ratio: 123457, measuredKw: 123457, predictedKw: 123457 };
+    for (const nn of numsOf(fn(v))) if (+nn !== 123457 && nn !== '100') tbStray.push(`${l}.${code}:${nn}`);
+  }
+  ok(tbStray.length === 0, 'TB_TXT: усі числа йдуть із values (поріг «100 %» = фізична межа ККД)', JSON.stringify(tbStray));
+  ok(WARN_TXT.uk.INEFFICIENT_MODE.includes(`< ${TH.EFFICIENCY_LOW_PCT}%`) && WARN_TXT.en.INEFFICIENT_MODE.includes(`< ${TH.EFFICIENCY_LOW_PCT}%`), 'INEFFICIENT_MODE: текст містить поріг із константи');
+  ok(WARN_TXT.uk.CREOSOTE_RISK(120).includes(`< ${TH.CREOSOTE_WARN_C}°C`) && WARN_TXT.uk.CONNECTOR_LONG(50).includes(`> ${TH.CONNECTOR_MAX_CM} см`) && WARN_TXT.uk.SECONDARY_INTAKE_LOW(10).includes(`< ${INTAKE_MIN_STOP_PCT} %`), 'CREOSOTE/CONNECTOR/INTAKE: тексти беруть пороги з констант');
+  // Статичні повідомлення моделі збігаються з текстами uk (однакові числа).
+  const diffMsg = [];
+  for (const { e } of cells) for (const w of e.warnings) if (typeof WARN_TXT.uk[w.code] === 'string' && w.message !== WARN_TXT.uk[w.code]) diffMsg.push(w.code);
+  ok(diffMsg.length === 0, 'статичні повідомлення моделі збігаються з WARN_TXT.uk', JSON.stringify(diffMsg.slice(0, 3)));
+  const pm = readFileSync(new URL('../js/physics-model.js', import.meta.url), 'utf8');
+  ok(/efficiencyPct < EFFICIENCY_LOW_PCT/.test(pm) && !/efficiencyPct < 58/.test(pm) && /round\(exitFlueTempC, 0\) < CREOSOTE_WARN_C/.test(pm) && /connectorM > CONNECTOR_MAX_CM/.test(pm), 'physics-model.js порівнює з константами порогів, а не з літералами');
+}
+
+const MODES_ALL = ['start-up', 'low', 'medium', 'high', 'overnight'];
+// 99. Кластер C-dead-controls: реєстр «елемент UI -> що змінює».
+// Реєстр (id -> споживач):
+//   catalystEnabled      -> physics (ККД +2.5 п.п., secondaryIgnitionC), 3D (stove-builder), BOM
+//   catalystLightoffC    -> ПРИБРАНО зі слайдерів: T згоряння моделі (мін. ~830 °C у 50 клітинках, клемп 450)
+//                           завжди вища за будь-який поріг 150..500, тож на ККД/попередження він НЕ діяв.
+//                           Поле lightoffC лишилось у схемі (дефолт 260, міграція) і впливає лише на внутрішнє
+//                           metrics.secondaryIgnitionC; у UI показано пояснювальну підказку (catalystLightoff).
+//   woodMoisturePct      -> physics + Test Burn; loadKg/measuredBurnHours/measuredUsefulHeatKwh -> Test Burn, журнал
+//   flueTempC/stoveTopTempC/glassTempC -> лише перевірка TB_TEMP_ORDER і текст-підсумок (у фізику/калібрування НЕ входять)
+//   smokeOpacityPct      -> ЛИШЕ 3D-дим і текст-підсумок (на розрахунок не впливає); 0 = дим вимкнено
+//   widthCm..doorHeightCm, steel*, firebrick*, chimney*, *AirPct -> геометрія/фізика/BOM
+//   camera*, *Color, steelRoughness/Metalness, explodeDistanceCm -> лише 3D
+//   combustion.catalyst.areaCm2 -> ПРИБРАНО (мертве поле без споживачів)
+// Усі слайдери index.html мусять мати запис у controlMap (інакше слайдер «без обробника»).
+{
+  const htmlSrc = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const appSrc = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+  const mapSrc = appSrc.match(/const controlMap = \{([\s\S]*?)\n\};/)[1];
+  const mapped = new Set([...mapSrc.matchAll(/(\w+):\s*'/g)].map((m) => m[1]));
+  const ranges = [...htmlSrc.matchAll(/<input[^>]*\btype="range"[^>]*\bid="(\w+)"|<input[^>]*\bid="(\w+)"[^>]*\btype="range"/g)].map((m) => m[1] || m[2]);
+  const orphan = ranges.filter((id) => !mapped.has(id));
+  ok(ranges.length > 10 && orphan.length === 0, 'кожен слайдер index.html має запис у controlMap (без мертвих слайдерів)', JSON.stringify(orphan));
+  ok(!mapped.has('catalystLightoffC') && !/id="catalystLightoffC"/.test(htmlSrc) && !/catalystLightoffC/.test(appSrc), 'мертвий слайдер порогу каталізатора прибрано з UI (index.html, controlMap, app.js)');
+  ok(/не регулю/.test(STR.uk.catalystLightoff) && /not adjustable/.test(STR.en.catalystLightoff) && /data-i18n="catalystLightoff"/.test(htmlSrc), 'на місці слайдера - чесна підказка «фіксована оцінка, на результат не впливає» (uk/en)');
+  // Доказ, що слайдер справді був мертвим (а отже прибрати його чесно): 3 пресети x 5 режимів, каталізатор увімкнено,
+  // lightoffC 150 vs 500 - ККД, secondaryActive і набір попереджень ідентичні, CATALYST_COLD не спрацьовує.
+  {
+    const diffs = []; let minT = Infinity; let cold = 0;
+    for (const n of ['ws1', 'ws6', 'ws10']) for (const m of MODES_ALL) {
+      const lo = clone(uiCell(n, m).cfg); lo.combustion.catalyst = { enabled: true, lightoffC: 150 };
+      const hi = clone(lo); hi.combustion.catalyst.lightoffC = 500;
+      const a = PhysicsModel.evaluate(lo), b = PhysicsModel.evaluate(hi);
+      minT = Math.min(minT, a.metrics.combustionTempC);
+      if (a.warnings.some((w) => w.code === 'CATALYST_COLD') || b.warnings.some((w) => w.code === 'CATALYST_COLD')) cold++;
+      if (a.metrics.efficiencyPct !== b.metrics.efficiencyPct || a.metrics.secondaryActive !== b.metrics.secondaryActive || a.metrics.catalystActive !== b.metrics.catalystActive
+        || JSON.stringify(a.warnings.map((w) => w.code)) !== JSON.stringify(b.warnings.map((w) => w.code))) diffs.push(`${n}/${m}`);
+    }
+    ok(diffs.length === 0 && cold === 0 && minT > 500, 'поріг каталізатора 150..500 не змінює видимих результатів (T згоряння завжди > 500), тож слайдер прибрано', JSON.stringify({ diffs, cold, minT }));
+  }
+
+  const cc = designInternals(normalizeConfig(clone(defaultConfig)));
+  cc.combustion.catalyst.enabled = true;
+  const ign = [150, 260, 500].map((l) => { const x = clone(cc); x.combustion.catalyst.lightoffC = l; return PhysicsModel.evaluate(x).metrics.secondaryIgnitionC; });
+  ok(ign[0] < ign[1] && ign[1] < ign[2], 'lightoffC змінює secondaryIgnitionC', JSON.stringify(ign));
+
+  const sm = (v) => { const x = clone(defaultConfig); x.testBurn.smokeOpacityPct = v; return normalizeConfig(x).testBurn.smokeOpacityPct; };
+  ok(sm(0) === 0 && sm('0') === 0 && sm(1) === 1 && sm(100) === 100 && sm(150) === 100 && sm(-5) === 0, 'smokeOpacityPct: 0 не перетворюється на 5, межі 0..100', JSON.stringify([sm(0), sm(1), sm(150), sm(-5)]));
+  ok(sm(undefined) === 5 && sm(NaN) === 5 && sm('abc') === 5, 'smokeOpacityPct: відсутнє/NaN -> дефолт 5');
+  ok(/showSmoke = smokePct > 0;/.test(appSrc), '3D-дим вимикається лише при 0 %, а не при 1-2 %');
+
+  const old = clone(base); old.combustion.catalyst = { enabled: true, lightoffC: 300, areaCm2: 999 };
+  let migrated = null, threw = false;
+  try { migrated = normalizeConfig(old); } catch { threw = true; }
+  ok(!threw && !('areaCm2' in migrated.combustion.catalyst) && migrated.combustion.catalyst.lightoffC === 300 && migrated.combustion.catalyst.enabled === true, 'старий збережений catalyst.areaCm2 мовчки відкидається, решта лишається');
+  ok(!('areaCm2' in base.combustion.catalyst) && !('areaCm2' in CONFIG_SCHEMA.combustion.catalyst), 'areaCm2 відсутнє в defaultConfig і схемі');
+
+  const dictTxt = JSON.stringify([STR.uk.bomCut, STR.en.bomCut, STR.uk.bomArea, STR.en.bomArea]);
+  ok(!/різу|nested|розкладк|Cut area/i.test(dictTxt) && /заготов/.test(STR.uk.bomCut) && /[Bb]lank/.test(STR.en.bomCut), 'bomCut: назва = площа заготовок із запасом, без «різу/розкладки/nested»', dictTxt);
+  const bomT = buildBOM(normalizeConfig(clone(defaultConfig)), null, 'uk');
+  const csvUk = bomToCsv(bomT, 'uk'), csvEn = bomToCsv(bomT, 'en');
+  ok(!/Площа різу/.test(csvUk) && /Площа заготовки/.test(csvUk) && /Blank area/.test(csvEn) && !/Cut area/.test(csvEn), 'CSV BOM: заголовок колонки = площа заготовки');
+  ok(new RegExp(`заготовки .* м2 \\(\\+${TH.BLANK_ALLOWANCE_PCT}% запас\\)`).test(csvUk) && new RegExp(`blanks .* m2 \\(\\+${TH.BLANK_ALLOWANCE_PCT}% allowance\\)`).test(csvEn) && !/різ \d/.test(csvUk), 'CSV BOM: підсумок називає заготовки й запас (число з BLANK_ALLOWANCE)');
+  ok(TH.BLANK_ALLOWANCE === 1.12 && TH.BLANK_ALLOWANCE_PCT === Math.round((TH.BLANK_ALLOWANCE - 1) * 100) && STR.uk.bomCut.includes(`+${TH.BLANK_ALLOWANCE_PCT}%`) && STR.en.bomCut.includes(`+${TH.BLANK_ALLOWANCE_PCT}%`) && !/const BLANK_ALLOWANCE/.test(readFileSync(new URL('../js/bom.js', import.meta.url), 'utf8')), 'запас заготовок: одна константа BLANK_ALLOWANCE (thresholds.js) для bom.js, bomCut і CSV');
+  ok(bomT.totals.cutAreaM2 > bomT.totals.steelAreaM2 && Math.abs(bomT.totals.cutAreaM2 / bomT.totals.steelAreaM2 - TH.BLANK_ALLOWANCE) < 0.02, 'заготовки = площа деталей x 1.12 (запас, не розкладка)');
+  const cc2 = normalizeConfig(clone(defaultConfig)); cc2.combustion.catalyst.enabled = true;
+  const catRow = buildBOM(cc2, null, 'uk').parts.find((p) => /Каталітичний/.test(p.name));
+  ok(catRow && !/cell\/cm/.test(catRow.note || ''), 'BOM каталізатора не вигадує щільність комірок (cellsPerCm2 не існує)');
+  ok(STR.uk.smokeShort && STR.en.smokeShort && /3D/.test(STR.uk.smokeHint) && /3D/.test(STR.en.smokeHint) && !/прогріву|warm-up/.test(STR.uk.smokeHint + STR.en.smokeHint), 'smokeHint/smokeShort: обидві мови, «лише 3D», без вигаданого «прогріву»');
+}
+
+// --- Фаза 2 (виправлення знахідок рецензентів): тести на кожен пункт ---
+{
+  const V = TH.configVerdict;
+  const okVal = { errors: [], warnings: [] };
+  const appSrc2 = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+  const htmlSrc2 = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const readSrc = (f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
+
+  // (1) Кімната в єдиному вердикті: verdict=ok + room=oversized більше неможливо.
+  ok(V(okVal, [], 0, 'oversized').level === 'warn' && V(okVal, [], 0, 'oversized').counts.room === 1, 'verdict: room oversized -> warn (counts.room=1)');
+  ok(V(okVal, [], 0, 'low').level === 'warn' && V(okVal, [], 0, 'ok').level === 'ok' && V(okVal, []).level === 'ok', 'verdict: room low -> warn; room ok/за замовчуванням -> ok');
+  ok(V(okVal, [{ level: 'danger' }], 0, 'oversized').level === 'danger', 'verdict: danger переважає зауваження кімнати');
+  {
+    // Пара з відгуку: геометрія й фізика без зауважень, а кімната «завелика» (WS-10 medium).
+    let pairs = 0; const missed = [];
+    for (const n of names0()) for (const m of MODES_ALL) {
+      const { cfg, e } = uiCell(n, m);
+      const room = evaluateRoom(cfg);
+      const without = V(validateConfig(cfg), e.warnings, 0);
+      if (without.level === 'ok' && room.status === 'oversized') { pairs++; if (V(validateConfig(cfg), e.warnings, 0, room.status).level === 'ok') missed.push(`${n}/${m}`); }
+    }
+    ok(pairs > 0 && missed.length === 0, 'пара verdict=ok + room=oversized існує в пресетах і тепер дає «є зауваження»', JSON.stringify({ pairs, missed }));
+  }
+  ok(/renderValidation\(verdict, room\)/.test(appSrc2) && /roomStatusText\(room\)/.test(appSrc2) && /const verdict = configVerdict\(.*room \? room\.status : 'ok'\)/.test(appSrc2), 'app.js: кімната передається у вердикт і виводиться в списку перевірки');
+  ok(TH.OVERSIZE_RATIO === OVERSIZE_RATIO && !/export const OVERSIZE_RATIO/.test(readSrc('js/room.js')), 'OVERSIZE_RATIO живе в thresholds.js (room.js лише реекспортує)');
+
+  // (6) Оцінка кімнати - за режимом призначення, а не за поточним режимом перемикача.
+  {
+    const results = MODES_ALL.map((m) => {
+      const c = clone(uiCell('ws6', 'medium').cfg); applyModePreset(c, m);
+      const r = evaluateRoom(c); return `${r.status}/${r.actualKw}/${r.mode}`;
+    });
+    ok(new Set(results).size === 1 && results[0].endsWith(`/${PURPOSES.room.mode}`), 'evaluateRoom не залежить від поточного режиму (start-up/overnight не дають «завелика/замало»)', JSON.stringify(results));
+    const sauna = clone(base); sauna.room.purpose = 'sauna';
+    ok(evaluateRoom(sauna).mode === PURPOSES.sauna.mode, 'evaluateRoom: режим = режим призначення (баня -> high)');
+    ok(STR.uk.roomForMode && STR.en.roomForMode && /roomForMode/.test(appSrc2), 'підпис «для режиму X» поруч із потужністю кімнати (uk/en)');
+  }
+
+  // (2)+(10) Test Burn: нереальна маса/час/потужність.
+  {
+    const pred = PhysicsModel.evaluate(base);
+    const tb = (o) => ({ ...base.testBurn, loadMode: 'manual', loadKg: 7.8, measuredBurnHours: 7.5, ...o });
+    const cs = (o) => checkTestBurnPlausibility(computeTestBurnCore(pred, tb(o)));
+    const has = (list, code) => list.find((i) => i.code === code);
+    // сценарій з відгуку: 30 кг, 0.1 год, 5 кВт·год
+    const bad = cs({ loadKg: 30, measuredBurnHours: 0.1, measuredUsefulHeatKwh: 5 });
+    ok(has(bad, 'TB_HOURS_SHORT') && has(bad, 'TB_POWER_HIGH') && has(bad, 'TB_POWER_FAR') && bad.filter((i) => i.suspect).length >= 2, 'Test Burn: 30 кг за 0.1 год і 50 кВт -> HOURS_SHORT, POWER_HIGH, POWER_FAR (підозрілі)', JSON.stringify(bad.map((i) => i.code)));
+    const noMeas = cs({ loadKg: 30, measuredBurnHours: 0.1, measuredUsefulHeatKwh: 0 });
+    ok(has(noMeas, 'TB_POWER_HIGH') && has(noMeas, 'TB_HOURS_SHORT') && !has(noMeas, 'TB_POWER_FAR') && !noMeas.some((i) => i.suspect), 'Test Burn: без вимірювання теж попереджає про масу/час, але запису це не стосується');
+    ok(cs({ measuredUsefulHeatKwh: 7.8 * pred.metrics.woodEnergyKwhKg * 0.7 }).length === 0, 'Test Burn: нормальний ввід лишається без попереджень');
+    const fuelP = (kg, h) => kg * pred.metrics.woodEnergyKwhKg / h;
+    const limitHours = (TH.TB_FUEL_POWER_RATIO_MAX * pred.metrics.grossHeatOutputKw);
+    const justOk = cs({ loadKg: 7.8, measuredBurnHours: Math.max(TH.TB_BURN_HOURS_MIN, 7.8 * pred.metrics.woodEnergyKwhKg / (limitHours * 0.95)), measuredUsefulHeatKwh: 0 });
+    ok(!has(justOk, 'TB_POWER_HIGH') && !has(justOk, 'TB_HOURS_SHORT') && fuelP(7.8, 7.8 * pred.metrics.woodEnergyKwhKg / (limitHours * 1.1)) > limitHours, 'Test Burn: межа TB_POWER_HIGH береться з grossHeatOutputKw моделі (x TB_FUEL_POWER_RATIO_MAX)');
+    const low = cs({ measuredUsefulHeatKwh: pred.metrics.heatOutputKw * 7.5 / (TH.TB_MEASURED_POWER_RATIO * 1.5) });
+    ok(has(low, 'TB_POWER_FAR'), 'Test Burn: виміряна потужність у кілька разів нижча за модельну теж підозріла');
+    ok(has(cs({ measuredUsefulHeatKwh: 7.8 * pred.metrics.woodEnergyKwhKg * 0.95 }), 'TB_EFF_HIGH').suspect === true, 'Test Burn: TB_EFF_HIGH позначений suspect');
+    for (const code of ['TB_HOURS_SHORT', 'TB_POWER_HIGH', 'TB_POWER_FAR']) {
+      const item = has(bad, code);
+      const txt = ['uk', 'en'].map((l) => TB_TXT[l][code](item.values));
+      ok(txt.every((x) => typeof x === 'string' && x.length > 10 && !/NaN|undefined/.test(x)), `TB_TXT.${code}: тексти uk/en будуються без NaN`);
+    }
+    ok(/function commitTestToLog\(r, suspect\)/.test(appSrc2) && /confirmThen\('tbConfirmSaveMsg', 'tbConfirmSaveYes'/.test(appSrc2) && /some\(\(i\) => i\.suspect\)/.test(appSrc2) && /\.\.\.\(suspect \? \{ suspect: true \} : \{\}\)/.test(appSrc2), 'app.js: підозрілий вимір записується лише після підтвердження і з позначкою suspect');
+    ok(['tbConfirmSaveMsg', 'tbConfirmSaveYes', 'tbSuspectMark'].every((k) => STR.uk[k] && STR.en[k]), 'ключі підтвердження підозрілого запису є в uk/en');
+    ok(/doubtful = e\.suspect === true \|\| \+e\.measuredEffPct >= 100/.test(appSrc2), 'журнал: старі записи з ККД 100 % і підтверджені підозрілі позначаються ⚠ (дані не змінюються)');
+  }
+
+  // (5) Φ-датчик: формулювання «з боку Φ», а не загальне «проблем немає».
+  ok(!/проблем немає/.test(STR.uk.phiRichSoft + STR.uk.phiLeanSoft + STR.uk.phiModeRich + STR.uk.phiModeOpen) && /Φ/.test(STR.uk.phiRichSoft) && !/no problem/.test(STR.en.phiRichSoft + STR.en.phiLeanSoft), 'Φ-датчик не стверджує «проблем немає» загалом');
+
+  // (18) Подвійне округлення Φ: датчик бере те саме округлене значення, що й MIX_*.
+  {
+    const bad = [];
+    for (const n of names0()) for (const m of MODES_ALL) {
+      const mt = uiCell(n, m).e.metrics;
+      if (Math.abs(mt.equivalenceRatio2 - mt.equivalenceRatio) > 0.0051 || mt.equivalenceRatio2 !== +mt.equivalenceRatio2.toFixed(2)) bad.push(`${n}/${m}`);
+    }
+    ok(bad.length === 0, 'metrics.equivalenceRatio2: Φ з 2 знаками, узгоджене з equivalenceRatio', JSON.stringify(bad));
+    // Межа: 0.555 (round 3) -> toFixed(2) дало б 0.56 (ризик), хоча модель (round 2 від 0.5549) = 0.55 (немає MIX_RICH)
+    ok(TH.phiGaugeState(0.55, 'medium').tone === 'soft' && TH.phiGaugeState(0.56, 'medium').tone === 'warn' && TH.phiGaugeState(0.35, 'medium').tone === 'soft' && TH.phiGaugeState(0.34, 'medium').tone === 'warn', 'phiGaugeState: межі 0.55/0.35 (нерівність строга) збігаються з MIX_RICH/MIX_LEAN');
+    ok(/phi2 = round\(equivalenceRatio, 2\)/.test(readSrc('js/physics-model.js')) && /phi2 > PHI_RICH_WARN/.test(readSrc('js/physics-model.js')) && /equivalenceRatio2: phi2/.test(readSrc('js/physics-model.js')), 'physics-model.js: один phi2 для MIX_RICH/MIX_LEAN і для метрики датчика');
+  }
+  // (12) Зсув меж MIX_*: оптимізатор і автопроєкт не читають попередження, тож вибір бафля не залежить від MIX_*.
+  ok(!/MIX_|\.warnings/.test(readSrc('js/autodesign.js')) && !/MIX_|\.warnings/.test(readSrc('js/room.js')), 'autodesign.js і room.js не залежать від MIX_*/warnings (зсув меж Φ не міняє підбір)');
+
+  // (3) Каталізатор: див. блок 99. (4)/(16) Підказки.
+  ok(/вся модель/.test(STR.uk.moisture) && /whole model/.test(STR.en.moisture) && /усієї моделі/.test(STR.uk.moistureHint) && /whole-model/.test(STR.en.moistureHint) && /усієї моделі/.test(htmlSrc2), 'слайдер вологості підписаний як параметр усієї моделі (uk/en, index.html)');
+  ok(STR.uk.tbRefTempsHint && STR.en.tbRefTempsHint && /data-i18n="tbRefTempsHint"/.test(htmlSrc2) && /не входять/.test(STR.uk.tbRefTempsHint) && /not used/.test(STR.en.tbRefTempsHint), 'температури димоходу/верху/скла позначені як довідкові (не входять у розрахунок і журнал)');
+  ok(!/flueTempC|stoveTopTempC|glassTempC/.test(readSrc('js/physics-model.js')) && !/flueTempC|stoveTopTempC|glassTempC/.test(readSrc('js/calibration.js')), 'підказка правдива: фізика й калібрування справді не читають три довідкові температури');
+
+  // (7) Одиниці з i18n у UK-інтерфейсі.
+  for (const k of ['unitKw', 'unitKwh', 'unitKg', 'unitM3', 'unitM2', 'unitM', 'unitH']) ok(STR.uk[k] && STR.en[k] && STR.uk[k] !== STR.en[k], `одиниця ${k} є в обох мовах і локалізована`);
+  const hard = [...appSrc2.matchAll(/\$\{[^}]+\} (kW|kWh|kg|m³|m²|h)\b/g)].map((m) => m[0]);
+  ok(hard.length === 0, 'app.js: kW/kWh/kg/m²/m³/h не захардкоджені англійською (беруться з t(unit..))', JSON.stringify(hard));
+  ok(/раз(?!а)/.test(STR.uk.roomOversized) === false && /\$\{ratio\}×/.test(STR.uk.roomOversized) && /\$\{ratio\}×/.test(STR.en.roomOversized) && !/ - /.test(Object.values(TB_TXT.uk).map((f) => f({ eff: 1, max: 1, kg: 1, glass: 1, top: 1, hours: 1, min: 1, fuelKw: 1, grossKw: 1, ratio: 1, measuredKw: 1, predictedKw: 1 })).join('')), 'мовні шорсткості: «у N× більша», тире замість дефіса в TB_TXT');
+
+  // (8) Друк містить вердикт і зауваження.
+  ok(/function printVerdictBlock\(\)/.test(appSrc2) && /\$\{img\}\$\{printVerdictBlock\(\)\}<table>/.test(appSrc2) && /configVerdict\(validation, r\.warnings, fit, room\.status\)/.test(appSrc2), 'друк: вердикт і перелік danger/warn/кімнати йдуть з того самого configVerdict');
+
+  // (14) Статичні fallback-тексти index.html = словник uk (будь-який data-i18n).
+  {
+    const mism = [];
+    for (const m of htmlSrc2.matchAll(/data-i18n="(\w+)"[^>]*>([^<]*)</g)) {
+      const u = STR.uk[m[1]];
+      if (u === undefined || String(u).trim() !== m[2].trim()) mism.push(m[1]);
+    }
+    ok(mism.length === 0, 'index.html: fallback-текст кожного data-i18n збігається зі словником uk', JSON.stringify(mism));
+  }
+
+  // (23) Реєстр елементів: КОЖЕН input/select з id у index.html має споживача в app.js.
+  {
+    const ids = [...htmlSrc2.matchAll(/<(?:input|select)\b[^>]*\bid="(\w+)"/g)].map((m) => m[1]);
+    const orphan = ids.filter((id) => !new RegExp(`['"\`#]${id}['"\`]|\\b${id}:`).test(appSrc2));
+    ok(ids.length > 40 && orphan.length === 0, 'кожен input/select/checkbox index.html має споживача в app.js (controlMap або getElementById)', JSON.stringify(orphan));
+  }
+
+  // (11)/(13) Документація.
+  const readme = readSrc('README.md'), agents = readSrc('AGENTS.md'), roadmap = readSrc('docs/ROADMAP.md'), report = readSrc('REPORT.md');
+  ok(/thresholds\.js/.test(readme) && /test-burn\.js/.test(readme), 'README: дерево файлів містить thresholds.js і test-burn.js');
+  ok(/thresholds\.js/.test(agents), 'AGENTS.md: правило про пороги з thresholds.js');
+  ok(!/оновлює лише Test Burn/.test(roadmap) && /Правдивість UI \(\*\*виконано/.test(roadmap), 'ROADMAP: слайдер вологості не «лише Test Burn»; статус фази 2 позначено');
+  ok(!/різ \(з розкладкою\)/.test(report) && /площа заготовок/.test(report) && /configVerdict/.test(report) && /phiGaugeState/.test(report), 'REPORT: без «різ (з розкладкою)»; описано єдиний вердикт, Φ-датчик і межі правдоподібності');
+}
+function names0() { return Object.keys(MODEL_PRESETS); }
+
+// Знахідка «Креслення не відкрило оверлею» - хибна: exportDrawing завантажує SVG-файл, а #drawing-overlay - лише
+// розмірні підписи 3D-сцени. Фіксуємо реальну поведінку: обробник качає непорожній SVG з розмірами печі.
+{
+  const appSrc3 = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+  ok(/getElementById\('exportDrawing'\)\.addEventListener\('click', exportDrawingSvg\)/.test(appSrc3) && /function exportDrawingSvg\(\) \{\s*const svg = buildDrawingSVG\(config, lang\);\s*downloadBlob\(/.test(appSrc3), 'exportDrawing: кнопка завантажує SVG-файл (не оверлей)');
+  const svgText = buildDrawingSVG(base, 'uk');
+  ok(/^<svg/.test(svgText.trim()) && svgText.includes(String(base.dimensions.widthCm * 10)) && svgText.length > 2000, 'buildDrawingSVG: непорожній SVG із шириною печі в мм');
 }
 
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TESTS FAILED`);process.exit(fails === 0 ? 0 : 1);

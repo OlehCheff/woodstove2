@@ -11,7 +11,9 @@ import { buildBOM, bomToCsv, buildDrawingSVG, buildDXF } from './bom.js';
 import { calibrateFromLog, isCalibrationCurrent, evaluateCalibration, detectJournalDesync, refreshLogPredictions, emptyCalibration, mergeCalibration, configSnapshot } from './calibration.js';
 import { designInternals } from './autodesign.js';
 import { PURPOSES, requiredPowerKw, roomVolume, sizeStoveForPower, evaluateRoom } from './room.js';
-import { STR, WARN_TXT, WARN_ARG, VALIDATION_TXT, OUTLET_TXT, TOUR, getLang, setLang } from './i18n.js';
+import { computeTestBurnCore, checkTestBurnPlausibility } from './test-burn.js';
+import { configVerdict, phiGaugeState, PHI_TARGET } from './thresholds.js';
+import { STR, TB_TXT, WARN_TXT, WARN_ARG, VALIDATION_TXT, OUTLET_TXT, TOUR, getLang, setLang } from './i18n.js';
 import { html, raw, setHtml, writeHtml } from './html.js';
 import { JOURNAL_KEY, JOURNAL_MAX, parseJournal, appendEntry, csvField, csvDate } from './journal.js';
 import { createToaster } from './toast.js';
@@ -365,7 +367,19 @@ function renderPhysics() {
   const roomPipeEl = document.getElementById('m-room-pipe');
   if (roomPipeEl) roomPipeEl.textContent = `${r.metrics.roomPipeGainPct}% (Σ ${r.metrics.efficiencyWithPipePct}%)`;
   const ul = document.getElementById('warnings'); ul.replaceChildren();
-  if (!r.warnings.length) { const li = document.createElement('li'); li.textContent = t('noIssues'); ul.appendChild(li); }
+  // Єдиний вердикт (thresholds.js): геометрія + фізичні danger/warn + посадки BOM.
+  // Банер «коректна» і «Проблем не виявлено» залежать від ОДНОГО level.
+  let bom = null;
+  safe(() => { bom = buildBOM(config, r, lang); }, 'bom');
+  // Кімната входить у вердикт: «піч завелика/замала» не сумісна з банером «коректна».
+  let room = null;
+  safe(() => { room = evaluateRoom(config); }, 'room');
+  const verdict = configVerdict(validateConfig(config), r.warnings, bom ? bom.fitIssues : 0, room ? room.status : 'ok');
+  if (!r.warnings.length) {
+    const li = document.createElement('li');
+    li.textContent = t(verdict.level === 'ok' ? 'noIssues' : 'noPhysicsWarnings');
+    ul.appendChild(li);
+  }
   for (const wmsg of r.warnings) {
     const li = document.createElement('li'); li.className = wmsg.level;
     li.textContent = `[${wmsg.code}] ${warnText(wmsg.code, wmsg.message, r.metrics)}`;
@@ -373,14 +387,14 @@ function renderPhysics() {
   }
   // Захист: падіння одного рендер-кроку (напр., друкарська помилка в новій панелі)
   // не має приховувати всю піч. Кожен крок — ізольований.
-  safe(renderValidation);
+  safe(() => renderValidation(verdict, room));
   safe(renderOutletVerdict);
   safe(() => renderTestBurn());
   safe(renderTestLog);
-  safe(() => renderBomSummary(r));
+  safe(() => renderBomSummary(r, bom));
   safe(renderCalibrationSummary);
   safe(() => renderAutoSummary(r));
-  safe(renderRoomSummary);
+  safe(() => renderRoomSummary(room));
   safe(() => applyThermalZones(r.metrics));
 }
 
@@ -403,16 +417,19 @@ function validationText(item) {
   return typeof entry === 'function' ? entry(item.values || {}) : item.code;
 }
 
-function renderValidation() {
+function renderValidation(verdict, room = null) {
   const list = document.getElementById('validationList');
   if (!list) return;
   const result = validateConfig(config);
   list.replaceChildren();
-  if (result.valid && !result.warnings.length) {
-    const li = document.createElement('li'); li.className = 'ok'; li.textContent = `✓ ${t('validConfig')}`;
-    list.appendChild(li);
-    return;
-  }
+  // Банер — лише з verdict.level: «коректна» тільки при 'ok'.
+  const banner = {
+    ok: ['ok', '✓', 'validConfig'], warn: ['warning', '!', 'validConfigNotes'],
+    danger: ['error', '✕', 'validConfigDanger'], error: ['error', '✕', 'validConfigErrors'],
+  }[verdict.level];
+  const bli = document.createElement('li'); bli.className = banner[0]; bli.textContent = `${banner[1]} ${t(banner[2])}`;
+  list.appendChild(bli);
+  if (verdict.level === 'ok') return;
   result.errors.forEach((item) => {
     const li = document.createElement('li'); li.className = 'error';
     li.textContent = `✕ ${validationText(item)}`; list.appendChild(li);
@@ -421,22 +438,21 @@ function renderValidation() {
     const li = document.createElement('li'); li.className = 'warning';
     li.textContent = `! ${validationText(item)}`; list.appendChild(li);
   });
+  if (room && (room.status === 'oversized' || room.status === 'low')) {
+    const li = document.createElement('li'); li.className = 'warning';
+    li.textContent = `! ${t('secPurpose')}: ${roomStatusText(room)}`; list.appendChild(li);
+  }
+}
+
+// Підсумок оцінки кімнати одним реченням (спільний для блоку кімнати, валідації й друку).
+function roomStatusText(r) {
+  if (r.status === 'low') return t('roomNotEnough');
+  if (r.status === 'oversized') return t('roomOversized').replace('${ratio}', r.ratio);
+  return t('roomEnough');
 }
 
 function computeTestBurn() {
-  const predicted = PhysicsModel.evaluate(config);
-  const test = config.testBurn;
-  const loadKg = test.loadMode === 'auto' ? predicted.metrics.recommendedLoadKg : test.loadKg;
-  const fuelEnergyKwh = loadKg * predicted.metrics.woodEnergyKwhKg;
-  const fuelInputPowerKw = fuelEnergyKwh / Math.max(test.measuredBurnHours, 0.1);
-  const measuredHeatKwh = +test.measuredUsefulHeatKwh || 0;
-  const hasMeasurement = measuredHeatKwh > 0;
-  const measuredPower = hasMeasurement ? measuredHeatKwh / Math.max(test.measuredBurnHours, 0.1) : 0;
-  const measuredEfficiency = hasMeasurement ? Math.max(0, Math.min(100, measuredHeatKwh / Math.max(fuelEnergyKwh, 0.1) * 100)) : 0;
-  const errorPct = hasMeasurement
-    ? ((measuredPower - predicted.metrics.heatOutputKw) / Math.max(predicted.metrics.heatOutputKw, 0.1)) * 100
-    : 0;
-  return { predicted, test, loadKg, fuelEnergyKwh, fuelInputPowerKw, measuredHeatKwh, hasMeasurement, measuredPower, measuredEfficiency, errorPct };
+  return computeTestBurnCore(PhysicsModel.evaluate(config), config.testBurn);
 }
 
 function renderTestBurn() {
@@ -447,21 +463,28 @@ function renderTestBurn() {
   const loadInput = document.getElementById('loadKg');
   const loadOutput = document.getElementById('loadKg-v');
   if (loadInput) { loadInput.value = loadKg; loadInput.disabled = test.loadMode === 'auto'; }
-  if (loadOutput) loadOutput.textContent = `${loadKg} kg`;
+  if (loadOutput) loadOutput.textContent = `${loadKg} ${t('unitKg')}`;
   const recommendation = document.getElementById('loadRecommendation');
-  if (recommendation) recommendation.textContent = `${t('recommendedLoad')}: ${predicted.metrics.recommendedLoadKg} kg · ${t('maxLoad')}: ${predicted.metrics.maxLoadKg} kg`;
-  const tempSummary = `${test.flueTempC}°C / ${test.stoveTopTempC}°C / ${test.glassTempC}°C · smoke ${test.smokeOpacityPct}%`;
+  if (recommendation) recommendation.textContent = `${t('recommendedLoad')}: ${predicted.metrics.recommendedLoadKg} ${t('unitKg')} · ${t('maxLoad')}: ${predicted.metrics.maxLoadKg} ${t('unitKg')}`;
+  const tempSummary = `${test.flueTempC}°C / ${test.stoveTopTempC}°C / ${test.glassTempC}°C · ${t('smokeShort')} ${test.smokeOpacityPct}%`;
   if (!r.hasMeasurement) {
-    setHtml(target, html`<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} kW · ${predicted.metrics.efficiencyPct}%</div>
-      <div><b>${t('fuelInput')}:</b> ${r.fuelInputPowerKw.toFixed(2)} kW · ${r.fuelEnergyKwh.toFixed(1)} kWh</div>
-      <div class="sub">${t('needUsefulHeat')} · ${tempSummary}</div>`);
+    setHtml(target, html`<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} ${t('unitKw')} · ${predicted.metrics.efficiencyPct}% (${t('modelBurnHours')} ${predicted.metrics.burnTimeHours} ${t('unitH')})</div>
+      <div><b>${t('fuelInput')}:</b> ${r.fuelInputPowerKw.toFixed(2)} ${t('unitKw')} · ${r.fuelEnergyKwh.toFixed(1)} ${t('unitKwh')}</div>
+      <div class="sub">${t('needUsefulHeat')} · ${tempSummary}</div>${plausibilityList(r)}`);
     return;
   }
   const statusClass = Math.abs(r.errorPct) <= 15 ? '' : 'bad';
-  setHtml(target, html`<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} kW · ${predicted.metrics.efficiencyPct}%</div>
-    <div><b>${t('measured')}:</b> ${r.measuredPower.toFixed(2)} kW · ${r.measuredEfficiency.toFixed(1)}%</div>
+  setHtml(target, html`<div><b>${t('predicted')}:</b> ${predicted.metrics.heatOutputKw} ${t('unitKw')} · ${predicted.metrics.efficiencyPct}% (${t('modelBurnHours')} ${predicted.metrics.burnTimeHours} ${t('unitH')})</div>
+    <div><b>${t('measured')}:</b> ${r.measuredPower.toFixed(2)} ${t('unitKw')} · ${r.measuredEfficiency == null ? '—' : r.measuredEfficiency.toFixed(1) + '%'}</div>
     <div>${tempSummary}</div>
-    <div class="${statusClass}"><b>${t('error')}:</b> ${r.errorPct >= 0 ? '+' : ''}${r.errorPct.toFixed(1)}%</div>`);
+    <div class="${statusClass}"><b>${t('error')}:</b> ${r.errorPct >= 0 ? '+' : ''}${r.errorPct.toFixed(1)}%</div>${plausibilityList(r)}`);
+}
+
+function plausibilityList(r) {
+  const items = checkTestBurnPlausibility(r);
+  if (!items.length) return '';
+  const dict = TB_TXT[getLang()] || TB_TXT.uk;
+  return html`<ul class="tb-warn">${items.map((i) => html`<li class="${i.severity}">${dict[i.code](i.values)}</li>`)}</ul>`;
 }
 
 const TEST_LOG_KEY = JOURNAL_KEY;
@@ -532,8 +555,11 @@ function renderTestLog() {
   // Записи журналу - недовірені дані (localStorage), усе йде через html`` (екранування).
   const rows = log.slice(-8).reverse().map((e) => {
     const dev = e.deviationPct >= 0 ? '+' : '';
-    return html`<li><b>${new Date(e.ts).toLocaleDateString()}</b> · ${e.mode} · ${e.species} · ${e.moisturePct}%<br>
-      ${t('predicted')}: ${e.predictedKw} kW → ${t('measured')}: ${e.measuredKw} kW <span class="${Math.abs(e.deviationPct) <= 15 ? '' : 'bad'}">(${dev}${e.deviationPct}%)</span></li>`;
+    // Підозрілі записи (підтверджені користувачем або старі з ККД, заклампованим до 100 %) - з позначкою; дані не змінюємо.
+    const doubtful = e.suspect === true || +e.measuredEffPct >= 100;
+    const mark = doubtful ? html`<span class="bad" title="${t('tbSuspectMark')}">⚠ </span>` : '';
+    return html`<li>${mark}<b>${new Date(e.ts).toLocaleDateString()}</b> · ${e.mode} · ${e.species} · ${e.moisturePct}%<br>
+      ${t('predicted')}: ${e.predictedKw} ${t('unitKw')} → ${t('measured')}: ${e.measuredKw} ${t('unitKw')} <span class="${Math.abs(e.deviationPct) <= 15 ? '' : 'bad'}">(${dev}${e.deviationPct}%)</span></li>`;
   });
   setHtml(ul, rows.length ? html`${rows}` : html`<li class="sub">${t('noTestsYet')}</li>`);
 }
@@ -550,6 +576,15 @@ function calibrateModel() {
 function saveTestToLog() {
   const r = computeTestBurn();
   if (!r.hasMeasurement) { renderTestBurn(); return; }
+  if (r.overUnity) { renderTestBurn(); toaster.show({ message: () => t('testSaveBlocked'), kind: 'warn', autoMs: 8000 }); return; }
+  // Підозрілий вимір (ККД вище стелі, нереальна витрата/час/потужність) - лише з підтвердженням:
+  // інакше такий запис тихо тягне калібрування.
+  const suspect = checkTestBurnPlausibility(r).some((i) => i.suspect);
+  if (suspect) { confirmThen('tbConfirmSaveMsg', 'tbConfirmSaveYes', () => commitTestToLog(r, true)); return; }
+  commitTestToLog(r, false);
+}
+
+function commitTestToLog(r, suspect) {
   const snap = takeSnapshot(); // до запису: «Скасувати» повертає журнал як був
   const uncal = PhysicsModel.evaluate({ ...config, calibration: { ...config.calibration, enabled: false } }).metrics.heatOutputKw;
   const entry = {
@@ -559,6 +594,7 @@ function saveTestToLog() {
     predictedEffPct: r.predicted.metrics.efficiencyPct, measuredKw: +r.measuredPower.toFixed(2),
     measuredEffPct: +r.measuredEfficiency.toFixed(1), deviationPct: +r.errorPct.toFixed(1),
     config: configSnapshot(config), modelVersion: MODEL_VERSION,
+    ...(suspect ? { suspect: true } : {}),
   };
   const { log, dropped, all } = appendEntry(getTestLog(), entry, JOURNAL_MAX);
   try { localStorage.setItem(TEST_LOG_KEY, JSON.stringify(log)); } catch { /* ignore */ }
@@ -693,31 +729,35 @@ function updateRoomRows() {
   const c = document.getElementById('ceilingRow'); if (c) c.style.display = mode === 'area' ? '' : 'none';
 }
 
-function renderPhiGauge(m) {
+function renderPhiGauge(m, mode = config.operation.mode) {
   const marker = document.getElementById('phiMarker');
   const label = document.getElementById('phiLabel');
   const status = document.getElementById('phiStatus');
   if (!marker || !label || !status) return;
   const phi = m.equivalenceRatio;
+  // Те саме округлення до 2 знаків, що й у MIX_RICH/MIX_LEAN (модель віддає готове значення).
+  const phi2 = m.equivalenceRatio2;
   // Мапа Φ → позиція 0–100% на шкалі: Φ=0.1 → 0, Φ=1.0 → 100%.
   const left = clamp((phi - 0.1) / 0.9, 0, 1) * 100;
   marker.style.left = `${left}%`;
   // Статус порівнюємо з тим самим округленням (2 знаки), що й підпис: інакше Φ 0.504
   // показувало б «Φ = 0.50» поруч із «Φ > 0.5 — мало повітря».
-  const phiShown = +phi.toFixed(2);
-  const inBand = phiShown >= 0.4 && phiShown <= 0.5;
-  marker.style.background = inBand ? '#22c55e' : '#f97316';
+  const phiShown = phi2;
+  // Стан узгоджено з MIX_RICH/MIX_LEAN у «Проблемах» (phiGaugeState, thresholds.js):
+  // «ризик» лише там, де є попередження; буфер і навмисні режими — нейтрально.
+  const st = phiGaugeState(phiShown, mode);
+  marker.style.background = st.tone === 'ok' ? '#22c55e' : st.tone === 'soft' ? '#eab308' : '#f97316';
   label.textContent = `Φ = ${phiShown.toFixed(2)}`;
   const phiSpan = document.createElement('span');
-  if (inBand) phiSpan.style.color = '#86efac';
-  phiSpan.textContent = t(inBand ? 'phiInBand' : (phiShown > 0.5 ? 'phiRich' : 'phiLean'));
+  if (st.tone === 'ok') phiSpan.style.color = '#86efac';
+  phiSpan.textContent = t(st.key);
   status.replaceChildren(phiSpan);
 }
 
 function autoPhi() {
   // Поєднання primary/secondary/air-wash intake, що дає Φ найближче до 0.45
   // (λ із площ: air-wash — третій важіль, див. fitAirToPhi у physics-model.js).
-  const best = fitAirToPhi(config, 0.45);
+  const best = fitAirToPhi(config, PHI_TARGET);
   if (best) {
     config.primaryAir.openPct = best.primaryPct;
     config.operation.secondaryAirPct = best.secondaryPct;
@@ -726,11 +766,11 @@ function autoPhi() {
   }
 }
 
-function renderRoomSummary() {
+function renderRoomSummary(prepared = null) {
   const target = document.getElementById('roomResult');
   if (!target) return;
-  const r = evaluateRoom(config);
-  setHtml(target, html`${t('roomVolume')}: <b>${r.volume} m³</b> · ${t('roomNeed')}: <b>${r.targetKw} kW</b> · ${t('roomActual')}: <b>${r.actualKw} kW</b> <span class="${r.enough ? 'ok' : 'bad'}">${r.enough ? t('roomEnough') : t('roomNotEnough')}</span>`);
+  const r = prepared || evaluateRoom(config);
+  setHtml(target, html`${t('roomVolume')}: <b>${r.volume} ${t('unitM3')}</b> · ${t('roomNeed')}: <b>${r.targetKw} ${t('unitKw')}</b> · ${t('roomActual')}: <b>${r.actualKw} ${t('unitKw')}</b> (${t('roomForMode')} ${r.mode}) <span class="${r.status === 'low' ? 'bad' : r.status === 'oversized' ? 'warn' : 'ok'}">${roomStatusText(r)}</span>`);
 }
 
 function fitRoomToStove() {
@@ -750,15 +790,15 @@ function renderAutoSummary(r = null) {  const target = document.getElementById('
   if (!target) return;
   const m = (r || PhysicsModel.evaluate(config)).metrics;
   setHtml(target, html`<b>${t('autoTitle')}</b> · ${t('kEff')} <b>${m.efficiencyPct}%</b> · ${t('autoBaffle')} <b>${config.baffle.heightCm} ${t('unitCm')}</b> · ${t('autoChimney')} <b>Ø${config.chimney.diameterCm} ${t('unitCm')} × ${config.chimney.heightCm} ${t('unitCm')}</b> · ${t('autoInsulation')} <b>${config.thermal.insulationThicknessCm} ${t('unitCm')}</b> · ${t('autoSecondary')} <b>${config.secondaryAir.holeCount}×Ø${config.secondaryAir.holeDiameterCm}</b>`);
-  renderPhiGauge(m);
+  renderPhiGauge(m, (r || PhysicsModel.evaluate(config)).mode);
 }
 
-function renderBomSummary(physicsResult = null) {  const target = document.getElementById('bomSummary');
+function renderBomSummary(physicsResult = null, prebuilt = null) {  const target = document.getElementById('bomSummary');
   if (!target) return;
-  const bom = buildBOM(config, physicsResult, lang);
+  const bom = prebuilt || buildBOM(config, physicsResult, lang);
   const fitNote = bom.fitIssues > 0 ? html`<br><span class="bad">${t('bomFitIssues').replace('${count}', bom.fitIssues)}</span>` : '';
-  setHtml(target, html`${t('bomSteel')}: <b>${bom.totals.steelMassKg} kg</b> · ${t('bomArea')}: <b>${bom.totals.steelAreaM2} m²</b> · ${t('bomBrick')}: <b>${bom.totals.brickMassKg} kg</b> · ${t('bomInsulation')}: <b>${bom.totals.insulationMassKg} kg</b> · ${t('bomTotal')}: <b>${bom.totals.totalMassKg} kg</b><br>
-    ${t('bomCut')}: <b>${bom.totals.cutAreaM2} m²</b> · ${t('bomWeld')}: <b>${bom.totals.weldMeters} m</b> · ${t('bomPurchased')}: <b>${bom.totals.purchasedCount}</b> · <span class="est">${t('bomEstimate')}</span>${fitNote}`);
+  setHtml(target, html`${t('bomSteel')}: <b>${bom.totals.steelMassKg} ${t('unitKg')}</b> · ${t('bomArea')}: <b>${bom.totals.steelAreaM2} ${t('unitM2')}</b> · ${t('bomBrick')}: <b>${bom.totals.brickMassKg} ${t('unitKg')}</b> · ${t('bomInsulation')}: <b>${bom.totals.insulationMassKg} ${t('unitKg')}</b> · ${t('bomTotal')}: <b>${bom.totals.totalMassKg} ${t('unitKg')}</b><br>
+    ${t('bomCut')}: <b>${bom.totals.cutAreaM2} ${t('unitM2')}</b> · ${t('bomWeld')}: <b>${bom.totals.weldMeters} ${t('unitM')}</b> · ${t('bomPurchased')}: <b>${bom.totals.purchasedCount}</b> · <span class="est">${t('bomEstimate')}</span>${fitNote}`);
 }
 
 function shareConfig() {
@@ -782,6 +822,26 @@ function downloadScreenshot() {
   } catch(e) { console.error('Screenshot failed:', e); }
 }
 
+// Вердикт і перелік зауважень для друку: документ не має мовчати про те, що видно на екрані
+// (danger/warn фізики, геометрія, посадки BOM, стан кімнати) - рахується тим самим configVerdict.
+function printVerdictBlock() {
+  const r = PhysicsModel.evaluate(config);
+  const validation = validateConfig(config);
+  let fit = 0;
+  safe(() => { fit = buildBOM(config, r, lang).fitIssues; }, 'bomPrint');
+  const room = evaluateRoom(config);
+  const verdict = configVerdict(validation, r.warnings, fit, room.status);
+  const key = { ok: 'validConfig', warn: 'validConfigNotes', danger: 'validConfigDanger', error: 'validConfigErrors' }[verdict.level];
+  const items = [
+    ...validation.errors.map((i) => `✕ ${validationText(i)}`),
+    ...validation.warnings.map((i) => `! ${validationText(i)}`),
+    ...r.warnings.filter((w) => w.level !== 'info').map((w) => `${w.level === 'danger' ? '✕' : '!'} [${w.code}] ${warnText(w.code, w.message, r.metrics)}`),
+    ...(fit > 0 ? [`! ${t('bomFitIssues').replace('${count}', fit)}`] : []),
+    ...(room.status === 'ok' ? [] : [`! ${t('secPurpose')}: ${roomStatusText(room)}`]),
+  ];
+  return html`<h2 style="font-size:16px;margin:16px 0 6px">${t('secValidation')}: ${verdict.level === 'ok' ? '✓ ' : ''}${t(key)}</h2><ul style="font-size:13px;margin:0 0 8px">${items.map((x) => html`<li>${x}</li>`)}</ul>`;
+}
+
 function printReport() {
   try {
     // Без WebGL друкуємо таблицю показників без знімка сцени.
@@ -794,7 +854,7 @@ function printReport() {
     // Статичний <script> і <style> - константи з коду (raw); усе динамічне екранується в html``.
     const img = dataUrl ? html`<img id="repImg" src="${dataUrl}">` : '';
     const printJs = dataUrl ? raw(`<script>document.getElementById('repImg').onload=function(){window.print()}<\/script>`) : raw('<script>window.print()<\/script>');
-    writeHtml(report.document, html`<!doctype html><html lang="${lang}"><head><title>${t('title')}</title><style>body{font:14px Arial;color:#172033;padding:24px}h1{font-size:22px}img{max-width:100%;background:#101318;border-radius:10px}table{border-collapse:collapse;margin-top:14px}td{border-bottom:1px solid #ddd;padding:7px 14px 7px 0}</style></head><body><h1>🔥 Woodstove 2</h1><p>${new Date().toLocaleString()}</p>${img}<table>${rows}</table><p style="font-size:12px;color:#8a4b00;max-width:760px">${t('transitionDisclaimer')}</p><p style="font-size:12px;color:#555">${t('bomProdNote')}</p>${printJs}</body></html>`);
+    writeHtml(report.document, html`<!doctype html><html lang="${lang}"><head><title>${t('title')}</title><style>body{font:14px Arial;color:#172033;padding:24px}h1{font-size:22px}img{max-width:100%;background:#101318;border-radius:10px}table{border-collapse:collapse;margin-top:14px}td{border-bottom:1px solid #ddd;padding:7px 14px 7px 0}</style></head><body><h1>🔥 Woodstove 2</h1><p>${new Date().toLocaleString()}</p>${img}${printVerdictBlock()}<table>${rows}</table><p style="font-size:12px;color:#8a4b00;max-width:760px">${t('transitionDisclaimer')}</p><p style="font-size:12px;color:#555">${t('bomProdNote')}</p>${printJs}</body></html>`);
     report.document.close();
   } catch(e) { console.error('Print report failed:', e); alert(lang === 'en' ? 'Print failed' : 'Друк не вдався'); }
 }
@@ -848,18 +908,17 @@ const controlMap = {
 const DESIGN_IDS = { widthCm: 1, depthCm: 1, heightCm: 1, legHeightCm: 1, steelThicknessMm: 1, firebrickThicknessCm: 1, doorWidthCm: 1, doorHeightCm: 1 };
 function fmt(id, v) {
   if (String(id).includes('Pct') || id === 'baffleAirflowPct' || id === 'airWashIntakePct') return `${v}%`;
-  if (id === 'loadKg') return `${v} kg`;
+  if (id === 'loadKg') return `${v} ${t('unitKg')}`;
   if (id === 'measuredBurnHours') return `${v} ${t('unitH')}`;
-  if (id === 'measuredUsefulHeatKwh') return `${v} kWh`;
+  if (id === 'measuredUsefulHeatKwh') return `${v} ${t('unitKwh')}`;
   if (id === 'primaryAirOpenPct') return `${v} %`;
   if (id === 'operationSecondaryAirPct') return `${v} %`;
-  if (id === 'volumeM3') return `${v} m³`;
-  if (id === 'areaM2') return `${v} m²`;
-  if (id === 'ceilingM') return `${v} m`;
-  if (id === 'chimneyTotalHeightM') return `${v} m`;
+  if (id === 'volumeM3') return `${v} ${t('unitM3')}`;
+  if (id === 'areaM2') return `${v} ${t('unitM2')}`;
+  if (id === 'ceilingM') return `${v} ${t('unitM')}`;
+  if (id === 'chimneyTotalHeightM') return `${v} ${t('unitM')}`;
   if (id === 'chimneyConnectorLengthCm') return `${v} ${t('unitCm')}`;
   if (id === 'chimneyBends' || id === 'tertiaryHoleCount') return `${v}`;
-  if (id === 'catalystLightoffC') return `${v} °C`;
   if (id === 'heatExchangePasses') return `${v}`;
   if (/TempC$/.test(id)) return `${v} °C`;
   if (id === 'steelThicknessMm') return `${v} ${t('unitMm')}`;
@@ -970,7 +1029,9 @@ function bindUI() {
       if (id === 'doorOpenAngleDeg' && config.door.isOpen) doorTarget = doorOpenAngle();
       if (id === 'explodeDistanceCm') { applyExplode(1); renderPhysics(); return; }
       if (id.startsWith('camera')) { syncCamera(id !== 'cameraTargetYCm'); renderPhysics(); return; }
-      if (id in { woodMoisturePct: 1, loadKg: 1, measuredBurnHours: 1, measuredUsefulHeatKwh: 1, flueTempC: 1, stoveTopTempC: 1, glassTempC: 1, smokeOpacityPct: 1 }) {
+      // Вологість входить у модель (ККД, T допалювання, час горіння, WET_WOOD) - перераховуємо все.
+      if (id === 'woodMoisturePct') { renderPhysics(); return; }
+      if (id in { loadKg: 1, measuredBurnHours: 1, measuredUsefulHeatKwh: 1, flueTempC: 1, stoveTopTempC: 1, glassTempC: 1, smokeOpacityPct: 1 }) {
         renderTestBurn(); return;
       }
       // Зберігаємо ПІСЛЯ перепроєктування: інакше в localStorage лягав новий
@@ -1234,7 +1295,7 @@ function animate() {
   }
   if (refs.smokeParticles) {
     const smokePct = (config.testBurn?.smokeOpacityPct ?? 5) / 100;
-    const showSmoke = smokePct > 0.02;
+    const showSmoke = smokePct > 0;
     refs.smoke.visible = showSmoke;
     if (showSmoke) {
       const speed = 0.004 + config.operation.flameIntensity * 0.01;

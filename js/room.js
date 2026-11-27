@@ -1,6 +1,7 @@
 // Підбір печі під приміщення: потрібна потужність з об'єму/площі та призначення,
 // далі автопідбір габаритів (з внутрішньою геометрією під макс. ККД).
-import { normalizeConfig } from './config.js';
+import { normalizeConfig, applyModePreset } from './config.js';
+import { OVERSIZE_RATIO } from './thresholds.js';
 import { PhysicsModel } from './physics-model.js';
 import { designInternals } from './autodesign.js';
 
@@ -14,6 +15,9 @@ export const PURPOSES = {
   room:     { labelKey: 'purposeRoom',     kwPerM3: 1 / 14,  reserve: 1.20, mode: 'medium', minVol: 20, maxVol: 500 },
   workshop: { labelKey: 'purposeWorkshop', kwPerM3: 1 / 20,  reserve: 1.30, mode: 'high',   minVol: 30, maxVol: 1000 },
 };
+
+// Поріг «піч завелика» (OVERSIZE_RATIO) живе в thresholds.js разом з іншими порогами.
+export { OVERSIZE_RATIO };
 
 export function roomVolume(room) {
   if (!room) return 60;
@@ -62,16 +66,30 @@ export function sizeStoveForPower(targetKw, baseCfg) {
   return best;
 }
 
-// Повертає рекомендацію для поточного призначення і приміщення.
+// Повертає рекомендацію для поточного призначення і приміщення. Потужність береться
+// для РЕЖИМУ ПРИЗНАЧЕННЯ (PURPOSES[..].mode: той самий, що ставить «Підібрати під кімнату»),
+// а не для поточного режиму перемикача: розпал (start-up) чи «на ніч» - короткочасні
+// режими, їх нечесно порівнювати з постійною потребою кімнати.
 export function evaluateRoom(cfg) {
   const volume = roomVolume(cfg.room);
+  const purpose = PURPOSES[cfg.room.purpose] || PURPOSES.room;
   const target = requiredPowerKw(cfg.room.purpose, volume);
-  const actual = PhysicsModel.evaluate(cfg).metrics.heatOutputKw;
+  let refCfg = cfg;
+  if (cfg.operation.mode !== purpose.mode) {
+    refCfg = JSON.parse(JSON.stringify(cfg));
+    applyModePreset(refCfg, purpose.mode);
+  }
+  const actual = PhysicsModel.evaluate(refCfg).metrics.heatOutputKw;
+  const ratio = target > 0 ? actual / target : 0;
+  const enough = actual >= target * 0.9;
   return {
     volume: round(volume, 1),
     targetKw: round(target, 2),
     actualKw: actual,
-    enough: actual >= target * 0.9,
-    ratio: round(target > 0 ? actual / target : 0, 2),
+    mode: purpose.mode,
+    enough,
+    // 'low' | 'ok' | 'oversized' (enough лишено для зворотної сумісності)
+    status: !enough ? 'low' : ratio > OVERSIZE_RATIO ? 'oversized' : 'ok',
+    ratio: round(ratio, 2),
   };
 }

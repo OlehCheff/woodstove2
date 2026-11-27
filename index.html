@@ -41,7 +41,7 @@
 
 <aside id="panel">
   <h1>🔥 Woodstove 2</h1>
-  <p class="sub" data-i18n="subtitle">1 од. = 1 см · three@160 · модулі · дебаунс 120мс</p>
+  <p class="sub" data-i18n="subtitle">1 од. = 1 см · внутрішня геометрія підбирається автоматично під макс. ККД · мінімум 30 см</p>
 
   <details open><summary data-i18n="secMode">Режим роботи / вид</summary><div class="body">
     <div class="row"><label><span data-i18n="lblMode">Режим</span> <output id="modeHint"></output></label>
@@ -140,7 +140,7 @@
     <div class="row check"><input type="checkbox" id="tertiaryEnabled"><label for="tertiaryEnabled" data-i18n="tertiaryEnabled">Третинне повітря (tertiary)</label></div>
     <div class="row"><label><span data-i18n="tertiaryHoles">Отворів tertiary</span> <output id="tertiaryHoleCount-v"></output></label><input type="range" id="tertiaryHoleCount" min="2" max="30" step="1"></div>
     <div class="row check"><input type="checkbox" id="catalystEnabled"><label for="catalystEnabled" data-i18n="catalystEnabled">Каталізатор (honeycomb)</label></div>
-    <div class="row"><label><span data-i18n="catalystLightoff">Поріг займання каталізатора</span> <output id="catalystLightoffC-v"></output></label><input type="range" id="catalystLightoffC" min="150" max="500" step="10"></div>
+    <div class="hint" data-i18n="catalystLightoff">Поріг займання каталізатора — фіксована оцінка (не регулюється): температура зони горіння в моделі завжди вища за нього, тож на результат він не впливає</div>
   </div></details>
 
   <details open><summary data-i18n="secPurpose">Призначення печі</summary><div class="body">
@@ -165,7 +165,7 @@
 
   <details open><summary data-i18n="secPhys">Фізика v5</summary><div class="body" id="physics">
     <div class="kpi">
-      <div class="card"><span data-i18n="kEff">ККД</span><b id="m-eff">—</b></div>
+      <div class="card"><span data-i18n="kEff">Корисний ККД</span><b id="m-eff">—</b></div>
       <div class="card"><span data-i18n="kKw">Потужність</span><b id="m-kw">—</b></div>
       <div class="card"><span data-i18n="kBurn">Горіння</span><b id="m-burn">—</b></div>
       <div class="card"><span data-i18n="kDraft">Тяга / топка</span><b id="m-draft">—</b></div>
@@ -203,7 +203,8 @@
 
   <details><summary data-i18n="secTest">Test Burn / тестове горіння</summary><div class="body" id="testBurn">
     <div class="row"><label data-i18n="woodSpecies">Порода дров</label><select id="woodSpecies"><option value="birch" data-i18n="spBirch">Береза</option><option value="oak" data-i18n="spOak">Дуб</option><option value="pine" data-i18n="spPine">Сосна</option><option value="spruce" data-i18n="spSpruce">Ялина</option><option value="alder" data-i18n="spAlder">Вільха</option></select></div>
-    <div class="row"><label><span data-i18n="moisture">Вологість дров</span> <output id="woodMoisturePct-v"></output></label><input type="range" id="woodMoisturePct" min="8" max="35" step="1"></div>
+    <div class="row"><label><span data-i18n="moisture">Вологість дров (вся модель)</span> <output id="woodMoisturePct-v"></output></label><input type="range" id="woodMoisturePct" min="8" max="35" step="1"></div>
+    <div class="hint" data-i18n="moistureHint">Вологість дров — параметр усієї моделі, не лише Test Burn: вона змінює ККД, потужність, температуру допалювання, час горіння і попередження в усіх показниках.</div>
     <div class="row"><label data-i18n="load">Маса закладки</label><select id="loadMode"><option value="auto" data-i18n="loadAuto">Авто від топки</option><option value="manual" data-i18n="loadManual">Ручне значення</option></select></div>
     <div class="row"><label><span data-i18n="load">Маса закладки</span> <output id="loadKg-v"></output></label><input type="range" id="loadKg" min="1" max="30" step="0.5"></div>
     <div id="loadRecommendation" class="sub"></div>
@@ -212,7 +213,8 @@
     <div class="row"><label><span data-i18n="flueTemp">Температура димоходу</span> <output id="flueTempC-v"></output></label><input type="range" id="flueTempC" min="20" max="800" step="5"></div>
     <div class="row"><label><span data-i18n="stoveTemp">Температура верху</span> <output id="stoveTopTempC-v"></output></label><input type="range" id="stoveTopTempC" min="20" max="1000" step="5"></div>
     <div class="row"><label><span data-i18n="glassTemp">Температура скла</span> <output id="glassTempC-v"></output></label><input type="range" id="glassTempC" min="20" max="600" step="5"></div>
-    <div class="row"><label><span data-i18n="smokeOpacity">Непрозорість диму</span> <output id="smokeOpacityPct-v"></output></label><input type="range" id="smokeOpacityPct" min="0" max="100" step="1"><div class="hint" data-i18n="smokeHint">Оціночна непрозорість видимого диму після прогріву: 0% — майже невидимий, 100% — густий дим. Це не лабораторний PM/CO вимір.</div></div>
+    <div class="hint" data-i18n="tbRefTempsHint">Температури димоходу, верху й скла — довідкові: у розрахунок і журнал не входять (використовується лише перевірка «скло не гарячіше за верх»).</div>
+    <div class="row"><label><span data-i18n="smokeOpacity">Видимість диму (3D)</span> <output id="smokeOpacityPct-v"></output></label><input type="range" id="smokeOpacityPct" min="0" max="100" step="1"><div class="hint" data-i18n="smokeHint">Лише 3D-візуалізація: видимість диму в моделі (0% — дим вимкнено, 100% — густий). На розрахунок не впливає, це не лабораторний PM/CO вимір.</div></div>
     <div class="row check"><input type="checkbox" id="excludeStartUp"><label for="excludeStartUp" data-i18n="calExcludeStartUp">Не калібрувати start-up (перехідний процес)</label></div>
     <div class="hint" data-i18n="calStartUpHint">Start-up — перехідний процес: модель його не описує, тому за замовчуванням його записи не входять у калібрування.</div>
     <div class="btns"><button id="saveTestBurn" class="green" data-i18n="saveTest">Зберегти тест</button></div>

@@ -126,3 +126,10 @@ button:active{transform:translateY(1px)}
 [data-needs-3d][disabled]{opacity:.45;cursor:not-allowed}
 /* Вузький екран: панель займає низ, тож повідомлення - угорі, над усім (z-index вище за панель). */
 @media (max-width:760px){#no-webgl{position:fixed;z-index:40;left:50%;top:64px;bottom:auto;transform:translateX(-50%);width:calc(100vw - 32px);max-width:none}}
+
+.tb-warn{list-style:none;display:grid;gap:4px;margin-top:6px}
+.tb-warn li{padding:5px 8px;border-radius:7px;border:1px solid var(--line)}
+.tb-warn li.error{border-color:#7f1d1d;color:#fca5a5}
+.tb-warn li.warn{border-color:#7c4a03;color:#fcd34d}
+.tb-warn li.info{border-color:#1e40af;color:#93c5fd}
+.room-result .warn{color:#fcd34d}
